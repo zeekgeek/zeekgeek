@@ -227,6 +227,18 @@ class RadarState:
                 "events": list(self._events),
             }
 
+    async def add_system_event(self, event_type: str, message: str) -> dict[str, Any]:
+        async with self._lock:
+            event = {
+                "type": event_type,
+                "address": "system",
+                "name": "Radar",
+                "message": message,
+                "at": iso_time(utc_now()),
+            }
+            self._events.append(event)
+            return event
+
 
 def movement_label(rssi_history: list[int]) -> str:
     if len(rssi_history) < 3:

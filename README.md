@@ -26,6 +26,9 @@ For live Bluetooth scanning:
 python3 -m bt_radar
 ```
 
+If live scanning is unavailable (for example no `bluetoothd` / BlueZ service),
+the app now auto-switches to demo mode and posts a system event in the UI.
+
 Linux hosts usually need:
 
 - a Bluetooth adapter that is powered on
@@ -67,7 +70,11 @@ python3 -m bt_radar --host 127.0.0.1 --port 8765 --stale-after 20
 - `--host`: dashboard bind address
 - `--port`: dashboard port
 - `--stale-after`: seconds without sightings before a device is marked as left
+- `--no-auto-demo-fallback`: exit instead of auto-switching from live scanner to demo mode
 - `--log-level`: `debug`, `info`, `warning`, or `error`
+
+The app also auto-selects the next free port if the requested `--port` is busy.
+For example, if `8765` is taken it will try `8766`, `8767`, etc.
 
 ## API
 
@@ -77,5 +84,16 @@ python3 -m bt_radar --host 127.0.0.1 --port 8765 --stale-after 20
 ## Tests
 
 ```bash
-python -m unittest discover -s tests
+python3 -m unittest discover -s tests
 ```
+
+## Troubleshooting startup
+
+- If you see `address already in use`, keep the same command running and check
+  the printed dashboard URL because the app may have moved to a new free port.
+- If you want deterministic behavior, pass an explicit free port:
+  `python3 -m bt_radar --demo --port 9876`
+- If live BLE scanning fails on Linux, verify:
+  - `bluetoothd` is installed and running
+  - your adapter is present and enabled
+  - your session has BLE scan permission
