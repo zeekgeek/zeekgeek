@@ -15,7 +15,7 @@ A local Bluetooth Low Energy proximity radar with:
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .
-bt-radar --demo
+python3 -m bt_radar --demo
 ```
 
 Open <http://127.0.0.1:8765> and click **Enable browser notifications**.
@@ -23,7 +23,7 @@ Open <http://127.0.0.1:8765> and click **Enable browser notifications**.
 For live Bluetooth scanning:
 
 ```bash
-bt-radar
+python3 -m bt_radar
 ```
 
 Linux hosts usually need:
@@ -60,7 +60,7 @@ Use these findings as prompts for lawful, local investigation only. If you have 
 ## Command options
 
 ```text
-bt-radar --host 127.0.0.1 --port 8765 --stale-after 20
+python3 -m bt_radar --host 127.0.0.1 --port 8765 --stale-after 20
 ```
 
 - `--demo`: simulate devices instead of scanning hardware
