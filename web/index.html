@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b1220" />
+    <meta name="description" content="An accessibility-first voice automation hub for iPhone and iPad." />
+
+    <!-- iOS home-screen app behavior -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Zeek" />
+    <link rel="apple-touch-icon" href="./icons/icon.svg" />
+
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icons/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./styles.css" />
+    <title>Zeek — Voice Automation</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to controls</a>
+
+    <header class="app-header">
+      <h1 class="app-title">Zeek</h1>
+      <button id="settings-btn" class="icon-btn" aria-expanded="false" aria-controls="settings-panel">
+        <span aria-hidden="true">⚙</span>
+        <span class="sr-only">Settings</span>
+      </button>
+    </header>
+
+    <main id="main">
+      <!-- Primary, hands-light control: one giant button. -->
+      <section class="talk-section" aria-labelledby="talk-heading">
+        <h2 id="talk-heading" class="sr-only">Talk to Zeek</h2>
+        <button id="talk-btn" class="talk-btn" aria-describedby="talk-hint">
+          <span class="talk-icon" aria-hidden="true">🎙️</span>
+          <span class="talk-label" id="talk-label">Tap to talk</span>
+        </button>
+        <p id="talk-hint" class="hint">Tap, then speak. Tap again to stop.</p>
+      </section>
+
+      <!-- Live region: spoken + shown response. -->
+      <section class="response-section" aria-labelledby="response-heading">
+        <h2 id="response-heading" class="sr-only">Zeek's response</h2>
+        <p id="heard" class="heard" aria-live="polite"></p>
+        <div id="response" class="response" role="status" aria-live="assertive">
+          Welcome, Andrew. Tap the big button and tell me what you need, or use a command below.
+        </div>
+        <button id="repeat-btn" class="text-btn" hidden>🔊 Say that again</button>
+      </section>
+
+      <!-- Typed fallback for when voice isn't available or convenient. -->
+      <section class="type-section" aria-labelledby="type-heading">
+        <h2 id="type-heading" class="sr-only">Type a command</h2>
+        <form id="type-form">
+          <label for="type-input" class="sr-only">Type what you want</label>
+          <input
+            id="type-input"
+            class="type-input"
+            type="text"
+            inputmode="text"
+            autocomplete="off"
+            placeholder="…or type a command and press Send"
+          />
+          <button type="submit" class="send-btn">Send</button>
+        </form>
+      </section>
+
+      <!-- One-tap command buttons (great for shaky hands / no voice). -->
+      <section class="commands-section" aria-labelledby="commands-heading">
+        <h2 id="commands-heading" class="section-title">Quick commands</h2>
+        <div id="commands" class="commands-grid" role="list" aria-busy="true">
+          <p class="muted">Loading commands…</p>
+        </div>
+      </section>
+
+      <!-- Recent activity. -->
+      <section class="history-section" aria-labelledby="history-heading">
+        <h2 id="history-heading" class="section-title">Recent activity</h2>
+        <ul id="history" class="history-list" aria-live="polite"></ul>
+      </section>
+    </main>
+
+    <!-- Settings drawer -->
+    <div id="settings-panel" class="settings-panel" hidden role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div class="settings-card">
+        <h2 id="settings-title">Settings</h2>
+        <label class="field">
+          <span>Server address</span>
+          <input id="server-url" type="url" inputmode="url" placeholder="https://your-server.example.com" />
+        </label>
+        <label class="field">
+          <span>Access token</span>
+          <input id="access-token" type="password" placeholder="The secret from your .env file" autocomplete="off" />
+        </label>
+        <label class="field switch-field">
+          <input id="autospeak" type="checkbox" checked />
+          <span>Read responses aloud</span>
+        </label>
+        <label class="field switch-field">
+          <input id="bigtext" type="checkbox" />
+          <span>Extra-large text</span>
+        </label>
+        <label class="field switch-field">
+          <input id="highcontrast" type="checkbox" />
+          <span>High-contrast mode</span>
+        </label>
+        <div class="settings-actions">
+          <button id="settings-save" class="send-btn">Save</button>
+          <button id="settings-close" class="text-btn">Close</button>
+        </div>
+        <p id="settings-status" class="hint" aria-live="polite"></p>
+      </div>
+    </div>
+
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>

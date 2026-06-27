@@ -1,0 +1,59 @@
+{
+  "name": "Zeek",
+  "siriPhrase": "Hey Siri, Zeek",
+  "description": "Dictate any request, send it to the Zeek server, and have the answer spoken back. One shortcut = unlimited voice commands.",
+  "notes": "This is a human/script-readable specification, not an importable signed .shortcut file. Build it in the Shortcuts app following docs/SETUP-IOS.md.",
+  "actions": [
+    {
+      "step": 1,
+      "action": "Dictate Text",
+      "identifier": "is.workflow.actions.dictatetext",
+      "params": { "language": "en-US" },
+      "output": "DictatedText"
+    },
+    {
+      "step": 2,
+      "action": "Text",
+      "identifier": "is.workflow.actions.gettext",
+      "params": { "text": "<PASTE_YOUR_ACCESS_TOKEN_HERE>" },
+      "output": "AccessToken"
+    },
+    {
+      "step": 3,
+      "action": "Get Contents of URL",
+      "identifier": "is.workflow.actions.downloadurl",
+      "params": {
+        "url": "https://YOUR-SERVER/api/command",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json",
+          "X-Access-Token": "{{AccessToken}}"
+        },
+        "requestBodyType": "JSON",
+        "requestBody": { "text": "{{DictatedText}}" }
+      },
+      "output": "ApiResponse"
+    },
+    {
+      "step": 4,
+      "action": "Get Dictionary Value",
+      "identifier": "is.workflow.actions.getvalueforkey",
+      "params": { "key": "speak", "input": "{{ApiResponse}}" },
+      "output": "SpokenReply"
+    },
+    {
+      "step": 5,
+      "action": "Speak Text",
+      "identifier": "is.workflow.actions.speaktext",
+      "params": { "text": "{{SpokenReply}}", "waitUntilFinished": true }
+    }
+  ],
+  "suggestedTriggers": [
+    "Hey Siri voice phrase (the shortcut name)",
+    "Back Tap (Settings > Accessibility > Touch > Back Tap)",
+    "Action Button (iPhone 15/16 Pro)",
+    "AssistiveTouch custom action",
+    "Voice Control custom command",
+    "Lock Screen / Home Screen widget"
+  ]
+}

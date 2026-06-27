@@ -1,0 +1,19 @@
+{
+  "name": "Zeek — Voice Automation",
+  "short_name": "Zeek",
+  "description": "An accessibility-first voice automation hub for iPhone and iPad.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b1220",
+  "theme_color": "#0b1220",
+  "icons": [
+    {
+      "src": "./icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
