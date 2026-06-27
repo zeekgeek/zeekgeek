@@ -1,0 +1,30 @@
+{
+  "name": "zeekgeek-voice-hub",
+  "version": "1.0.0",
+  "description": "An accessibility-first voice automation hub for iPhone and iPad. Turn 'Hey Siri' into unlimited, configurable automations.",
+  "type": "module",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test"
+  },
+  "keywords": [
+    "voice",
+    "automation",
+    "accessibility",
+    "siri",
+    "shortcuts",
+    "ios",
+    "iphone",
+    "ipad",
+    "assistive-technology"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

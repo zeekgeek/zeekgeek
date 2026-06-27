@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Zeek">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1e90ff"/>
+      <stop offset="1" stop-color="#0b1220"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <!-- microphone -->
+  <rect x="216" y="120" width="80" height="170" rx="40" fill="#f4f7ff"/>
+  <path d="M168 250 a88 88 0 0 0 176 0" fill="none" stroke="#4cc2ff" stroke-width="22" stroke-linecap="round"/>
+  <rect x="244" y="338" width="24" height="54" rx="12" fill="#4cc2ff"/>
+  <rect x="196" y="392" width="120" height="22" rx="11" fill="#4cc2ff"/>
+  <!-- sound waves -->
+  <path d="M120 200 q-26 56 0 112" fill="none" stroke="#36d399" stroke-width="18" stroke-linecap="round"/>
+  <path d="M392 200 q26 56 0 112" fill="none" stroke="#36d399" stroke-width="18" stroke-linecap="round"/>
+</svg>

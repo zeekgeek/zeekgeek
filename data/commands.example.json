@@ -1,0 +1,65 @@
+[
+  {
+    "id": "morning_routine",
+    "description": "A single phrase that kicks off the whole morning.",
+    "phrases": ["good morning routine", "start my morning", "run my morning routine", "morning routine"],
+    "say": "Good morning, Andrew. Starting your morning routine: opening the blinds, turning on the kitchen light, and reading today's schedule.",
+    "webhook": {
+      "url": "https://example.com/hooks/morning",
+      "method": "POST",
+      "body": { "scene": "morning" }
+    },
+    "errorSay": "I started your morning routine, but one of the smart-home steps didn't respond."
+  },
+  {
+    "id": "night_routine",
+    "description": "Wind-down routine for bedtime.",
+    "phrases": ["good night", "goodnight", "bedtime routine", "run my night routine"],
+    "say": "Good night, Andrew. Turning off the lights, locking the door, and setting a wake-up reminder.",
+    "webhook": {
+      "url": "https://example.com/hooks/night",
+      "method": "POST",
+      "body": { "scene": "night" }
+    }
+  },
+  {
+    "id": "lights_on",
+    "description": "Turn the lights on.",
+    "phrases": ["turn on the lights", "lights on", "turn the lights on"],
+    "say": "Turning the lights on.",
+    "webhook": {
+      "url": "https://example.com/hooks/lights",
+      "method": "POST",
+      "body": { "state": "on" }
+    }
+  },
+  {
+    "id": "lights_off",
+    "description": "Turn the lights off.",
+    "phrases": ["turn off the lights", "lights off", "turn the lights off"],
+    "say": "Turning the lights off.",
+    "webhook": {
+      "url": "https://example.com/hooks/lights",
+      "method": "POST",
+      "body": { "state": "off" }
+    }
+  },
+  {
+    "id": "i_need_help",
+    "description": "Sends an alert to a caregiver. The most important command.",
+    "phrases": ["i need help", "call for help", "emergency", "help me now"],
+    "say": "Okay Andrew, I'm letting your caregiver know you need help right now. Stay where you are.",
+    "webhook": {
+      "url": "https://example.com/hooks/alert-caregiver",
+      "method": "POST",
+      "body": { "priority": "high", "message": "Andrew requested help via voice." }
+    },
+    "errorSay": "I couldn't reach your caregiver automatically. Try calling them directly, or say it again."
+  },
+  {
+    "id": "water_reminder",
+    "description": "Logs that water/medication was taken.",
+    "phrases": ["i took my medication", "i drank water", "i had my meds"],
+    "say": "Great job, Andrew. I've logged that for today."
+  }
+]
