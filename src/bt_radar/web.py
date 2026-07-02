@@ -122,6 +122,11 @@ DASHBOARD_HTML = """
 
     <section class="stack">
       <section class="panel">
+        <h2>Live scanned devices (right panel)</h2>
+        <div id="devices-right" class="device-list empty">No Bluetooth devices observed yet.</div>
+      </section>
+
+      <section class="panel">
         <h2>Proximity map (all devices)</h2>
         <canvas id="radar-map" width="960" height="340"></canvas>
         <p class="tiny-note">
@@ -182,6 +187,7 @@ DASHBOARD_HTML = """
       document.getElementById("counts").textContent = `${snapshot.present_count} in range / ${snapshot.device_count} total`;
       document.getElementById("updated").textContent = `Updated ${snapshot.generated_at}`;
       renderDevices();
+      renderRightDevices();
       drawRadarMap(snapshot.devices);
       renderDetails();
       renderEvents();
@@ -189,6 +195,45 @@ DASHBOARD_HTML = """
 
     function renderDevices() {
       const root = document.getElementById("devices");
+      if (!snapshot.devices.length) {
+        root.className = "device-list empty";
+        root.textContent = "No Bluetooth devices observed yet.";
+        return;
+      }
+      root.className = "device-list";
+      root.innerHTML = snapshot.devices.map((device) => {
+        const signalPercent = toPercent(device.rssi_smoothed ?? device.rssi);
+        const meters = formatDistance(device.estimated_distance_m);
+        return `
+          <div class="device ${device.address === selectedAddress ? "active" : ""}" data-address="${escapeHtml(device.address)}">
+            <div class="device-title">
+              <div>
+                <div class="name">${escapeHtml(device.name || "Unnamed Bluetooth device")}</div>
+                <div class="addr">${escapeHtml(device.address)}</div>
+              </div>
+              <span class="badge ${device.present ? "present" : "gone"}">${device.present ? "in range" : "left"}</span>
+            </div>
+            <div class="signal-row">
+              <span>RSSI ${device.rssi ?? "?"} dBm (smoothed ${device.rssi_smoothed ?? "?"})</span>
+              <span>${meters}</span>
+            </div>
+            <div class="bar"><div style="width:${signalPercent}%"></div></div>
+            <div class="signal-row">
+              <span>${escapeHtml(device.distance_label)} · ${escapeHtml(device.movement)}</span>
+              <span>seen ${device.seen_count}x</span>
+            </div>
+          </div>`;
+      }).join("");
+      root.querySelectorAll(".device").forEach((node) => {
+        node.onclick = () => {
+          selectedAddress = node.dataset.address;
+          render();
+        };
+      });
+    }
+
+    function renderRightDevices() {
+      const root = document.getElementById("devices-right");
       if (!snapshot.devices.length) {
         root.className = "device-list empty";
         root.textContent = "No Bluetooth devices observed yet.";
