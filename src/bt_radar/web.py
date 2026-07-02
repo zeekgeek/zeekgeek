@@ -16,8 +16,15 @@ def create_app(state: RadarState) -> FastAPI:
     app = FastAPI(title="Bluetooth Proximity Radar")
 
     @app.get("/", response_class=HTMLResponse)
-    async def index() -> str:
-        return DASHBOARD_HTML
+    async def index() -> HTMLResponse:
+        return HTMLResponse(
+            content=DASHBOARD_HTML,
+            headers={
+                "Cache-Control": "no-store, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )
 
     @app.get("/api/devices")
     async def devices() -> dict:
@@ -68,6 +75,7 @@ DASHBOARD_HTML = """
     h3 { margin: 14px 0 8px 0; font-size: 15px; }
     button { background: var(--blue); color: #06111f; border: 0; border-radius: 10px; padding: 10px 14px; font-weight: 700; cursor: pointer; }
     .stats { display: flex; gap: 12px; color: var(--muted); font-size: 14px; flex-wrap: wrap; }
+    .build-tag { color: #0b1020; background: #f59e0b; font-weight: 800; font-size: 12px; border-radius: 999px; padding: 4px 9px; }
     main { display: grid; grid-template-columns: minmax(330px, 420px) 1fr; gap: 16px; padding: 16px; align-items: start; }
     .panel { background: var(--panel); border: 1px solid #243047; border-radius: 14px; padding: 14px; box-shadow: 0 16px 40px rgba(0,0,0,.25); }
     .stack { display: grid; gap: 16px; }
@@ -109,6 +117,7 @@ DASHBOARD_HTML = """
       <div class="stats">
         <span id="counts">Waiting for scan data...</span>
         <span id="updated"></span>
+        <span class="build-tag">UI BUILD 2026-07-02-0042</span>
       </div>
     </div>
     <button id="notify">Enable browser notifications</button>
