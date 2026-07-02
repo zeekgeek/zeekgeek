@@ -28,6 +28,13 @@ python3 -m bt_radar
 
 If live scanning is unavailable (for example no `bluetoothd` / BlueZ service),
 the app now auto-switches to demo mode and posts a system event in the UI.
+If you want to require real live data only, use:
+
+```bash
+python3 -m bt_radar --live-only
+```
+
+In live-only mode, the app exits on scanner failure instead of using demo data.
 
 Linux hosts usually need:
 
@@ -71,6 +78,7 @@ python3 -m bt_radar --host 127.0.0.1 --port 8765 --stale-after 20
 - `--port`: dashboard port
 - `--stale-after`: seconds without sightings before a device is marked as left
 - `--no-auto-demo-fallback`: exit instead of auto-switching from live scanner to demo mode
+- `--live-only`: require live scanner and fail if unavailable
 - `--log-level`: `debug`, `info`, `warning`, or `error`
 
 The app also auto-selects the next free port if the requested `--port` is busy.

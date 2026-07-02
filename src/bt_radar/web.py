@@ -75,6 +75,9 @@ DASHBOARD_HTML = """
     h3 { margin: 14px 0 8px 0; font-size: 15px; }
     button { background: var(--blue); color: #06111f; border: 0; border-radius: 10px; padding: 10px 14px; font-weight: 700; cursor: pointer; }
     .stats { display: flex; gap: 12px; color: var(--muted); font-size: 14px; flex-wrap: wrap; }
+    .scanner-live { color: #052e16; background: #22c55e; font-weight: 800; font-size: 12px; border-radius: 999px; padding: 4px 9px; }
+    .scanner-demo { color: #111827; background: #fbbf24; font-weight: 800; font-size: 12px; border-radius: 999px; padding: 4px 9px; }
+    .scanner-error { color: #ffffff; background: #ef4444; font-weight: 800; font-size: 12px; border-radius: 999px; padding: 4px 9px; }
     .build-tag { color: #0b1020; background: #f59e0b; font-weight: 800; font-size: 12px; border-radius: 999px; padding: 4px 9px; }
     main { display: grid; grid-template-columns: minmax(330px, 420px) 1fr; gap: 16px; padding: 16px; align-items: start; }
     .panel { background: var(--panel); border: 1px solid #243047; border-radius: 14px; padding: 14px; box-shadow: 0 16px 40px rgba(0,0,0,.25); }
@@ -117,6 +120,7 @@ DASHBOARD_HTML = """
       <div class="stats">
         <span id="counts">Waiting for scan data...</span>
         <span id="updated"></span>
+        <span id="scanner-status" class="scanner-demo">SCANNER: STARTING</span>
         <span class="build-tag">UI BUILD 2026-07-02-0042</span>
       </div>
     </div>
@@ -195,11 +199,27 @@ DASHBOARD_HTML = """
       if (!snapshot) return;
       document.getElementById("counts").textContent = `${snapshot.present_count} in range / ${snapshot.device_count} total`;
       document.getElementById("updated").textContent = `Updated ${snapshot.generated_at}`;
+      renderScannerStatus(snapshot.scanner || {});
       renderDevices();
       renderRightDevices();
       drawRadarMap(snapshot.devices);
       renderDetails();
       renderEvents();
+    }
+
+    function renderScannerStatus(scanner) {
+      const node = document.getElementById("scanner-status");
+      const mode = (scanner.mode || "unknown").toUpperCase();
+      const detail = scanner.status || "unknown scanner state";
+      node.textContent = `SCANNER: ${mode}`;
+      node.title = detail;
+      if (scanner.mode === "live") {
+        node.className = "scanner-live";
+      } else if (String(scanner.mode || "").includes("error")) {
+        node.className = "scanner-error";
+      } else {
+        node.className = "scanner-demo";
+      }
     }
 
     function renderDevices() {

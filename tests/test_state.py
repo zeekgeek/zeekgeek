@@ -29,6 +29,7 @@ class StateTests(unittest.TestCase):
 
 async def _state_flow() -> None:
     state = RadarState(stale_after=1)
+    await state.set_scanner_status(mode="live", status="Scanning live Bluetooth advertisements", is_live=True)
     now = datetime.now(UTC)
     events = await state.observe(
         Observation(
@@ -47,6 +48,8 @@ async def _state_flow() -> None:
 
     snapshot = await state.snapshot()
     assert snapshot["present_count"] == 1
+    assert snapshot["scanner"]["mode"] == "live"
+    assert snapshot["scanner"]["is_live"] is True
 
     await state.observe(
         Observation(

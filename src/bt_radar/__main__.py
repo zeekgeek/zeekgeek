@@ -25,6 +25,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stale-after", type=float, default=20.0, help="Seconds before a missing device is marked left")
     parser.add_argument("--demo", action="store_true", help="Use simulated Bluetooth devices instead of live hardware")
     parser.add_argument(
+        "--live-only",
+        action="store_true",
+        help="Require live Bluetooth scanning; exit if live scanner is unavailable",
+    )
+    parser.add_argument(
         "--no-auto-demo-fallback",
         action="store_true",
         help="Exit if live scanner fails instead of automatically switching to demo mode",
@@ -36,17 +41,25 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
     logging.basicConfig(level=getattr(logging, args.log_level.upper()))
-    asyncio.run(run(args))
+    try:
+        asyncio.run(run(args))
+    except Exception as exc:
+        print(f"Radar startup failed: {type(exc).__name__}: {exc}")
+        raise SystemExit(2) from exc
 
 
 async def run(args: argparse.Namespace) -> None:
+    if args.demo and args.live_only:
+        raise ValueError("--demo and --live-only cannot be used together.")
+
     state = RadarState(stale_after=args.stale_after)
     app = create_app(state)
+    auto_demo_fallback = not args.no_auto_demo_fallback and not args.live_only
     scanner_task = asyncio.create_task(
         _run_scanner(
             state=state,
             force_demo=args.demo,
-            auto_demo_fallback=not args.no_auto_demo_fallback,
+            auto_demo_fallback=auto_demo_fallback,
         ),
         name="bluetooth-scanner",
     )
@@ -71,6 +84,8 @@ async def run(args: argparse.Namespace) -> None:
     print(f"Bluetooth radar dashboard: http://{args.host}:{chosen_port}")
     if args.demo:
         print("Running in demo mode with simulated devices.")
+    elif args.live_only:
+        print("Running in live-only mode. The app will exit if BLE scanning is unavailable.")
     else:
         print("Running live Bluetooth scan with automatic demo fallback if unavailable.")
 
@@ -123,21 +138,32 @@ def _port_is_available(host: str, port: int) -> bool:
 
 async def _run_scanner(*, state: RadarState, force_demo: bool, auto_demo_fallback: bool) -> None:
     if force_demo:
+        await state.set_scanner_status(mode="demo", status="Using simulated Bluetooth data", is_live=False)
         await DemoScannerBackend(state).run()
         return
 
     try:
+        await state.set_scanner_status(mode="live", status="Scanning live Bluetooth advertisements", is_live=True)
         await BleakScannerBackend(state).run()
     except Exception as exc:
-        message = (
-            f"Live scanner unavailable ({type(exc).__name__}: {exc}). "
-            "Switching to demo scanner."
+        await state.set_scanner_status(
+            mode="live-error",
+            status=f"Live scanner error: {type(exc).__name__}: {exc}",
+            is_live=False,
         )
+        if auto_demo_fallback:
+            message = (
+                f"Live scanner unavailable ({type(exc).__name__}: {exc}). "
+                "Switching to demo scanner."
+            )
+        else:
+            message = f"Live scanner unavailable ({type(exc).__name__}: {exc})."
         LOGGER.warning(message)
-        await state.add_system_event("scanner-fallback", message)
+        await state.add_system_event("scanner-fallback" if auto_demo_fallback else "scanner-error", message)
         if not auto_demo_fallback:
             raise
         print(message)
+        await state.set_scanner_status(mode="demo-fallback", status="Live scan unavailable; using demo data", is_live=False)
         await DemoScannerBackend(state).run()
 
 

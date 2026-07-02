@@ -167,6 +167,11 @@ class RadarState:
         self.stale_after = stale_after
         self._devices: dict[str, DeviceTrack] = {}
         self._events: deque[dict[str, Any]] = deque(maxlen=200)
+        self._scanner = {
+            "mode": "initializing",
+            "status": "Radar is starting",
+            "is_live": False,
+        }
         self._lock = asyncio.Lock()
 
     async def observe(self, observation: Observation) -> list[dict[str, Any]]:
@@ -227,6 +232,7 @@ class RadarState:
                 "generated_at": iso_time(now),
                 "device_count": len(devices),
                 "present_count": sum(1 for item in devices if item["present"]),
+                "scanner": dict(self._scanner),
                 "devices": devices,
                 "events": list(self._events),
             }
@@ -242,6 +248,14 @@ class RadarState:
             }
             self._events.append(event)
             return event
+
+    async def set_scanner_status(self, *, mode: str, status: str, is_live: bool) -> None:
+        async with self._lock:
+            self._scanner = {
+                "mode": mode,
+                "status": status,
+                "is_live": is_live,
+            }
 
 
 def movement_label(rssi_history: list[int]) -> str:
