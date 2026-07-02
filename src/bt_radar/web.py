@@ -64,56 +64,88 @@ DASHBOARD_HTML = """
     body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif; background: var(--bg); color: var(--text); }
     header { padding: 20px 28px; border-bottom: 1px solid #243047; display: flex; justify-content: space-between; gap: 16px; align-items: center; }
     h1 { font-size: 22px; margin: 0; }
+    h2 { margin: 0 0 10px 0; font-size: 18px; }
+    h3 { margin: 14px 0 8px 0; font-size: 15px; }
     button { background: var(--blue); color: #06111f; border: 0; border-radius: 10px; padding: 10px 14px; font-weight: 700; cursor: pointer; }
-    main { display: grid; grid-template-columns: minmax(340px, 440px) 1fr; gap: 18px; padding: 18px; }
-    .panel { background: var(--panel); border: 1px solid #243047; border-radius: 16px; padding: 16px; box-shadow: 0 16px 40px rgba(0,0,0,.25); }
-    .stats { display: flex; gap: 12px; color: var(--muted); font-size: 14px; }
-    .device { border: 1px solid #26324b; border-radius: 14px; padding: 12px; margin: 10px 0; background: var(--panel-2); cursor: pointer; }
+    .stats { display: flex; gap: 12px; color: var(--muted); font-size: 14px; flex-wrap: wrap; }
+    main { display: grid; grid-template-columns: minmax(330px, 420px) 1fr; gap: 16px; padding: 16px; align-items: start; }
+    .panel { background: var(--panel); border: 1px solid #243047; border-radius: 14px; padding: 14px; box-shadow: 0 16px 40px rgba(0,0,0,.25); }
+    .stack { display: grid; gap: 16px; }
+    .device-list { max-height: 76vh; overflow: auto; }
+    .device { border: 1px solid #26324b; border-radius: 12px; padding: 10px; margin: 8px 0; background: var(--panel-2); cursor: pointer; }
     .device.active { outline: 2px solid var(--blue); }
-    .device-title { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
+    .device-title { display: flex; justify-content: space-between; align-items: start; gap: 10px; }
     .name { font-weight: 800; }
     .addr { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
     .badge { border-radius: 999px; padding: 4px 8px; font-size: 12px; font-weight: 700; white-space: nowrap; }
     .present { background: rgba(34,197,94,.15); color: var(--green); }
     .gone { background: rgba(148,163,184,.15); color: var(--muted); }
+    .signal-row { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--muted); margin: 6px 0 4px 0; }
+    .bar { width: 100%; height: 8px; border-radius: 6px; background: #091427; overflow: hidden; border: 1px solid #22324a; }
+    .bar > div { height: 100%; background: linear-gradient(90deg, #1e3a8a, #38bdf8, #22c55e); }
+    canvas { width: 100%; background: #08101f; border-radius: 12px; border: 1px solid #243047; display: block; }
+    #radar-map { height: 340px; }
+    #signal-graph { height: 250px; margin-top: 10px; }
+    dl { display: grid; grid-template-columns: 170px 1fr; gap: 8px 12px; margin: 8px 0 0 0; }
+    dt { color: var(--muted); }
+    dd { margin: 0; overflow-wrap: anywhere; }
+    .finding { padding: 9px; border-radius: 10px; background: #0d1629; margin: 8px 0; }
     .severity-info { color: var(--blue); }
     .severity-low { color: var(--yellow); }
     .severity-medium, .severity-high { color: var(--red); }
-    canvas { width: 100%; height: 320px; background: #08101f; border-radius: 14px; border: 1px solid #243047; }
-    dl { display: grid; grid-template-columns: 160px 1fr; gap: 8px 12px; }
-    dt { color: var(--muted); }
-    dd { margin: 0; overflow-wrap: anywhere; }
-    .finding { padding: 10px; border-radius: 12px; background: #0d1629; margin: 8px 0; }
     .events { max-height: 220px; overflow: auto; color: var(--muted); font-size: 13px; }
-    .empty { color: var(--muted); text-align: center; padding: 40px 0; }
-    @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+    .empty { color: var(--muted); text-align: center; padding: 34px 0; }
+    .tiny-note { font-size: 12px; color: var(--muted); margin-top: 6px; }
+    @media (max-width: 980px) {
+      main { grid-template-columns: 1fr; }
+      .device-list { max-height: none; }
+    }
   </style>
 </head>
 <body>
   <header>
     <div>
       <h1>Bluetooth Proximity Radar</h1>
-      <div class="stats"><span id="counts">Waiting for scan data...</span><span id="updated"></span></div>
+      <div class="stats">
+        <span id="counts">Waiting for scan data...</span>
+        <span id="updated"></span>
+      </div>
     </div>
     <button id="notify">Enable browser notifications</button>
   </header>
+
   <main>
     <section class="panel">
-      <h2>Detected clients</h2>
-      <div id="devices" class="empty">No Bluetooth devices observed yet.</div>
+      <h2>Detected devices</h2>
+      <div id="devices" class="device-list empty">No Bluetooth devices observed yet.</div>
     </section>
-    <section class="panel">
-      <h2>Movement graph</h2>
-      <canvas id="graph" width="900" height="320"></canvas>
-      <div id="details" class="empty">Select a device to see details.</div>
-      <h3>Recent events</h3>
-      <div id="events" class="events"></div>
+
+    <section class="stack">
+      <section class="panel">
+        <h2>Proximity map (all devices)</h2>
+        <canvas id="radar-map" width="960" height="340"></canvas>
+        <p class="tiny-note">
+          Ring guides: 1m, 3m, 8m, 20m. Distance is estimated from smoothed RSSI and can vary by environment.
+        </p>
+      </section>
+
+      <section class="panel">
+        <h2>Selected device signal history</h2>
+        <canvas id="signal-graph" width="960" height="250"></canvas>
+        <div id="details" class="empty">Select a device to see details.</div>
+      </section>
+
+      <section class="panel">
+        <h2>Recent events</h2>
+        <div id="events" class="events"></div>
+      </section>
     </section>
   </main>
+
   <script>
     let snapshot = null;
     let selectedAddress = null;
-    let notifiedEvents = new Set();
+    const notifiedEvents = new Set();
 
     document.getElementById("notify").onclick = async () => {
       if (!("Notification" in window)) {
@@ -126,7 +158,9 @@ DASHBOARD_HTML = """
     const source = new EventSource("/api/events");
     source.onmessage = (message) => {
       snapshot = JSON.parse(message.data);
-      if (!selectedAddress && snapshot.devices.length) selectedAddress = snapshot.devices[0].address;
+      if (snapshot.devices.length && !snapshot.devices.find((d) => d.address === selectedAddress)) {
+        selectedAddress = snapshot.devices[0].address;
+      }
       render();
       notifyNewEvents(snapshot.events || []);
     };
@@ -145,9 +179,10 @@ DASHBOARD_HTML = """
 
     function render() {
       if (!snapshot) return;
-      document.getElementById("counts").textContent = `${snapshot.present_count} present / ${snapshot.device_count} total`;
+      document.getElementById("counts").textContent = `${snapshot.present_count} in range / ${snapshot.device_count} total`;
       document.getElementById("updated").textContent = `Updated ${snapshot.generated_at}`;
       renderDevices();
+      drawRadarMap(snapshot.devices);
       renderDetails();
       renderEvents();
     }
@@ -155,32 +190,114 @@ DASHBOARD_HTML = """
     function renderDevices() {
       const root = document.getElementById("devices");
       if (!snapshot.devices.length) {
-        root.className = "empty";
+        root.className = "device-list empty";
         root.textContent = "No Bluetooth devices observed yet.";
         return;
       }
-      root.className = "";
-      root.innerHTML = snapshot.devices.map((device) => `
-        <div class="device ${device.address === selectedAddress ? "active" : ""}" data-address="${escapeHtml(device.address)}">
-          <div class="device-title">
-            <div>
-              <div class="name">${escapeHtml(device.name || "Unnamed Bluetooth device")}</div>
-              <div class="addr">${escapeHtml(device.address)}</div>
+      root.className = "device-list";
+      root.innerHTML = snapshot.devices.map((device) => {
+        const signalPercent = toPercent(device.rssi_smoothed ?? device.rssi);
+        const meters = formatDistance(device.estimated_distance_m);
+        return `
+          <div class="device ${device.address === selectedAddress ? "active" : ""}" data-address="${escapeHtml(device.address)}">
+            <div class="device-title">
+              <div>
+                <div class="name">${escapeHtml(device.name || "Unnamed Bluetooth device")}</div>
+                <div class="addr">${escapeHtml(device.address)}</div>
+              </div>
+              <span class="badge ${device.present ? "present" : "gone"}">${device.present ? "in range" : "left"}</span>
             </div>
-            <span class="badge ${device.present ? "present" : "gone"}">${device.present ? "in range" : "left"}</span>
-          </div>
-          <p>${device.rssi ?? "?"} dBm · ${escapeHtml(device.distance_label)} · ${escapeHtml(device.movement)}</p>
-          <p>${escapeHtml(device.address_family)} · seen ${device.seen_count} times</p>
-        </div>`).join("");
+            <div class="signal-row">
+              <span>RSSI ${device.rssi ?? "?"} dBm (smoothed ${device.rssi_smoothed ?? "?"})</span>
+              <span>${meters}</span>
+            </div>
+            <div class="bar"><div style="width:${signalPercent}%"></div></div>
+            <div class="signal-row">
+              <span>${escapeHtml(device.distance_label)} · ${escapeHtml(device.movement)}</span>
+              <span>seen ${device.seen_count}x</span>
+            </div>
+          </div>`;
+      }).join("");
       root.querySelectorAll(".device").forEach((node) => {
-        node.onclick = () => { selectedAddress = node.dataset.address; render(); };
+        node.onclick = () => {
+          selectedAddress = node.dataset.address;
+          render();
+        };
       });
     }
 
+    function drawRadarMap(devices) {
+      const canvas = document.getElementById("radar-map");
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
+      const maxRadius = Math.min(canvas.width, canvas.height) * 0.43;
+      const ringDistances = [1, 3, 8, 20];
+
+      ctx.strokeStyle = "#243047";
+      ctx.lineWidth = 1;
+      for (const dist of ringDistances) {
+        const ring = mapDistanceToRadius(dist, maxRadius);
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, ring, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = "#94a3b8";
+        ctx.font = "12px sans-serif";
+        ctx.fillText(`${dist}m`, centerX + ring + 6, centerY - 4);
+      }
+
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, 6, 0, Math.PI * 2);
+      ctx.fillStyle = "#e8eefc";
+      ctx.fill();
+      ctx.fillStyle = "#94a3b8";
+      ctx.font = "12px sans-serif";
+      ctx.fillText("sensor", centerX + 10, centerY + 20);
+
+      if (!devices.length) {
+        ctx.fillStyle = "#94a3b8";
+        ctx.font = "15px sans-serif";
+        ctx.fillText("No devices to plot yet", centerX - 70, centerY);
+        return;
+      }
+
+      const plotted = devices.filter((device) => device.present).concat(devices.filter((device) => !device.present));
+      for (const device of plotted) {
+        const estimatedDistance = typeof device.estimated_distance_m === "number"
+          ? device.estimated_distance_m
+          : estimateDistanceFromRssi(device.rssi_smoothed ?? device.rssi);
+        const angle = hashToAngle(device.address);
+        const radius = mapDistanceToRadius(estimatedDistance, maxRadius);
+        const x = centerX + Math.cos(angle) * radius;
+        const y = centerY + Math.sin(angle) * radius;
+        const color = device.address === selectedAddress ? "#38bdf8" : (device.present ? "#22c55e" : "#64748b");
+        const alpha = device.present ? 0.85 : 0.35;
+        const size = 4 + Math.round((toPercent(device.rssi_smoothed ?? device.rssi) / 100) * 6);
+
+        ctx.strokeStyle = `rgba(56,189,248,${alpha * 0.35})`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(centerX, centerY);
+        ctx.lineTo(x, y);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(x, y, size, 0, Math.PI * 2);
+        ctx.fillStyle = hexToRgba(color, alpha);
+        ctx.fill();
+
+        ctx.fillStyle = "#e8eefc";
+        ctx.font = "12px sans-serif";
+        ctx.fillText(shortLabel(device), x + size + 4, y - 5);
+      }
+    }
+
     function renderDetails() {
-      const device = snapshot.devices.find((item) => item.address === selectedAddress);
-      drawGraph(device);
       const root = document.getElementById("details");
+      const device = snapshot.devices.find((item) => item.address === selectedAddress);
+      drawSignalGraph(device);
       if (!device) {
         root.className = "empty";
         root.textContent = "Select a device to see details.";
@@ -197,7 +314,9 @@ DASHBOARD_HTML = """
           <dt>Address class</dt><dd>${escapeHtml(device.address_family)}</dd>
           <dt>Address type</dt><dd>${escapeHtml(device.address_type || "unknown")}</dd>
           <dt>Manufacturer</dt><dd>${escapeHtml(device.manufacturer_hex || "unknown")}</dd>
-          <dt>RSSI</dt><dd>${device.rssi ?? "unknown"} dBm (${escapeHtml(device.distance_label)})</dd>
+          <dt>Raw RSSI</dt><dd>${device.rssi ?? "unknown"} dBm</dd>
+          <dt>Smoothed RSSI</dt><dd>${device.rssi_smoothed ?? "unknown"} dBm</dd>
+          <dt>Estimated distance</dt><dd>${formatDistance(device.estimated_distance_m)} (${escapeHtml(device.distance_label)})</dd>
           <dt>Movement</dt><dd>${escapeHtml(device.movement)}</dd>
           <dt>First seen</dt><dd>${escapeHtml(device.first_seen)}</dd>
           <dt>Last seen</dt><dd>${escapeHtml(device.last_seen)} (${device.stale_seconds}s ago)</dd>
@@ -208,45 +327,129 @@ DASHBOARD_HTML = """
         ${findings}`;
     }
 
+    function drawSignalGraph(device) {
+      const canvas = document.getElementById("signal-graph");
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      ctx.strokeStyle = "#243047";
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= 6; i++) {
+        const y = 20 + i * ((canvas.height - 40) / 6);
+        ctx.beginPath();
+        ctx.moveTo(40, y);
+        ctx.lineTo(canvas.width - 16, y);
+        ctx.stroke();
+      }
+      ctx.fillStyle = "#94a3b8";
+      ctx.font = "12px sans-serif";
+      ctx.fillText("-30 dBm (near)", 44, 34);
+      ctx.fillText("-100 dBm (far)", 44, canvas.height - 10);
+
+      if (!device || !device.rssi_history || !device.rssi_history.length) {
+        ctx.fillStyle = "#94a3b8";
+        ctx.fillText("Select a device to plot history", 44, canvas.height / 2);
+        return;
+      }
+
+      const raw = device.rssi_history;
+      const smooth = smoothSeries(raw);
+      drawLine(ctx, raw, "#64748b", 2, canvas);
+      drawLine(ctx, smooth, "#38bdf8", 3, canvas);
+
+      ctx.fillStyle = "#94a3b8";
+      ctx.fillText("Gray: raw RSSI  |  Cyan: smoothed RSSI", 44, canvas.height - 26);
+    }
+
+    function drawLine(ctx, values, color, width, canvas) {
+      const xStep = (canvas.width - 64) / Math.max(values.length - 1, 1);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      values.forEach((rssi, index) => {
+        const x = 40 + index * xStep;
+        const y = mapRssi(rssi, canvas.height);
+        if (index === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+
     function renderEvents() {
       const root = document.getElementById("events");
       const events = (snapshot.events || []).slice(-30).reverse();
       root.innerHTML = events.map((event) => `<div>${escapeHtml(event.at)} · ${escapeHtml(event.type)} · ${escapeHtml(event.name || event.address)} · ${escapeHtml(event.message)}</div>`).join("");
     }
 
-    function drawGraph(device) {
-      const canvas = document.getElementById("graph");
-      const ctx = canvas.getContext("2d");
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.strokeStyle = "#243047";
-      ctx.lineWidth = 1;
-      for (let i = 0; i <= 5; i++) {
-        const y = 20 + i * 54;
-        ctx.beginPath(); ctx.moveTo(40, y); ctx.lineTo(canvas.width - 20, y); ctx.stroke();
-      }
-      ctx.fillStyle = "#94a3b8";
-      ctx.font = "13px sans-serif";
-      ctx.fillText("-30 dBm near", 44, 34);
-      ctx.fillText("-100 dBm far", 44, canvas.height - 18);
-      if (!device || !device.rssi_history.length) return;
-      const values = device.rssi_history;
-      const xStep = (canvas.width - 80) / Math.max(values.length - 1, 1);
-      ctx.strokeStyle = "#38bdf8";
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      values.forEach((rssi, index) => {
-        const x = 40 + index * xStep;
-        const y = mapRssi(rssi, canvas.height);
-        if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    function smoothSeries(values, window = 6) {
+      return values.map((_, end) => {
+        const start = Math.max(0, end - window + 1);
+        const chunk = values.slice(start, end + 1);
+        let weighted = 0;
+        let sum = 0;
+        chunk.forEach((value, index) => {
+          const weight = index + 1;
+          weighted += value * weight;
+          sum += weight;
+        });
+        return Math.round(weighted / sum);
       });
-      ctx.stroke();
-      ctx.fillStyle = "#e8eefc";
-      ctx.fillText(`${device.name || device.address} RSSI history`, 44, canvas.height - 42);
+    }
+
+    function toPercent(rssi) {
+      if (typeof rssi !== "number") return 0;
+      const clamped = Math.max(-100, Math.min(-35, rssi));
+      return Math.round(((clamped + 100) / 65) * 100);
     }
 
     function mapRssi(rssi, height) {
       const clamped = Math.max(-100, Math.min(-30, rssi));
       return 20 + ((-30 - clamped) / 70) * (height - 40);
+    }
+
+    function estimateDistanceFromRssi(rssi) {
+      if (typeof rssi !== "number") return 20;
+      const txPower = -59;
+      const pathLossExponent = 2.2;
+      const distance = Math.pow(10, (txPower - rssi) / (10 * pathLossExponent));
+      return Math.max(0.2, Math.min(distance, 20));
+    }
+
+    function mapDistanceToRadius(distanceMeters, maxRadius) {
+      const distance = Math.max(0.2, Math.min(distanceMeters || 20, 20));
+      const normalized = Math.log10(distance + 1) / Math.log10(21);
+      return 22 + normalized * (maxRadius - 22);
+    }
+
+    function hashToAngle(text) {
+      let hash = 0;
+      for (let i = 0; i < text.length; i++) {
+        hash = ((hash << 5) - hash) + text.charCodeAt(i);
+        hash |= 0;
+      }
+      const positive = hash >>> 0;
+      return (positive % 360) * (Math.PI / 180);
+    }
+
+    function shortLabel(device) {
+      const name = (device.name || "").trim();
+      if (name) return name.length > 20 ? `${name.slice(0, 19)}…` : name;
+      return device.address.slice(-8);
+    }
+
+    function formatDistance(distanceMeters) {
+      if (typeof distanceMeters !== "number") return "distance unknown";
+      if (distanceMeters < 1) return `${Math.round(distanceMeters * 100)} cm est.`;
+      return `${distanceMeters.toFixed(2)} m est.`;
+    }
+
+    function hexToRgba(hex, alpha) {
+      const clean = hex.replace("#", "");
+      const bigint = parseInt(clean, 16);
+      const r = (bigint >> 16) & 255;
+      const g = (bigint >> 8) & 255;
+      const b = bigint & 255;
+      return `rgba(${r},${g},${b},${alpha})`;
     }
 
     function escapeHtml(value) {

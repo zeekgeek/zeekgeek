@@ -118,8 +118,10 @@ class DeviceTrack:
     def snapshot(self, now: datetime) -> dict[str, Any]:
         rssi_values = list(self.rssi_history)
         current_rssi = rssi_values[-1] if rssi_values else None
+        smoothed_rssi = smooth_rssi(rssi_values)
         stale_seconds = (now - self.last_seen).total_seconds()
-        distance_label = estimate_distance_label(current_rssi)
+        estimated_distance_m = estimate_distance_meters(smoothed_rssi, self.tx_power)
+        distance_label = estimate_distance_label(smoothed_rssi)
         movement = movement_label(rssi_values)
         findings = evaluate_device(
             address=self.address,
@@ -149,8 +151,10 @@ class DeviceTrack:
             "reappear_count": self.reappear_count,
             "present": self.present,
             "rssi": current_rssi,
+            "rssi_smoothed": smoothed_rssi,
             "rssi_history": rssi_values,
             "time_history": list(self.time_history),
+            "estimated_distance_m": estimated_distance_m,
             "distance_label": distance_label,
             "movement": movement,
             "findings": [asdict(finding) for finding in findings],
@@ -261,3 +265,28 @@ def estimate_distance_label(rssi: int | None) -> str:
     if rssi >= -80:
         return "mid-range"
     return "far/weak"
+
+
+def smooth_rssi(rssi_history: list[int], window: int = 6) -> int | None:
+    if not rssi_history:
+        return None
+    tail = rssi_history[-window:]
+    weighted_total = 0.0
+    weight_sum = 0.0
+    for index, rssi in enumerate(tail, start=1):
+        weighted_total += rssi * index
+        weight_sum += index
+    return int(round(weighted_total / weight_sum))
+
+
+def estimate_distance_meters(rssi: int | None, tx_power: int | None = None) -> float | None:
+    """Approximate distance from RSSI using log-distance path loss.
+
+    This is a coarse estimate and can vary substantially indoors.
+    """
+    if rssi is None:
+        return None
+    calibrated_tx_power = tx_power if tx_power is not None else -59
+    path_loss_exponent = 2.2
+    distance = 10 ** ((calibrated_tx_power - rssi) / (10 * path_loss_exponent))
+    return round(max(0.2, min(distance, 80.0)), 2)
