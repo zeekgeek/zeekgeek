@@ -97,3 +97,88 @@ python3 -m unittest discover -s tests
   - `bluetoothd` is installed and running
   - your adapter is present and enabled
   - your session has BLE scan permission
+
+---
+
+# WiFi Motion Radar
+
+A separate, self-contained radar for **WiFi** devices. It scans nearby WiFi
+access points, tracks each one by BSSID, classifies every target as
+**stationary** or **moving** from its signal history, plots them on a
+proximity map, and raises an **alarm when a device approaches within a
+configurable range**.
+
+## Quick start
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .
+python3 -m wifi_radar --demo
+```
+
+Open <http://127.0.0.1:8770>, click **Enable notifications** and **Sound: on**,
+then watch the simulated "Espressif" device walk toward the sensor until it
+crosses the alarm ring.
+
+For a live scan (Linux, needs the `iw` tool and usually root):
+
+```bash
+sudo python3 -m wifi_radar
+```
+
+If live scanning is unavailable (no `iw`, no wireless interface, or missing
+permission) the app auto-switches to demo mode and posts a system event.
+
+## How motion is classified
+
+Each device is tracked only through its received signal strength (RSSI) over
+time:
+
+- **Stationary**: the recent RSSI series is flat (low jitter and no drift).
+- **Moving**: the RSSI either trends (getting stronger/weaker) or jitters well
+  beyond normal measurement noise.
+- **Direction**: `approaching`, `departing`, or `steady`, from the RSSI slope.
+
+RSSI is noisy — walls, reflections, antenna orientation, and transmit-power
+changes all distort it — so treat these labels and distances as hints, not
+measurements.
+
+## The proximity alarm
+
+- A red dashed ring on the map shows the current alarm range.
+- When a device's estimated distance crosses **inside** that range, the radar
+  fires an `alarm` event, flashes a banner, sends a browser notification, and
+  (if enabled) beeps.
+- Hysteresis prevents re-firing: the device must move back out past
+  `range × 1.2` before it can alarm again.
+- Set the range live with the header slider, or with `--alarm-range` at
+  startup. Changing the range is also exposed at `POST /api/alarm`.
+
+## Command options
+
+```text
+python3 -m wifi_radar --host 127.0.0.1 --port 8770 --alarm-range 5 --scan-interval 3
+```
+
+- `--demo`: simulate WiFi devices instead of scanning hardware
+- `--interface`: WiFi interface to scan (auto-detected if omitted)
+- `--alarm-range`: alarm when a device is within this many metres
+- `--scan-interval`: seconds between live `iw` scans
+- `--stale-after`: seconds without sightings before a device is marked left
+- `--no-auto-demo-fallback`: exit instead of auto-switching to demo mode
+- `--host` / `--port` / `--log-level`
+
+The app also auto-selects the next free port if the requested `--port` is busy.
+
+## API
+
+- `GET /api/devices`: current snapshot of devices, motion labels, and alarm state
+- `POST /api/alarm`: set the alarm range, body `{"range_m": 5}`
+- `GET /api/events`: Server-Sent Events stream for live UI updates
+
+## Tests
+
+```bash
+python3 -m unittest discover -s tests
+```
