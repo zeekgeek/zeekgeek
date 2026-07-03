@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cursor Budget</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0d0d0d;
+      --panel: #171717;
+      --border: #2a2a2a;
+      --text: #ededed;
+      --muted: #888;
+      --accent: #a3e635;
+      --warn: #fbbf24;
+      --danger: #f87171;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      max-width: 420px;
+      margin-inline: auto;
+      padding: 16px 16px 32px;
+    }
+    h1 { font-size: 18px; margin: 0 0 4px; font-weight: 600; }
+    .sub { color: var(--muted); font-size: 12px; margin-bottom: 16px; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 12px;
+    }
+    label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+    input, select, button {
+      font: inherit;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      padding: 8px 10px;
+      width: 100%;
+    }
+    button {
+      cursor: pointer;
+      background: #222;
+      font-weight: 600;
+    }
+    button.primary { background: var(--accent); color: #111; border-color: var(--accent); }
+    button.ghost { background: transparent; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .meter {
+      height: 8px;
+      background: #222;
+      border-radius: 4px;
+      overflow: hidden;
+      margin: 10px 0 6px;
+    }
+    .meter > div { height: 100%; background: var(--accent); transition: width .2s; }
+    .meter.warn > div { background: var(--warn); }
+    .meter.over > div { background: var(--danger); }
+    .big { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; }
+    .quick { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
+    .quick button { font-size: 12px; padding: 10px 6px; }
+    ul { list-style: none; padding: 0; margin: 0; max-height: 160px; overflow: auto; }
+    li {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+    li:last-child { border-bottom: 0; }
+    .amt { font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .tips { font-size: 12px; color: var(--muted); }
+    .tips li { display: list-item; list-style: disc; margin-left: 16px; padding: 2px 0; border: 0; }
+    .check { display: flex; align-items: start; gap: 8px; margin: 6px 0; font-size: 13px; }
+    .check input { width: auto; margin-top: 3px; }
+    .foot { font-size: 11px; color: var(--muted); text-align: center; margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <h1>Cursor Budget</h1>
+  <p class="sub">Local only · no server · no network · data stays on your device</p>
+
+  <div class="card">
+    <label for="budget">Monthly budget (USD)</label>
+    <input id="budget" type="number" min="0" step="1" placeholder="20">
+    <div class="meter" id="meter"><div id="meter-fill" style="width:0%"></div></div>
+    <div class="row">
+      <div>
+        <div class="sub">Spent this month</div>
+        <div class="big" id="spent">$0</div>
+      </div>
+      <div style="text-align:right">
+        <div class="sub">Remaining</div>
+        <div class="big" id="left">$0</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="sub" style="margin-bottom:8px">Before starting a Cloud Agent</div>
+    <label class="check"><input type="checkbox" id="c1"> Can local Tab / Agent handle this?</label>
+    <label class="check"><input type="checkbox" id="c2"> Scope is one small task?</label>
+    <label class="check"><input type="checkbox" id="c3"> Prompt is short and specific?</label>
+    <button class="ghost" type="button" id="reset-checks" style="margin-top:8px;width:auto;font-size:12px">Reset checklist</button>
+  </div>
+
+  <div class="card">
+    <label for="note">Log spend (your estimate)</label>
+    <div class="row" style="margin-bottom:8px">
+      <input id="amount" type="number" min="0" step="0.01" placeholder="Amount">
+      <select id="preset">
+        <option value="">Custom</option>
+        <option value="0.5">Cloud Agent (light) $0.50</option>
+        <option value="2">Cloud Agent (medium) $2</option>
+        <option value="5">Cloud Agent (heavy) $5</option>
+        <option value="0">Local only $0</option>
+      </select>
+    </div>
+    <input id="note" type="text" placeholder="Note (optional)" style="margin-bottom:8px">
+    <button class="primary" type="button" id="add">Add entry</button>
+    <div class="quick">
+      <button type="button" data-amt="0.5" data-note="Cloud Agent light">+ Light $0.50</button>
+      <button type="button" data-amt="2" data-note="Cloud Agent">+ Agent $2</button>
+      <button type="button" data-amt="5" data-note="Cloud Agent heavy">+ Heavy $5</button>
+      <button type="button" data-amt="0" data-note="Local work">+ Local $0</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="sub" style="margin-bottom:8px">This month</div>
+    <ul id="entries"></ul>
+    <button class="ghost" type="button" id="clear" style="margin-top:8px;font-size:12px">Clear month</button>
+  </div>
+
+  <div class="card tips">
+    <strong>Free / cheap habits</strong>
+    <ul>
+      <li>Use local Agent + Tab for edits; reserve Cloud Agents for long autonomous jobs.</li>
+      <li>One focused task per agent run — smaller prompts cost less.</li>
+      <li>Check usage in Cursor Settings → Billing before starting big sessions.</li>
+      <li>Prefer Ask mode when you only need answers, not file changes.</li>
+    </ul>
+  </div>
+
+  <p class="foot">Open this file anytime: <code>tools/cursor-budget/index.html</code><br>Amounts are your estimates — edit presets in the form above.</p>
+
+  <script>
+    const KEY = "cursor-budget-v1";
+
+    function monthKey() {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    }
+
+    function load() {
+      try {
+        return JSON.parse(localStorage.getItem(KEY) || "{}");
+      } catch {
+        return {};
+      }
+    }
+
+    function save(data) {
+      localStorage.setItem(KEY, JSON.stringify(data));
+    }
+
+    function state() {
+      const data = load();
+      const mk = monthKey();
+      if (!data.months) data.months = {};
+      if (!data.months[mk]) data.months[mk] = { budget: data.budget ?? 20, entries: [] };
+      if (data.budget != null) data.months[mk].budget = data.budget;
+      return { data, mk, month: data.months[mk] };
+    }
+
+    function fmt(n) {
+      return "$" + Number(n).toFixed(2).replace(/\.00$/, "");
+    }
+
+    function render() {
+      const { data, mk, month } = state();
+      const spent = month.entries.reduce((s, e) => s + e.amount, 0);
+      const budget = Number(month.budget) || 0;
+      const left = Math.max(0, budget - spent);
+      const pct = budget > 0 ? Math.min(100, (spent / budget) * 100) : 0;
+
+      document.getElementById("budget").value = budget || "";
+      document.getElementById("spent").textContent = fmt(spent);
+      document.getElementById("left").textContent = budget ? fmt(left) : "—";
+      document.getElementById("meter-fill").style.width = pct + "%";
+
+      const meter = document.getElementById("meter");
+      meter.classList.remove("warn", "over");
+      if (pct >= 100) meter.classList.add("over");
+      else if (pct >= 75) meter.classList.add("warn");
+
+      const ul = document.getElementById("entries");
+      if (!month.entries.length) {
+        ul.innerHTML = "<li style='color:var(--muted)'>No entries yet</li>";
+      } else {
+        ul.innerHTML = month.entries.slice().reverse().map((e) =>
+          `<li><span>${escapeHtml(e.note || "Entry")}<br><span style="color:var(--muted);font-size:11px">${e.at}</span></span><span class="amt">${fmt(e.amount)}</span></li>`
+        ).join("");
+      }
+
+      data.budget = budget;
+      save(data);
+    }
+
+    function addEntry(amount, note) {
+      const n = Number(amount);
+      if (Number.isNaN(n) || n < 0) return;
+      const { data, mk, month } = state();
+      month.entries.push({
+        amount: n,
+        note: note || "",
+        at: new Date().toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }),
+      });
+      data.months[mk] = month;
+      save(data);
+      document.getElementById("amount").value = "";
+      document.getElementById("note").value = "";
+      render();
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    document.getElementById("budget").addEventListener("change", (e) => {
+      const { data, mk, month } = state();
+      month.budget = Number(e.target.value) || 0;
+      data.budget = month.budget;
+      data.months[mk] = month;
+      save(data);
+      render();
+    });
+
+    document.getElementById("preset").addEventListener("change", (e) => {
+      if (e.target.value !== "") document.getElementById("amount").value = e.target.value;
+    });
+
+    document.getElementById("add").addEventListener("click", () => {
+      addEntry(document.getElementById("amount").value, document.getElementById("note").value.trim());
+    });
+
+    document.querySelectorAll(".quick button").forEach((btn) => {
+      btn.addEventListener("click", () => addEntry(btn.dataset.amt, btn.dataset.note));
+    });
+
+    document.getElementById("clear").addEventListener("click", () => {
+      if (!confirm("Clear all entries for this month?")) return;
+      const { data, mk, month } = state();
+      month.entries = [];
+      data.months[mk] = month;
+      save(data);
+      render();
+    });
+
+    document.getElementById("reset-checks").addEventListener("click", () => {
+      ["c1", "c2", "c3"].forEach((id) => (document.getElementById(id).checked = false));
+    });
+
+    render();
+  </script>
+</body>
+</html>
