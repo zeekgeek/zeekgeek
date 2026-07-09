@@ -9,19 +9,25 @@ from collections.abc import AsyncIterator
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, StreamingResponse
 
+from .calibration import calibration_profile_payload
 from .state import RadarState
 
 
 def create_app(state: RadarState) -> FastAPI:
     app = FastAPI(title="Bluetooth Proximity Radar")
+    calibration_json = json.dumps(calibration_profile_payload())
 
     @app.get("/", response_class=HTMLResponse)
     async def index() -> str:
-        return DASHBOARD_HTML
+        return DASHBOARD_HTML.replace("__RSSI_CALIBRATION_JSON__", calibration_json)
 
     @app.get("/api/devices")
     async def devices() -> dict:
         return await state.snapshot()
+
+    @app.get("/api/calibration")
+    async def calibration() -> dict:
+        return calibration_profile_payload()
 
     @app.get("/api/events")
     async def events() -> StreamingResponse:
@@ -125,7 +131,7 @@ DASHBOARD_HTML = """
         <h2>Proximity map (all devices)</h2>
         <canvas id="radar-map" width="960" height="340"></canvas>
         <p class="tiny-note">
-          Ring guides: 1m, 3m, 8m, 20m. Distance is estimated from smoothed RSSI and can vary by environment.
+          Ring guides: 1m, 3m, 8m, 20m. Distance is estimated from a calibrated RSSI-to-distance table and can still vary by environment.
         </p>
       </section>
 
@@ -143,6 +149,7 @@ DASHBOARD_HTML = """
   </main>
 
   <script>
+    const RSSI_DISTANCE_CALIBRATION = __RSSI_CALIBRATION_JSON__;
     let snapshot = null;
     let selectedAddress = null;
     const notifiedEvents = new Set();
@@ -267,7 +274,7 @@ DASHBOARD_HTML = """
       for (const device of plotted) {
         const estimatedDistance = typeof device.estimated_distance_m === "number"
           ? device.estimated_distance_m
-          : estimateDistanceFromRssi(device.rssi_smoothed ?? device.rssi);
+          : estimateDistanceFromRssi(device.rssi_smoothed ?? device.rssi, device.tx_power);
         const angle = hashToAngle(device.address);
         const radius = mapDistanceToRadius(estimatedDistance, maxRadius);
         const x = centerX + Math.cos(angle) * radius;
@@ -407,17 +414,43 @@ DASHBOARD_HTML = """
       return 20 + ((-30 - clamped) / 70) * (height - 40);
     }
 
-    function estimateDistanceFromRssi(rssi) {
-      if (typeof rssi !== "number") return 20;
-      const txPower = -59;
-      const pathLossExponent = 2.2;
-      const distance = Math.pow(10, (txPower - rssi) / (10 * pathLossExponent));
-      return Math.max(0.2, Math.min(distance, 20));
+    function estimateDistanceFromRssi(rssi, txPower) {
+      if (typeof rssi !== "number") return RSSI_DISTANCE_CALIBRATION.max_distance_m;
+      const adjusted = typeof txPower === "number"
+        ? rssi + (RSSI_DISTANCE_CALIBRATION.reference_tx_power_dbm - txPower)
+        : rssi;
+      return lookupCalibratedDistance(adjusted);
+    }
+
+    function lookupCalibratedDistance(rssi) {
+      const calibration = RSSI_DISTANCE_CALIBRATION;
+      const points = calibration.points;
+      const strongest = points[0];
+      const weakest = points[points.length - 1];
+
+      if (rssi >= strongest.rssi_dbm) return calibration.min_distance_m;
+      if (rssi <= weakest.rssi_dbm) return calibration.max_distance_m;
+
+      for (let index = 0; index < points.length - 1; index += 1) {
+        const upper = points[index];
+        const lower = points[index + 1];
+        if (rssi <= upper.rssi_dbm && rssi >= lower.rssi_dbm) {
+          if (upper.rssi_dbm === lower.rssi_dbm) return upper.distance_m;
+          const ratio = (rssi - upper.rssi_dbm) / (lower.rssi_dbm - upper.rssi_dbm);
+          const logUpper = Math.log10(upper.distance_m);
+          const logLower = Math.log10(lower.distance_m);
+          const distance = Math.pow(10, logUpper + ratio * (logLower - logUpper));
+          return Math.max(calibration.min_distance_m, Math.min(distance, calibration.max_distance_m));
+        }
+      }
+
+      return calibration.max_distance_m;
     }
 
     function mapDistanceToRadius(distanceMeters, maxRadius) {
-      const distance = Math.max(0.2, Math.min(distanceMeters || 20, 20));
-      const normalized = Math.log10(distance + 1) / Math.log10(21);
+      const maxDistance = RSSI_DISTANCE_CALIBRATION.max_distance_m;
+      const distance = Math.max(0.2, Math.min(distanceMeters || maxDistance, maxDistance));
+      const normalized = Math.log10(distance + 1) / Math.log10(maxDistance + 1);
       return 22 + normalized * (maxRadius - 22);
     }
 

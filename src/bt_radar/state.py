@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from .anomaly import Finding, address_family, evaluate_device
+from .calibration import estimate_distance_label, estimate_distance_meters
 
 
 def utc_now() -> datetime:
@@ -121,7 +122,7 @@ class DeviceTrack:
         smoothed_rssi = smooth_rssi(rssi_values)
         stale_seconds = (now - self.last_seen).total_seconds()
         estimated_distance_m = estimate_distance_meters(smoothed_rssi, self.tx_power)
-        distance_label = estimate_distance_label(smoothed_rssi)
+        distance_label = estimate_distance_label(estimated_distance_m)
         movement = movement_label(rssi_values)
         findings = evaluate_device(
             address=self.address,
@@ -255,18 +256,6 @@ def movement_label(rssi_history: list[int]) -> str:
     return "steady"
 
 
-def estimate_distance_label(rssi: int | None) -> str:
-    if rssi is None:
-        return "unknown"
-    if rssi >= -50:
-        return "very near"
-    if rssi >= -65:
-        return "near"
-    if rssi >= -80:
-        return "mid-range"
-    return "far/weak"
-
-
 def smooth_rssi(rssi_history: list[int], window: int = 6) -> int | None:
     if not rssi_history:
         return None
@@ -277,16 +266,3 @@ def smooth_rssi(rssi_history: list[int], window: int = 6) -> int | None:
         weighted_total += rssi * index
         weight_sum += index
     return int(round(weighted_total / weight_sum))
-
-
-def estimate_distance_meters(rssi: int | None, tx_power: int | None = None) -> float | None:
-    """Approximate distance from RSSI using log-distance path loss.
-
-    This is a coarse estimate and can vary substantially indoors.
-    """
-    if rssi is None:
-        return None
-    calibrated_tx_power = tx_power if tx_power is not None else -59
-    path_loss_exponent = 2.2
-    distance = 10 ** ((calibrated_tx_power - rssi) / (10 * path_loss_exponent))
-    return round(max(0.2, min(distance, 80.0)), 2)

@@ -2,11 +2,10 @@ import asyncio
 import unittest
 from datetime import UTC, datetime, timedelta
 
+from bt_radar.calibration import estimate_distance_label, estimate_distance_meters
 from bt_radar.state import (
     Observation,
     RadarState,
-    estimate_distance_label,
-    estimate_distance_meters,
     movement_label,
     smooth_rssi,
 )
@@ -17,8 +16,8 @@ class StateTests(unittest.TestCase):
         self.assertEqual(movement_label([-80, -78]), "collecting")
         self.assertEqual(movement_label([-80, -76, -68]), "approaching")
         self.assertEqual(movement_label([-50, -55, -65]), "departing")
-        self.assertEqual(estimate_distance_label(-45), "very near")
-        self.assertEqual(estimate_distance_label(-72), "mid-range")
+        self.assertEqual(estimate_distance_label(0.8), "very near")
+        self.assertEqual(estimate_distance_label(6.0), "mid-range")
         self.assertEqual(smooth_rssi([-90, -80, -75, -62]), -72)
         self.assertIsNone(smooth_rssi([]))
         self.assertAlmostEqual(estimate_distance_meters(-59), 1.0, places=1)
