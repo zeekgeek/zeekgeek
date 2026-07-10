@@ -1,0 +1,32 @@
+{
+  "default_profile": "default",
+  "profiles": {
+    "default": {
+      "description": "Indoor BLE RSSI-to-distance calibration for typical consumer devices at 1 m reference",
+      "reference_tx_power_dbm": -59,
+      "min_distance_m": 0.2,
+      "max_distance_m": 80.0,
+      "points": [
+        {"rssi_dbm": -35, "distance_m": 0.2},
+        {"rssi_dbm": -42, "distance_m": 0.3},
+        {"rssi_dbm": -48, "distance_m": 0.5},
+        {"rssi_dbm": -52, "distance_m": 0.7},
+        {"rssi_dbm": -56, "distance_m": 0.85},
+        {"rssi_dbm": -59, "distance_m": 1.0},
+        {"rssi_dbm": -63, "distance_m": 1.4},
+        {"rssi_dbm": -67, "distance_m": 2.0},
+        {"rssi_dbm": -71, "distance_m": 2.8},
+        {"rssi_dbm": -75, "distance_m": 4.0},
+        {"rssi_dbm": -79, "distance_m": 5.6},
+        {"rssi_dbm": -83, "distance_m": 8.0},
+        {"rssi_dbm": -87, "distance_m": 11.0},
+        {"rssi_dbm": -91, "distance_m": 15.0},
+        {"rssi_dbm": -95, "distance_m": 20.0},
+        {"rssi_dbm": -99, "distance_m": 28.0},
+        {"rssi_dbm": -103, "distance_m": 40.0},
+        {"rssi_dbm": -107, "distance_m": 55.0},
+        {"rssi_dbm": -110, "distance_m": 80.0}
+      ]
+    }
+  }
+}
