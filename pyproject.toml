@@ -12,6 +12,7 @@ dependencies = [
 
 [project.scripts]
 bt-radar = "bt_radar.__main__:main"
+wifi-radar = "wifi_radar.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
