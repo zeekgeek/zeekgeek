@@ -26,6 +26,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stale-after", type=float, default=20.0, help="Seconds before a missing device is marked left")
     parser.add_argument("--alarm-range", type=float, default=5.0, help="Alarm when a device is within this many metres")
     parser.add_argument("--scan-interval", type=float, default=3.0, help="Seconds between live WiFi scans")
+    parser.add_argument(
+        "--monitor-mode",
+        action="store_true",
+        help="Enable monitor mode to capture client/AP management and data frames",
+    )
+    parser.add_argument(
+        "--monitor-interface",
+        default=None,
+        help="Preferred monitor interface name (default: <base>mon)",
+    )
+    parser.add_argument(
+        "--monitor-capture-seconds",
+        type=float,
+        default=2.0,
+        help="Seconds of monitor capture per scan cycle",
+    )
     parser.add_argument("--demo", action="store_true", help="Use simulated WiFi devices instead of live hardware")
     parser.add_argument(
         "--no-auto-demo-fallback",
@@ -52,6 +68,9 @@ async def run(args: argparse.Namespace) -> None:
             auto_demo_fallback=not args.no_auto_demo_fallback,
             interface=args.interface,
             scan_interval=args.scan_interval,
+            monitor_mode=args.monitor_mode,
+            monitor_interface=args.monitor_interface,
+            monitor_capture_seconds=args.monitor_capture_seconds,
         ),
         name="wifi-scanner",
     )
@@ -78,6 +97,8 @@ async def run(args: argparse.Namespace) -> None:
         print("Running in demo mode with simulated devices.")
     else:
         print("Running live WiFi scan with automatic demo fallback if unavailable.")
+        if args.monitor_mode:
+            print("Monitor mode requested: client/AP frame capture enabled.")
 
     done, pending = await asyncio.wait(
         {scanner_task, server_task, stop_task},
@@ -133,13 +154,23 @@ async def _run_scanner(
     auto_demo_fallback: bool,
     interface: str | None,
     scan_interval: float,
+    monitor_mode: bool,
+    monitor_interface: str | None,
+    monitor_capture_seconds: float,
 ) -> None:
     if force_demo:
         await DemoScannerBackend(state).run()
         return
 
     try:
-        await IwScannerBackend(state, interface=interface, interval=scan_interval).run()
+        await IwScannerBackend(
+            state,
+            interface=interface,
+            interval=scan_interval,
+            monitor_mode=monitor_mode,
+            monitor_interface=monitor_interface,
+            monitor_capture_seconds=monitor_capture_seconds,
+        ).run()
     except Exception as exc:
         message = f"Live scanner unavailable ({type(exc).__name__}: {exc}). Switching to demo scanner."
         LOGGER.warning(message)

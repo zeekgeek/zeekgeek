@@ -108,6 +108,11 @@ DASHBOARD_HTML = """
     dd { margin: 0; overflow-wrap: anywhere; }
     .events { max-height: 220px; overflow: auto; color: var(--muted); font-size: 13px; }
     .events .alarm-line { color: #fecaca; font-weight: 600; }
+    .client-list { max-height: 200px; overflow: auto; display: grid; gap: 8px; }
+    .client { border: 1px solid #2b3650; border-radius: 10px; padding: 8px; font-size: 12px; background: #0f192d; }
+    .client .mac { color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .analysis-box { background: #0f1a2f; border: 1px solid #2b3650; border-radius: 10px; padding: 10px; margin-top: 8px; }
+    .analysis-box ul { margin: 8px 0 0 18px; padding: 0; }
     .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 8px; }
     .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 6px; vertical-align: middle; }
     .legend .s-dot::before { background: var(--green); border-radius: 2px; }
@@ -142,6 +147,8 @@ DASHBOARD_HTML = """
     <section class="panel">
       <h2>Detected devices</h2>
       <div id="devices" class="device-list empty">No WiFi devices observed yet.</div>
+      <h3>Detected clients</h3>
+      <div id="clients" class="client-list empty">No WiFi client activity yet.</div>
     </section>
 
     <section class="stack">
@@ -167,6 +174,10 @@ DASHBOARD_HTML = """
       <section class="panel">
         <h2>Recent events</h2>
         <div id="events" class="events"></div>
+      </section>
+      <section class="panel">
+        <h2>AI analysis</h2>
+        <div id="analysis" class="analysis-box">Waiting for first analysis snapshot...</div>
       </section>
     </section>
   </main>
@@ -219,7 +230,7 @@ DASHBOARD_HTML = """
       const banner = document.getElementById("alarm-banner");
       let latestAlarm = null;
       for (const event of events.slice(-16)) {
-        const key = `${event.at}:${event.type}:${event.bssid}`;
+        const key = `${event.at}:${event.type}:${event.mac || event.bssid}`;
         if (notifiedEvents.has(key)) continue;
         notifiedEvents.add(key);
         if (event.type === "alarm") {
@@ -254,12 +265,16 @@ DASHBOARD_HTML = """
       if (!snapshot) return;
       document.getElementById("counts").innerHTML =
         `<b>${snapshot.present_count}</b> in range · <b>${snapshot.stationary_count}</b> stationary · ` +
-        `<b>${snapshot.moving_count}</b> moving · <b>${snapshot.alarm_count}</b> in alarm zone`;
-      document.getElementById("updated").textContent = `Updated ${snapshot.generated_at}`;
+        `<b>${snapshot.moving_count}</b> moving · <b>${snapshot.client_present_count || 0}</b> clients · ` +
+        `<b>${snapshot.alarm_count}</b> in alarm zone`;
+      document.getElementById("updated").textContent =
+        `Updated ${snapshot.generated_at} · monitor ${snapshot.monitor_mode?.enabled ? "on" : "off"}`;
       renderDevices();
+      renderClients();
       drawRadarMap(snapshot.devices, snapshot.alarm_range_m);
       renderDetails();
       renderEvents();
+      renderAnalysis();
     }
 
     function renderDevices() {
@@ -379,6 +394,28 @@ DASHBOARD_HTML = """
       }
     }
 
+    function renderClients() {
+      const root = document.getElementById("clients");
+      const clients = snapshot.clients || [];
+      if (!clients.length) {
+        root.className = "client-list empty";
+        root.textContent = "No WiFi client activity yet.";
+        return;
+      }
+      root.className = "client-list";
+      root.innerHTML = clients.slice(0, 20).map((client) => {
+        const assoc = client.associated_bssid ? `AP ${escapeHtml(client.associated_bssid)}` : "unassociated";
+        const probes = client.probe_ssids && client.probe_ssids.length
+          ? `probes: ${escapeHtml(client.probe_ssids.join(", "))}`
+          : "no probe SSIDs";
+        return `<div class="client">
+          <div class="mac">${escapeHtml(client.mac)}</div>
+          <div>${assoc} · frames ${client.frame_count} · probes ${client.probe_count}</div>
+          <div>${probes}</div>
+        </div>`;
+      }).join("");
+    }
+
     function drawDiamond(ctx, x, y, size) {
       ctx.beginPath();
       ctx.moveTo(x, y - size);
@@ -483,8 +520,25 @@ DASHBOARD_HTML = """
       const events = (snapshot.events || []).slice(-30).reverse();
       root.innerHTML = events.map((event) => {
         const cls = event.type === "alarm" ? "alarm-line" : "";
-        return `<div class="${cls}">${escapeHtml(event.at)} · ${escapeHtml(event.type)} · ${escapeHtml(event.ssid || event.bssid)} · ${escapeHtml(event.message)}</div>`;
+        return `<div class="${cls}">${escapeHtml(event.at)} · ${escapeHtml(event.type)} · ${escapeHtml(event.ssid || event.mac || event.bssid)} · ${escapeHtml(event.message)}</div>`;
       }).join("");
+    }
+
+    function renderAnalysis() {
+      const root = document.getElementById("analysis");
+      const analysis = snapshot.ai_analysis;
+      if (!analysis) {
+        root.textContent = "No analysis data yet.";
+        return;
+      }
+      root.innerHTML = `
+        <div><strong>Risk:</strong> ${escapeHtml(analysis.risk_level.toUpperCase())} · <strong>Model:</strong> ${escapeHtml(analysis.model)}</div>
+        <div style="margin-top:6px;">${escapeHtml(analysis.summary)}</div>
+        <h3>Highlights</h3>
+        <ul>${(analysis.highlights || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+        <h3>Recommendations</h3>
+        <ul>${(analysis.recommendations || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+      `;
     }
 
     function smoothSeries(values, window = 6) {

@@ -1,6 +1,6 @@
 import unittest
 
-from wifi_radar.scanner import parse_iw_scan
+from wifi_radar.scanner import parse_iw_scan, parse_monitor_capture
 
 SAMPLE = """
 BSS a0:11:22:33:44:01(on wlan0)
@@ -40,6 +40,25 @@ class ScannerParseTests(unittest.TestCase):
 
     def test_empty_output(self) -> None:
         self.assertEqual(parse_iw_scan(""), [])
+
+    def test_parse_monitor_capture_extracts_aps_and_clients(self) -> None:
+        capture = """
+01:23:45.000001 44:55:66:77:88:99 > ff:ff:ff:ff:ff:ff, Beacon (CafeNet) -62 dBm
+01:23:45.000120 aa:bb:cc:dd:ee:10 > ff:ff:ff:ff:ff:ff, Probe Request (GuestWiFi) -70 dBm
+01:23:45.000240 aa:bb:cc:dd:ee:20 > 44:55:66:77:88:99, Data -65 dBm
+"""
+        aps, clients = parse_monitor_capture(capture, known_ap_bssids=set())
+        self.assertEqual(len(aps), 1)
+        self.assertEqual(aps[0].bssid, "44:55:66:77:88:99")
+        self.assertEqual(aps[0].ssid, "CafeNet")
+
+        by_mac = {item.mac: item for item in clients}
+        self.assertIn("aa:bb:cc:dd:ee:10", by_mac)
+        self.assertEqual(by_mac["aa:bb:cc:dd:ee:10"].frame_type, "probe-request")
+        self.assertEqual(by_mac["aa:bb:cc:dd:ee:10"].probe_ssid, "GuestWiFi")
+
+        self.assertIn("aa:bb:cc:dd:ee:20", by_mac)
+        self.assertEqual(by_mac["aa:bb:cc:dd:ee:20"].associated_bssid, "44:55:66:77:88:99")
 
 
 if __name__ == "__main__":

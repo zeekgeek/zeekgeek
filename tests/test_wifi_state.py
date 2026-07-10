@@ -2,7 +2,7 @@ import asyncio
 import unittest
 from datetime import UTC, datetime, timedelta
 
-from wifi_radar.state import Observation, RadarState
+from wifi_radar.state import ClientObservation, Observation, RadarState
 
 
 def _obs(bssid: str, rssi: int, when: datetime, ssid: str | None = "AP") -> Observation:
@@ -18,17 +18,17 @@ class StateTests(unittest.TestCase):
         now = datetime.now(UTC)
 
         events = await state.observe(_obs("aa:bb:cc:dd:ee:01", -70, now))
-        self.assertEqual(events[0]["type"], "new")
+        self.assertEqual(events[0]["type"], "new-ap")
 
         snapshot = await state.snapshot()
         self.assertEqual(snapshot["present_count"], 1)
 
         await state.observe(_obs("aa:bb:cc:dd:ee:01", -70, now - timedelta(seconds=5)))
         left = await state.mark_stale()
-        self.assertEqual(left[0]["type"], "left")
+        self.assertEqual(left[0]["type"], "left-ap")
 
         events = await state.observe(_obs("aa:bb:cc:dd:ee:01", -68, datetime.now(UTC)))
-        self.assertEqual(events[0]["type"], "entered")
+        self.assertEqual(events[0]["type"], "entered-ap")
 
     def test_alarm_fires_when_device_approaches(self) -> None:
         asyncio.run(self._alarm_flow())
@@ -78,6 +78,44 @@ class StateTests(unittest.TestCase):
         self.assertEqual(event["type"], "config")
         await state.set_alarm_range(0.1)
         self.assertEqual(state.alarm_range_m, 0.5)
+
+    def test_client_tracking_and_ai_analysis(self) -> None:
+        asyncio.run(self._client_analysis_flow())
+
+    async def _client_analysis_flow(self) -> None:
+        state = RadarState(stale_after=30, alarm_range_m=5.0)
+        now = datetime.now(UTC)
+        await state.set_monitor_status(
+            enabled=True,
+            base_interface="wlan0",
+            monitor_interface="wlan0mon",
+            note="monitor active",
+        )
+        await state.observe(_obs("aa:bb:cc:dd:ee:aa", -62, now, ssid="OfficeAP"))
+        await state.observe_client(
+            ClientObservation(
+                mac="11:22:33:44:55:66",
+                associated_bssid="aa:bb:cc:dd:ee:aa",
+                frame_type="data",
+                rssi=-70,
+                observed_at=now,
+            )
+        )
+        await state.observe_client(
+            ClientObservation(
+                mac="22:33:44:55:66:77",
+                associated_bssid=None,
+                frame_type="probe-request",
+                probe_ssid="GuestWiFi",
+                rssi=-75,
+                observed_at=now,
+            )
+        )
+        snapshot = await state.snapshot()
+        self.assertEqual(snapshot["client_count"], 2)
+        self.assertTrue(snapshot["monitor_mode"]["enabled"])
+        self.assertIn("summary", snapshot["ai_analysis"])
+        self.assertIn(snapshot["ai_analysis"]["risk_level"], {"low", "medium", "high"})
 
 
 if __name__ == "__main__":
