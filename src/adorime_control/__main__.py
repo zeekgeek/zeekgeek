@@ -25,9 +25,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stale-after", type=float, default=18.0, help="Seconds before a missing device is marked left")
     parser.add_argument("--demo", action="store_true", help="Use simulated Bluetooth devices instead of live hardware")
     parser.add_argument(
-        "--no-auto-demo-fallback",
+        "--allow-demo-fallback",
         action="store_true",
-        help="Exit if live scanner fails instead of automatically switching to demo mode",
+        help="If live scan fails, switch to demo data instead of exiting",
     )
     parser.add_argument("--log-level", default="info", choices=["debug", "info", "warning", "error"])
     return parser
@@ -46,7 +46,7 @@ async def run(args: argparse.Namespace) -> None:
         _run_scanner(
             state=state,
             force_demo=args.demo,
-            auto_demo_fallback=not args.no_auto_demo_fallback,
+            allow_demo_fallback=args.allow_demo_fallback,
         ),
         name="adorime-scanner",
     )
@@ -71,8 +71,10 @@ async def run(args: argparse.Namespace) -> None:
     print(f"AdoRime control dashboard: http://{args.host}:{chosen_port}")
     if args.demo:
         print("Running in demo mode with simulated AdoRime devices.")
+    elif args.allow_demo_fallback:
+        print("Running live Bluetooth scan; demo fallback is enabled if live scan fails.")
     else:
-        print("Running live Bluetooth scan with automatic demo fallback if unavailable.")
+        print("Running strict live Bluetooth scan (no demo fallback).")
 
     done, pending = await asyncio.wait(
         {scanner_task, server_task, stop_task},
@@ -121,7 +123,7 @@ def _port_is_available(host: str, port: int) -> bool:
             return False
 
 
-async def _run_scanner(*, state: RadarState, force_demo: bool, auto_demo_fallback: bool) -> None:
+async def _run_scanner(*, state: RadarState, force_demo: bool, allow_demo_fallback: bool) -> None:
     if force_demo:
         await DemoScannerBackend(state).run()
         return
@@ -129,15 +131,14 @@ async def _run_scanner(*, state: RadarState, force_demo: bool, auto_demo_fallbac
     try:
         await BleakScannerBackend(state).run()
     except Exception as exc:
-        message = (
-            f"Live scanner unavailable ({type(exc).__name__}: {exc}). "
-            "Switching to demo scanner."
-        )
-        LOGGER.warning(message)
-        await state.add_system_event("scanner-fallback", message)
-        if not auto_demo_fallback:
+        strict_message = f"Live scanner unavailable ({type(exc).__name__}: {exc})."
+        LOGGER.warning(strict_message)
+        if not allow_demo_fallback:
+            await state.add_system_event("scanner-error", f"{strict_message} Exiting in strict live mode.")
             raise
-        print(message)
+        fallback_message = f"{strict_message} Switching to demo scanner because --allow-demo-fallback is set."
+        await state.add_system_event("scanner-fallback", fallback_message)
+        print(fallback_message)
         await DemoScannerBackend(state).run()
 
 

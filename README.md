@@ -96,17 +96,23 @@ Quick start:
 
 ```bash
 source .venv/bin/activate
-python3 -m adorime_control --demo
+python3 -m adorime_control
 ```
 
 Open the printed dashboard URL (default `http://127.0.0.1:8785`).
+
+If your environment has no Bluetooth hardware/service (common on cloud VMs), use:
+
+```bash
+python3 -m adorime_control --demo
+```
 
 CLI options:
 
 - `--demo`: run simulated devices (recommended on cloud VMs)
 - `--host` / `--port`
 - `--stale-after`
-- `--no-auto-demo-fallback`
+- `--allow-demo-fallback`: if live scan fails, switch to demo data instead of exiting
 - `--log-level`
 
 API endpoints:

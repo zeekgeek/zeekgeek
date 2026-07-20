@@ -1,10 +1,19 @@
 import socket
 import unittest
 
-from adorime_control.__main__ import pick_available_port
+from adorime_control.__main__ import build_parser, pick_available_port
 
 
 class AdorimeMainTests(unittest.TestCase):
+    def test_parser_defaults_to_strict_live_mode(self) -> None:
+        args = build_parser().parse_args([])
+        self.assertFalse(args.demo)
+        self.assertFalse(args.allow_demo_fallback)
+
+    def test_parser_accepts_demo_fallback_flag(self) -> None:
+        args = build_parser().parse_args(["--allow-demo-fallback"])
+        self.assertTrue(args.allow_demo_fallback)
+
     def test_pick_available_port_returns_preferred_when_free(self) -> None:
         chosen = pick_available_port("127.0.0.1", 39886, max_tries=2)
         self.assertEqual(chosen, 39886)
