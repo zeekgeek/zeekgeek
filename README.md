@@ -188,16 +188,45 @@ python3 -m unittest discover -s tests
 # MacBook Battery Diagnostic
 
 Realtime charging and battery-health monitor aimed at Intel MacBook Pros
-(including 2018 models). It reads Apple’s `AppleSmartBattery` data via `ioreg`
-and shows:
+(including 2018 models). It shows:
 
 - live **voltage**, **amperage**, and **watts** (V × I at the pack)
 - **charge level** and adapter / charging state
 - **ETA to 80%** (optimized charge target) and **ETA to full**
 - **battery health %**, design vs worn capacity, **cycle count**, and wear band
 
-On non-macOS hosts (or when `ioreg` is unavailable) it auto-falls back to a
-demo session that simulates a worn 2018-class pack charging from ~42%.
+## Sensor backends (so it works off-Mac too)
+
+| `--source` | How it gets data |
+|---|---|
+| `auto` (default) | Try local macOS `ioreg` → Linux `/sys/class/power_supply` → optional `--ssh` → demo fallback |
+| `ioreg` | Local AppleSmartBattery via `ioreg` (must run on the Mac) |
+| `sysfs` | Linux battery via sysfs |
+| `ssh` | Pull `ioreg` from a Mac over SSH (`--ssh user@macbook`) |
+| `remote` | Dashboard waits; a Mac **collector** POSTs live samples to `/api/ingest` |
+| `demo` | Simulated 2018-class pack |
+
+### Recommended for a cloud / remote dashboard
+
+On the machine that hosts the UI:
+
+```bash
+python3 -m mac_battery --source remote --host 0.0.0.0 --port 8780 --no-terminal
+```
+
+On the **2018 MacBook Pro** (same network / tunnel):
+
+```bash
+python3 -m mac_battery.collect --url http://<dashboard-host>:8780
+```
+
+### Or pull from the Mac over SSH
+
+```bash
+python3 -m mac_battery --source ssh --ssh you@macbook.local --host 0.0.0.0 --port 8780
+```
+
+(Key-based SSH with BatchMode; the Mac must have `ioreg`.)
 
 ## Quick start
 
@@ -208,16 +237,15 @@ pip install -e .
 python3 -m mac_battery --demo
 ```
 
-Open the printed dashboard URL (default <http://127.0.0.1:8780>). The terminal
-also redraws a live snapshot every second.
+Open the printed dashboard URL (default <http://127.0.0.1:8780>).
 
-On a MacBook:
+On a MacBook locally:
 
 ```bash
 python3 -m mac_battery
 ```
 
-Single snapshot (no live loop / dashboard):
+Single snapshot:
 
 ```bash
 python3 -m mac_battery --once
@@ -226,27 +254,35 @@ python3 -m mac_battery --once
 ## Command options
 
 ```text
-python3 -m mac_battery --host 127.0.0.1 --port 8780 --interval 1 --target 80
+python3 -m mac_battery --source auto --host 127.0.0.1 --port 8780 --interval 1 --target 80
 ```
 
-- `--demo`: simulate a 2018 MBP charge session
+- `--source`: `auto` / `ioreg` / `sysfs` / `ssh` / `remote` / `demo`
+- `--ssh`: Mac SSH target for `ssh` (or auto fallback)
+- `--demo`: shortcut for `--source demo`
 - `--once`: print one snapshot and exit
 - `--interval`: seconds between samples (default `1`)
 - `--target`: optimized charge percent for ETA (default `80`)
 - `--no-web`: terminal-only monitor
 - `--no-terminal`: dashboard only
-- `--no-auto-demo-fallback`: exit instead of using demo data when live read fails
+- `--no-auto-demo-fallback`: exit instead of demo when no live sensor is found
 - `--host` / `--port` / `--log-level`
+
+Collector:
+
+```text
+python3 -m mac_battery.collect --url http://127.0.0.1:8780 --interval 1
+```
 
 ## API
 
 - `GET /api/snapshot`: latest report plus short history and events
+- `GET /api/status`: whether a sample is present / ingest age
+- `POST /api/ingest`: push a live sample (remote mode)
 - `GET /api/events`: Server-Sent Events stream for live UI updates
 
 ## Notes
 
-- Watts and amps are **battery-side** values from IOKit, not the AC adapter’s
-  nameplate wattage.
-- ETA uses a smoothed charge current; it is an estimate and will move as the
-  pack tapers near full (CC/CV behavior).
+- Watts and amps are **battery-side** values, not the AC adapter’s nameplate wattage.
+- ETA uses a smoothed charge current; it moves as the pack tapers near full (CC/CV).
 - Apple’s own “time remaining” is shown when the firmware reports a valid value.

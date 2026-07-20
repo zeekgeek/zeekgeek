@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
+
+from .reader import RemoteIngestBuffer, sample_from_payload
 
 if TYPE_CHECKING:
     from .state import BatteryState
@@ -59,6 +61,20 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     margin: 0.35rem 0 0;
     color: var(--muted);
     font-size: 0.92rem;
+  }
+  #waiting {
+    display: none;
+    margin: 1rem 1.75rem 0;
+    padding: 0.9rem 1rem;
+    border: 1px solid #5a4a20;
+    background: rgba(80, 60, 10, 0.35);
+    border-radius: 10px;
+    color: var(--warn);
+    font-size: 0.92rem;
+  }
+  #waiting code {
+    font-family: var(--font-mono);
+    color: var(--ink);
   }
   main {
     display: grid;
@@ -182,6 +198,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <span id="charge-state" class="pill">—</span>
     </p>
   </header>
+  <div id="waiting">
+    Waiting for live sensor data.
+    On your MacBook run:
+    <code>python3 -m mac_battery.collect --url http://&lt;this-host&gt;:8780</code>
+    or start the dashboard with
+    <code>--ssh user@macbook</code> /
+    <code>--source sysfs</code>.
+  </div>
   <main>
     <section class="panel span-12">
       <h2>Live electricals</h2>
@@ -358,8 +382,13 @@ function addEvent(ev) {
   $("events").prepend(li);
 }
 
+function setWaiting(on) {
+  $("waiting").style.display = on ? "block" : "none";
+}
+
 async function boot() {
   const snap = await fetch("/api/snapshot").then(r => r.json());
+  setWaiting(!snap.latest);
   if (snap.latest) {
     apply(snap.latest);
     (snap.history || []).forEach(p => {
@@ -373,10 +402,13 @@ async function boot() {
   es.onmessage = (msg) => {
     const payload = JSON.parse(msg.data);
     if (payload.type === "snapshot") {
+      setWaiting(false);
       apply(payload.data);
       pushHistory(payload.data);
     } else if (payload.type === "event") {
       addEvent(payload.data);
+    } else if (payload.type === "waiting") {
+      setWaiting(true);
     }
   };
   window.addEventListener("resize", draw);
@@ -388,7 +420,11 @@ boot();
 """
 
 
-def create_app(state: "BatteryState") -> FastAPI:
+def create_app(
+    state: "BatteryState",
+    *,
+    ingest: RemoteIngestBuffer | None = None,
+) -> FastAPI:
     app = FastAPI(title="MacBook Battery Diagnostic")
 
     @app.get("/", response_class=HTMLResponse)
@@ -399,6 +435,29 @@ def create_app(state: "BatteryState") -> FastAPI:
     async def snapshot() -> dict:
         return state.snapshot()
 
+    @app.get("/api/status")
+    async def status() -> dict:
+        return {
+            "has_sample": state.latest is not None,
+            "ingest_enabled": ingest is not None,
+            "ingest_age_s": None if ingest is None else ingest.age_s(),
+            "source": None if state.latest is None else state.latest.get("source"),
+        }
+
+    @app.post("/api/ingest")
+    async def ingest_sample(payload: dict[str, Any]) -> dict:
+        if ingest is None:
+            raise HTTPException(
+                status_code=400,
+                detail="This dashboard is not in remote ingest mode. Start with --source remote.",
+            )
+        try:
+            sample = sample_from_payload(payload)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        ingest.push(sample)
+        return {"status": "accepted", "source": sample.source}
+
     @app.get("/api/events")
     async def events() -> StreamingResponse:
         queue = state.subscribe()
@@ -407,6 +466,8 @@ def create_app(state: "BatteryState") -> FastAPI:
             try:
                 if state.latest:
                     yield _sse({"type": "snapshot", "data": state.latest})
+                else:
+                    yield _sse({"type": "waiting", "message": "waiting for sensor data"})
                 while True:
                     item = await queue.get()
                     yield _sse(item)

@@ -19,8 +19,12 @@ Running the apps:
   Always run bt_radar in demo mode: `python3 -m bt_radar --demo`. (Without `--demo` the app tries
   live scanning and auto-falls back to demo mode, printing a system event.)
 - WiFi radar: `python3 -m wifi_radar --demo` (live needs `iw` / wireless hardware).
-- Mac battery: `python3 -m mac_battery --demo` on non-macOS hosts (live needs macOS `ioreg` /
-  AppleSmartBattery). Default dashboard port is `8780`.
+- Mac battery: `python3 -m mac_battery --demo` for simulated data.
+  For non-demo operation without local macOS sensors use:
+  - `--source remote` + `python3 -m mac_battery.collect --url http://host:8780` on the Mac
+  - `--source ssh --ssh user@macbook` to pull `ioreg` over SSH
+  - `--source sysfs` on Linux hosts that expose `/sys/class/power_supply/BAT*`
+  Default dashboard port is `8780`.
 - Dashboards bind to `http://127.0.0.1:<port>` by default. If the port is busy the app
   auto-increments to the next free port and prints the chosen URL, so read the startup log
   rather than assuming the default. Pass `--port <n>` for deterministic binding.
