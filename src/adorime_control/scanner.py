@@ -23,6 +23,7 @@ class ScannerBackend(Protocol):
 @dataclass
 class BleakScannerBackend:
     state: RadarState
+    retry_seconds: float = 8.0
 
     async def run(self) -> None:
         try:
@@ -30,13 +31,28 @@ class BleakScannerBackend:
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError("Install the 'bleak' package for live Bluetooth scanning.") from exc
 
-        await self.state.set_scan_status(mode="live", error=None)
-        scanner = BleakScanner(detection_callback=self._on_detection)
-        LOGGER.info("Starting live Bluetooth scanner (AdoRime/Galaku discovery)")
-        async with scanner:
-            while True:
-                await asyncio.sleep(1)
-                await self.state.mark_stale()
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                await self.state.set_scan_status(mode="live", error=None)
+                scanner = BleakScanner(detection_callback=self._on_detection)
+                LOGGER.info("Starting live Bluetooth scanner (AdoRime/Galaku discovery), attempt %s", attempt)
+                async with scanner:
+                    while True:
+                        await asyncio.sleep(1)
+                        await self.state.mark_stale()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                message = f"{type(exc).__name__}: {exc}"
+                LOGGER.warning("Live scanner interrupted (%s); retrying in %.0fs", message, self.retry_seconds)
+                await self.state.set_scan_status(mode="live-error", error=message)
+                await self.state.add_system_event(
+                    "scanner-retry",
+                    f"Live scanner unavailable ({message}). Retrying in {self.retry_seconds:.0f}s…",
+                )
+                await asyncio.sleep(self.retry_seconds)
 
     def _on_detection(self, device, advertisement_data) -> None:  # type: ignore[no-untyped-def]
         observation = _observation_from_bleak(device, advertisement_data)
@@ -84,6 +100,21 @@ class DemoScannerBackend:
                 "base": -78,
                 "address_type": "random",
                 "service_uuids": [GALAKU_SERVICE_UUID],
+            },
+            # Unknown short code — exercises heuristic "probable" matching.
+            {
+                "address": "CE:11:22:33:44:55",
+                "name": "ZX99",
+                "base": -68,
+                "address_type": "random",
+                "service_uuids": [],
+            },
+            {
+                "address": "11:22:33:44:55:66",
+                "name": None,
+                "base": -88,
+                "address_type": "public",
+                "service_uuids": [],
             },
         ]
 

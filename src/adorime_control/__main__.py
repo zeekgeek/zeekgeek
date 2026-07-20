@@ -137,6 +137,7 @@ async def _run_scanner(*, state: RadarState, force_demo: bool, allow_demo_fallba
         return
 
     try:
+        # BleakScannerBackend retries forever when the adapter/stack comes back.
         await BleakScannerBackend(state).run()
     except Exception as exc:
         strict_message = f"Live scanner unavailable ({type(exc).__name__}: {exc})."
@@ -152,7 +153,10 @@ async def _run_scanner(*, state: RadarState, force_demo: bool, allow_demo_fallba
         await state.set_scan_status(mode="live-error", error=str(exc))
         await state.add_system_event(
             "scanner-error",
-            f"{strict_message} Dashboard remains available; connect a Bluetooth adapter and restart to scan.",
+            (
+                f"{strict_message} Dashboard remains available. "
+                "On Linux: enable Bluetooth, start bluetoothd, then wait — the scanner retries automatically."
+            ),
         )
         print(f"{strict_message} Keeping dashboard up without simulated data.")
         while True:

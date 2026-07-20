@@ -14,6 +14,9 @@ from .protocol import (
     classify_protocol,
     friendly_device_name,
     is_adorime_candidate,
+    looks_like_galaku_code,
+    match_reason,
+    match_tier,
 )
 
 
@@ -83,7 +86,8 @@ class DeviceTrack:
         current_rssi = rssi_values[-1] if rssi_values else None
         smoothed = smooth_rssi(rssi_values)
         protocol = classify_protocol(self.service_uuids, self.name)
-        display_name = friendly_device_name(self.name) or self.name
+        tier = match_tier(self.name, self.service_uuids)
+        display_name = friendly_device_name(self.name) or self.name or "Unnamed BLE device"
         return {
             "address": self.address,
             "name": self.name,
@@ -92,6 +96,8 @@ class DeviceTrack:
             "tx_power": self.tx_power,
             "service_uuids": list(self.service_uuids),
             "protocol": protocol,
+            "match_tier": tier,
+            "match_reason": match_reason(self.name, self.service_uuids),
             "first_seen": iso_time(self.first_seen),
             "last_seen": iso_time(self.last_seen),
             "stale_seconds": round((now - self.last_seen).total_seconds(), 1),
@@ -103,7 +109,8 @@ class DeviceTrack:
             "rssi_history": rssi_values,
             "time_history": list(self.time_history),
             "movement": movement_label(rssi_values),
-            "adorime_candidate": is_adorime_candidate(self.name, self.service_uuids),
+            "adorime_candidate": tier in {"known", "probable"},
+            "controllable": tier in {"known", "probable"},
         }
 
 
@@ -191,16 +198,14 @@ class RadarState:
                 payload["hiding_confidence"] = _max_confidence(methods)
                 payload["gatt"] = self.connections.connection_snapshot(track.address)
                 devices.append(payload)
-            devices.sort(
-                key=lambda item: (item["present"], item["rssi"] if item["rssi"] is not None else -999),
-                reverse=True,
-            )
+            devices.sort(key=_device_sort_key, reverse=True)
             return {
                 "generated_at": iso_time(now),
                 "scan_mode": self.scan_mode,
                 "scanner_error": self.scanner_error,
                 "device_count": len(devices),
                 "present_count": sum(1 for item in devices if item["present"]),
+                "candidate_count": sum(1 for item in devices if item.get("adorime_candidate")),
                 "devices": devices,
                 "control": self._control_payload(now),
                 "events": list(self._events),
@@ -234,8 +239,12 @@ class RadarState:
             track = self._devices.get(address)
             if track is None:
                 raise ValueError(f"Unknown device address: {address}")
-            if not is_adorime_candidate(track.name, track.service_uuids):
-                raise ValueError("Selected device is not recognized as an AdoRime/Galaku target")
+            tier = match_tier(track.name, track.service_uuids)
+            if tier not in {"known", "probable"}:
+                raise ValueError(
+                    "Selected device does not look like an AdoRime/Galaku toy "
+                    "(need a known code, Galaku service UUID, or short opaque BLE name)."
+                )
 
             if self._control.target_address and self._control.target_address != address:
                 await self.connections.disconnect(self._control.target_address)
@@ -356,15 +365,9 @@ class RadarState:
 
     def _control_payload(self, now: datetime) -> dict[str, Any]:
         target = self._devices.get(self._control.target_address or "")
-        supported = [
-            track.snapshot(now)
-            for track in self._devices.values()
-            if is_adorime_candidate(track.name, track.service_uuids)
-        ]
-        supported.sort(
-            key=lambda item: (item["present"], item["rssi"] if item["rssi"] is not None else -999),
-            reverse=True,
-        )
+        nearby = [track.snapshot(now) for track in self._devices.values()]
+        nearby.sort(key=_device_sort_key, reverse=True)
+        supported = [item for item in nearby if item.get("controllable")]
         ai_preview = self._predict_ai_command(target) if target is not None else None
         fleet_assessment = self._fleet_hiding_assessment()
         gatt = self.connections.connection_snapshot(self._control.target_address)
@@ -378,6 +381,24 @@ class RadarState:
             "min_thrust": self._control.min_thrust,
             "max_thrust": self._control.max_thrust,
             "gatt": gatt,
+            "nearby_devices": [
+                {
+                    "address": item["address"],
+                    "name": item["name"],
+                    "display_name": item["display_name"],
+                    "present": item["present"],
+                    "rssi": item["rssi"],
+                    "protocol": item["protocol"],
+                    "match_tier": item["match_tier"],
+                    "match_reason": item["match_reason"],
+                    "adorime_candidate": item["adorime_candidate"],
+                    "controllable": item["controllable"],
+                    "gatt": self.connections.connection_snapshot(item["address"]),
+                    "hiding_methods": self._hiding_methods_for_address(item["address"]),
+                    "hiding_confidence": _max_confidence(self._hiding_methods_for_address(item["address"])),
+                }
+                for item in nearby
+            ],
             "supported_devices": [
                 {
                     "address": item["address"],
@@ -386,6 +407,8 @@ class RadarState:
                     "present": item["present"],
                     "rssi": item["rssi"],
                     "protocol": item["protocol"],
+                    "match_tier": item["match_tier"],
+                    "match_reason": item["match_reason"],
                     "gatt": self.connections.connection_snapshot(item["address"]),
                     "hiding_methods": self._hiding_methods_for_address(item["address"]),
                     "hiding_confidence": _max_confidence(self._hiding_methods_for_address(item["address"])),
@@ -583,7 +606,18 @@ class RadarState:
                     "evidence": "device name missing in advertisements",
                 }
             )
-        elif track.name.upper() in {"QD48", "BGSF", "BGQS", "AX05", "DT01", "BGZY", "A531", "SN80", "BGCD", "YXSJ"}:
+        elif looks_like_galaku_code(track.name) or (track.name or "").upper() in {
+            "QD48",
+            "BGSF",
+            "BGQS",
+            "AX05",
+            "DT01",
+            "BGZY",
+            "A531",
+            "SN80",
+            "BGCD",
+            "YXSJ",
+        }:
             methods.append(
                 {
                     "method": "opaque-local-name",
@@ -687,3 +721,14 @@ def _normalize_pattern(pattern: str) -> str:
     if not normalized:
         return "steady"
     return normalized[:24]
+
+
+_MATCH_TIER_RANK = {"known": 3, "probable": 2, "none": 0}
+
+
+def _device_sort_key(item: dict[str, Any]) -> tuple:
+    return (
+        bool(item.get("present")),
+        _MATCH_TIER_RANK.get(str(item.get("match_tier") or "none"), 0),
+        item["rssi"] if item.get("rssi") is not None else -999,
+    )

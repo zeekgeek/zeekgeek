@@ -141,8 +141,28 @@ DASHBOARD_HTML = """
     .devices { max-height: 70vh; overflow: auto; display: grid; gap: 8px; }
     .device { border: 1px solid #26324b; border-radius: 12px; padding: 10px; background: var(--panel-2); }
     .device.selected { outline: 2px solid var(--blue); }
+    .device.candidate { border-color: #3b82f6; }
+    .device.probable { border-color: #f59e0b; }
     .device strong { display: block; }
     .device small { color: var(--muted); display: block; margin-top: 3px; }
+    .device .actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+    .device button { padding: 6px 10px; font-size: 12px; }
+    .banner {
+      margin: 12px 16px 0;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid #7c2d12;
+      background: rgba(249, 115, 22, 0.12);
+      color: #fed7aa;
+      display: none;
+    }
+    .banner.visible { display: block; }
+    .banner strong { display: block; margin-bottom: 4px; }
+    .tier { display: inline-block; border-radius: 999px; padding: 2px 8px; font-size: 11px; font-weight: 700; margin-left: 6px; }
+    .tier-known { background: rgba(34,197,94,.18); color: var(--green); }
+    .tier-probable { background: rgba(245,158,11,.18); color: #fbbf24; }
+    .tier-none { background: rgba(148,163,184,.15); color: var(--muted); }
+    .filters { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; color: var(--muted); font-size: 13px; }
     .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
     input, select { background: #0d1629; color: var(--text); border: 1px solid #30405f; border-radius: 9px; padding: 7px 9px; }
     input[type=range] { accent-color: var(--blue); padding: 0; }
@@ -176,10 +196,23 @@ DASHBOARD_HTML = """
     <button id="notify">Enable browser notifications</button>
   </header>
 
+  <div id="scan-help" class="banner">
+    <strong>Bluetooth scan is not running</strong>
+    <span id="scan-help-detail"></span>
+  </div>
+
   <main class="shell">
     <section class="panel">
-      <h2>Detected AdoRime devices</h2>
-      <div id="devices" class="devices empty">No AdoRime-compatible devices detected yet.</div>
+      <h2>Nearby Bluetooth devices</h2>
+      <div class="filters">
+        <label><input id="filter-candidates" type="checkbox" checked> highlight toys first</label>
+        <label><input id="filter-toys-only" type="checkbox"> toys only</label>
+        <span id="nearby-summary" class="code"></span>
+      </div>
+      <p class="code" style="margin:0 0 8px 0;">
+        AdoRime toys advertise short codes (BGSF, QD48, SN80…), not “Adorime”. Tap <em>Select &amp; connect</em> on a likely match.
+      </p>
+      <div id="devices" class="devices empty">Waiting for nearby Bluetooth advertisements…</div>
     </section>
 
     <section class="stack">
@@ -276,6 +309,15 @@ DASHBOARD_HTML = """
     const aiMax = document.getElementById("ai-max");
     const aiControlInputIds = new Set(["ai-enabled", "ai-aggressiveness", "ai-min", "ai-max"]);
 
+    const scanHelp = document.getElementById("scan-help");
+    const scanHelpDetail = document.getElementById("scan-help-detail");
+    const filterCandidates = document.getElementById("filter-candidates");
+    const filterToysOnly = document.getElementById("filter-toys-only");
+    const nearbySummary = document.getElementById("nearby-summary");
+
+    filterCandidates.onchange = () => render();
+    filterToysOnly.onchange = () => render();
+
     notifyBtn.onclick = async () => {
       if (!("Notification" in window)) {
         alert("Browser notifications are not supported here.");
@@ -371,16 +413,19 @@ DASHBOARD_HTML = """
     function render() {
       if (!snapshot) return;
       const control = snapshot.control || {};
-      const supported = control.supported_devices || [];
+      const nearby = control.nearby_devices || snapshot.devices || [];
+      const supported = control.supported_devices || nearby.filter((d) => d.controllable || d.adorime_candidate);
       const mode = snapshot.scan_mode || "unknown";
       scanMode.textContent = snapshot.scanner_error
-        ? `scan: ${mode} (${snapshot.scanner_error})`
+        ? `scan: ${mode}`
         : `scan: ${mode}`;
-      scanMode.className = `pill ${mode === "live" ? "ok" : "warn"}`;
-      document.getElementById("counts").textContent = `${snapshot.present_count} in range / ${snapshot.device_count} total Bluetooth devices`;
+      scanMode.className = `pill ${mode === "live" || mode === "demo" ? "ok" : "warn"}`;
+      const candidates = snapshot.candidate_count ?? supported.length;
+      document.getElementById("counts").textContent =
+        `${snapshot.present_count} in range · ${candidates} likely toys · ${snapshot.device_count} total`;
       document.getElementById("updated").textContent = `Updated ${snapshot.generated_at}`;
-
-      renderDevices(supported, control.target_address);
+      renderScanHelp(mode, snapshot.scanner_error);
+      renderDevices(nearby, control.target_address);
       renderTargetSelect(supported, control.target_address);
       renderControlState(control);
       renderLastCommand(control.last_command);
@@ -389,36 +434,92 @@ DASHBOARD_HTML = """
       renderEvents(snapshot.events || []);
     }
 
+    function renderScanHelp(mode, error) {
+      if (mode !== "live-error") {
+        scanHelp.className = "banner";
+        return;
+      }
+      scanHelp.className = "banner visible";
+      scanHelpDetail.textContent = error
+        ? `${error} — on Linux enable Bluetooth / start bluetoothd; this app retries automatically. Keep the toy powered on (flashing light) within a few meters of the adapter.`
+        : "Enable Bluetooth and keep the toy powered on nearby. The scanner retries automatically.";
+    }
+
     function renderDevices(devices, targetAddress) {
-      if (!devices.length) {
+      const toysOnly = filterToysOnly.checked;
+      const highlightFirst = filterCandidates.checked;
+      let list = devices.slice();
+      if (toysOnly) {
+        list = list.filter((d) => d.controllable || d.adorime_candidate || d.match_tier === "known" || d.match_tier === "probable");
+      }
+      if (highlightFirst) {
+        list = list.slice().sort((a, b) => {
+          const rank = { known: 3, probable: 2, none: 0 };
+          const ta = rank[a.match_tier] || 0;
+          const tb = rank[b.match_tier] || 0;
+          if (tb !== ta) return tb - ta;
+          return (b.rssi ?? -999) - (a.rssi ?? -999);
+        });
+      }
+      const likely = devices.filter((d) => d.controllable || d.adorime_candidate).length;
+      nearbySummary.textContent = `${list.length} shown · ${likely} likely toys nearby`;
+
+      if (!list.length) {
         devicesRoot.className = "devices empty";
-        devicesRoot.textContent = "No AdoRime/Galaku toys detected yet. Turn the toy on (flashing light) and keep it near the adapter.";
+        devicesRoot.textContent = toysOnly
+          ? "No likely toys yet. Uncheck “toys only” to see every nearby BLE advertisement, or power the toy on."
+          : "No nearby Bluetooth advertisements yet. Power the toy on and keep it close to the adapter.";
         return;
       }
       devicesRoot.className = "devices";
-      devicesRoot.innerHTML = devices.map((device) => {
+      devicesRoot.innerHTML = list.map((device) => {
         const selected = device.address === targetAddress ? "selected" : "";
+        const tier = device.match_tier || "none";
+        const tierClass = tier === "known" ? "candidate" : (tier === "probable" ? "probable" : "");
         const state = device.present ? "in range" : "left";
-        const confidence = escapeHtml(device.hiding_confidence || "low");
         const connected = device.gatt && device.gatt.connected ? "GATT connected" : "GATT idle";
-        const title = escapeHtml(device.display_name || device.name || "Unnamed AdoRime");
+        const title = escapeHtml(device.display_name || device.name || "Unnamed BLE device");
         const code = escapeHtml(device.name || "no-local-name");
+        const controllable = device.controllable || device.adorime_candidate;
+        const action = controllable
+          ? `<button data-action="select-connect" data-address="${escapeHtml(device.address)}">Select &amp; connect</button>`
+          : `<button class="secondary" data-action="select-only" data-address="${escapeHtml(device.address)}" disabled title="Not a likely AdoRime/Galaku name">Not a toy match</button>`;
         return `
-          <div class="device ${selected}">
-            <strong>${title}</strong>
-            <small class="code">${escapeHtml(device.address)} · BLE name ${code}</small>
+          <div class="device ${selected} ${tierClass}">
+            <strong>${title}<span class="tier tier-${escapeHtml(tier)}">${escapeHtml(tier)}</span></strong>
+            <small class="code">${escapeHtml(device.address)} · BLE name ${code} · ${escapeHtml(device.match_reason || "none")}</small>
             <small>RSSI ${device.rssi ?? "?"} dBm · ${state} · ${connected}</small>
-            <small class="confidence-${confidence}">protocol: ${escapeHtml(device.protocol || "unknown")} · hiding: ${confidence}</small>
+            <small>protocol: ${escapeHtml(device.protocol || "—")}</small>
+            <div class="actions">${action}</div>
           </div>
         `;
       }).join("");
+
+      devicesRoot.querySelectorAll("button[data-action]").forEach((button) => {
+        button.onclick = async () => {
+          const address = button.getAttribute("data-address");
+          const action = button.getAttribute("data-action");
+          if (!address) return;
+          button.disabled = true;
+          try {
+            const targetPayload = await postJson("/api/control/target", { address });
+            if (!targetPayload) return;
+            if (action === "select-connect") {
+              await postJson("/api/control/connect", {});
+            }
+          } finally {
+            button.disabled = false;
+          }
+        };
+      });
     }
 
     function renderTargetSelect(devices, targetAddress) {
       const previous = targetSelect.value;
       targetSelect.innerHTML = devices.map((device) => {
         const label = device.display_name || device.name || device.address;
-        return `<option value="${escapeHtml(device.address)}">${escapeHtml(label)} (${device.present ? "in range" : "left"})</option>`;
+        const tier = device.match_tier ? ` [${device.match_tier}]` : "";
+        return `<option value="${escapeHtml(device.address)}">${escapeHtml(label)}${escapeHtml(tier)} (${device.present ? "in range" : "left"})</option>`;
       }).join("");
       if (targetAddress && devices.find((item) => item.address === targetAddress)) {
         targetSelect.value = targetAddress;

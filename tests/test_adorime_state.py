@@ -7,6 +7,8 @@ from adorime_control.protocol import (
     encode_galaku_single,
     is_adorime_candidate,
     classify_protocol,
+    match_reason,
+    match_tier,
     GALAKU_SERVICE_UUID,
 )
 from adorime_control.state import Observation, RadarState, movement_label
@@ -21,9 +23,16 @@ class AdorimeStateTests(unittest.TestCase):
     def test_galaku_name_and_service_detection(self) -> None:
         self.assertTrue(is_adorime_candidate("BGSF", None))
         self.assertTrue(is_adorime_candidate(None, [GALAKU_SERVICE_UUID]))
+        self.assertTrue(is_adorime_candidate("ZX99", None))  # heuristic short code
         self.assertFalse(is_adorime_candidate("Keyboard", None))
+        self.assertFalse(is_adorime_candidate("AirPods", None))
         self.assertEqual(classify_protocol([GALAKU_SERVICE_UUID], "BGSF"), "galaku")
         self.assertEqual(classify_protocol(None, "QD48"), "galaku")
+        self.assertEqual(classify_protocol(None, "ZX99"), "galaku")
+        self.assertEqual(match_tier("BGSF", None), "known")
+        self.assertEqual(match_tier("ZX99", None), "probable")
+        self.assertEqual(match_tier("Keyboard", None), "none")
+        self.assertEqual(match_reason("ZX99", None), "galaku-heuristic")
 
     def test_galaku_command_encoding_is_stable(self) -> None:
         payload = encode_galaku_single(55)
@@ -88,6 +97,47 @@ class AdorimeStateTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             await state.set_control_target("D4:8A:FC:12:34:56")
+
+    def test_probable_heuristic_target_is_accepted(self) -> None:
+        asyncio.run(self._probable_target_flow())
+
+    async def _probable_target_flow(self) -> None:
+        state = RadarState()
+        await state.observe(
+            Observation(
+                address="CE:11:22:33:44:55",
+                name="ZX99",
+                address_type="random",
+                rssi=-65,
+                observed_at=datetime.now(UTC),
+            )
+        )
+        event = await state.set_control_target("CE:11:22:33:44:55")
+        self.assertEqual(event["type"], "control-target")
+        snapshot = await state.snapshot()
+        self.assertEqual(snapshot["candidate_count"], 1)
+        nearby = snapshot["control"]["nearby_devices"]
+        self.assertGreaterEqual(len(nearby), 1)
+        zx = next(item for item in nearby if item["address"] == "CE:11:22:33:44:55")
+        self.assertEqual(zx["match_tier"], "probable")
+        self.assertTrue(zx["controllable"])
+        # Keyboard-like noise is listed nearby but not controllable.
+        await state.observe(
+            Observation(
+                address="D4:8A:FC:12:34:56",
+                name="Keyboard",
+                address_type="public",
+                rssi=-70,
+                observed_at=datetime.now(UTC),
+            )
+        )
+        snapshot = await state.snapshot()
+        kb = next(item for item in snapshot["control"]["nearby_devices"] if item["address"] == "D4:8A:FC:12:34:56")
+        self.assertEqual(kb["match_tier"], "none")
+        self.assertFalse(kb["controllable"])
+        # Probable toys sort above unrelated BLE noise when both present.
+        addresses = [item["address"] for item in snapshot["devices"] if item["present"]]
+        self.assertLess(addresses.index("CE:11:22:33:44:55"), addresses.index("D4:8A:FC:12:34:56"))
 
     def test_idle_command_emits_when_target_leaves(self) -> None:
         asyncio.run(self._idle_flow())

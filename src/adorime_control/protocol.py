@@ -16,7 +16,52 @@ implementation published in the Buttplug/Intiface project
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+
+# Galaku toys almost always advertise opaque short codes (3-5 alnum chars),
+# never the storefront brand "Adorime". Treat those as probable scan hits.
+_GALAKU_CODE_RE = re.compile(r"^[A-Z0-9]{3,5}$")
+_COMMON_NON_TOY_NAMES = frozenset(
+    {
+        "IPHONE",
+        "IPAD",
+        "MACBOOK",
+        "AIRPODS",
+        "GALAXY",
+        "PIXEL",
+        "WATCH",
+        "KEYBOARD",
+        "MOUSE",
+        "TV",
+        "SPEAKER",
+        "HEADPHONES",
+        "HEADSET",
+        "BEACON",
+        "LAPTOP",
+        "DESKTOP",
+        "WINDOWS",
+        "LINUX",
+        "UBUNTU",
+        "SAMSUNG",
+        "HUAWEI",
+        "XIAOMI",
+        "HONOR",
+        "ONEPLUS",
+        "GOOGLE",
+        "NEST",
+        "ECHO",
+        "ALEXA",
+        "BOSE",
+        "SONY",
+        "JBL",
+        "FITBIT",
+        "GARMIN",
+        "TILE",
+        "AIRTAG",
+        "UNKNOWN",
+    }
+)
 
 GALAKU_SERVICE_UUID = "00001000-0000-1000-8000-00805f9b34fb"
 GALAKU_TX_CHARACTERISTIC_UUID = "00001001-0000-1000-8000-00805f9b34fb"
@@ -193,6 +238,61 @@ def normalize_ble_name(name: str | None) -> str:
     return (name or "").strip()
 
 
+def _name_key(name: str | None) -> str:
+    return normalize_ble_name(name).upper()
+
+
+def looks_like_galaku_code(name: str | None) -> bool:
+    """Heuristic: short opaque alphanumeric BLE names used by Galaku OEM toys."""
+    code = _name_key(name)
+    if not code or code in _COMMON_NON_TOY_NAMES:
+        return False
+    if not _GALAKU_CODE_RE.fullmatch(code):
+        return False
+    has_letter = any(ch.isalpha() for ch in code)
+    has_digit = any(ch.isdigit() for ch in code)
+    # Prefer letter+digit mixes (QD48); also allow 4-letter opaque codes (BGSF).
+    return has_letter and (has_digit or len(code) == 4)
+
+
+def match_tier(name: str | None, service_uuids: list[str] | None = None) -> str:
+    """Classify advertisement confidence: known | probable | none."""
+    for uuid in service_uuids or []:
+        if KNOWN_SERVICE_PROTOCOLS.get(str(uuid).strip().lower()):
+            return "known"
+    code = _name_key(name)
+    if not code:
+        return "none"
+    if code in {item.upper() for item in ADORIME_BLE_NAME_MAP}:
+        return "known"
+    if code in {item.upper() for item in GALAKU_BLE_NAMES}:
+        return "known"
+    if any(token in code for token in ("ADORIME", "ADO RIME", "GALAKU", "KISSTOY")):
+        return "known"
+    if looks_like_galaku_code(code):
+        return "probable"
+    return "none"
+
+
+def match_reason(name: str | None, service_uuids: list[str] | None = None) -> str:
+    for uuid in service_uuids or []:
+        protocol = KNOWN_SERVICE_PROTOCOLS.get(str(uuid).strip().lower())
+        if protocol:
+            return f"{protocol}-service"
+    code = _name_key(name)
+    if not code:
+        return "none"
+    if code in {item.upper() for item in ADORIME_BLE_NAME_MAP}:
+        return "adorime-code"
+    if code in {item.upper() for item in GALAKU_BLE_NAMES}:
+        return "galaku-code"
+    if any(token in code for token in ("ADORIME", "ADO RIME", "GALAKU", "KISSTOY")):
+        return "brand-name"
+    if looks_like_galaku_code(code):
+        return "galaku-heuristic"
+    return "none"
+
+
 def friendly_device_name(local_name: str | None) -> str | None:
     raw = normalize_ble_name(local_name)
     if not raw:
@@ -203,22 +303,14 @@ def friendly_device_name(local_name: str | None) -> str | None:
     lower = raw.lower()
     if "adorime" in lower or "ado rime" in lower:
         return raw
+    if looks_like_galaku_code(raw):
+        return f"Likely Galaku toy ({raw.upper()})"
     return None
 
 
 def is_adorime_candidate(name: str | None, service_uuids: list[str] | None = None) -> bool:
-    """Return True when advertisement looks like an AdoRime/Galaku-family toy."""
-    if classify_protocol(service_uuids) == "galaku":
-        return True
-    raw = normalize_ble_name(name)
-    if not raw:
-        return False
-    if raw.upper() in {item.upper() for item in ADORIME_BLE_NAME_MAP}:
-        return True
-    if raw in GALAKU_BLE_NAMES or raw.upper() in {item.upper() for item in GALAKU_BLE_NAMES}:
-        return True
-    lower = raw.lower()
-    return "adorime" in lower or "ado rime" in lower
+    """True for known or high-confidence probable AdoRime/Galaku advertisements."""
+    return match_tier(name, service_uuids) in {"known", "probable"}
 
 
 def classify_protocol(service_uuids: list[str] | None, name: str | None = None) -> str | None:
@@ -229,12 +321,15 @@ def classify_protocol(service_uuids: list[str] | None, name: str | None = None) 
     raw = normalize_ble_name(name)
     if not raw:
         return None
-    if raw in GALAKU_BLE_NAMES or raw.upper() in {item.upper() for item in GALAKU_BLE_NAMES}:
+    code = raw.upper()
+    if code in {item.upper() for item in GALAKU_BLE_NAMES}:
         return "galaku"
-    if raw.upper() in {item.upper() for item in ADORIME_BLE_NAME_MAP}:
+    if code in {item.upper() for item in ADORIME_BLE_NAME_MAP}:
         return "galaku"
     lower = raw.lower()
-    if "adorime" in lower or "ado rime" in lower:
+    if "adorime" in lower or "ado rime" in lower or "galaku" in lower or "kisstoy" in lower:
+        return "galaku"
+    if looks_like_galaku_code(raw):
         return "galaku"
     return None
 
