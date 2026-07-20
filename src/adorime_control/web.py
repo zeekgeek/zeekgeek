@@ -137,6 +137,11 @@ DASHBOARD_HTML = """
     .warn { background: rgba(249,115,22,.15); color: var(--orange); }
     .code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); }
     .command { border: 1px solid #2d3b57; border-radius: 10px; padding: 8px; margin-top: 8px; background: #0d1629; }
+    .method { border: 1px solid #2d3b57; border-radius: 10px; padding: 8px; margin-top: 8px; background: #0d1629; }
+    .method strong { display: block; }
+    .confidence-low { color: #94a3b8; }
+    .confidence-medium { color: #f59e0b; }
+    .confidence-high { color: #f97316; }
     .events { max-height: 250px; overflow: auto; font-size: 13px; color: var(--muted); }
     .empty { color: var(--muted); text-align: center; padding: 30px 0; }
     @media (max-width: 980px) { .shell { grid-template-columns: 1fr; } }
@@ -209,6 +214,13 @@ DASHBOARD_HTML = """
         <div id="last-command" class="empty">No thrust command has been sent yet.</div>
         <h2 style="margin-top:16px;">Recent command history</h2>
         <div id="command-history"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Likely hiding methods</h2>
+        <div id="hiding-report" class="empty">Waiting for enough observations to assess hiding behavior.</div>
+        <h3 style="margin-top:14px;">Target-level indicators</h3>
+        <div id="target-hiding-methods" class="empty">Select a target device to inspect method indicators.</div>
       </section>
 
       <section class="panel">
@@ -334,6 +346,7 @@ DASHBOARD_HTML = """
       renderControlState(control);
       renderLastCommand(control.last_command);
       renderHistory(control.history || []);
+      renderHidingAssessment(control.hiding_assessment || null, supported, control.target_address || null);
       renderEvents(snapshot.events || []);
     }
 
@@ -347,11 +360,13 @@ DASHBOARD_HTML = """
       devicesRoot.innerHTML = devices.map((device) => {
         const selected = device.address === targetAddress ? "selected" : "";
         const state = device.present ? "in range" : "left";
+        const confidence = escapeHtml(device.hiding_confidence || "low");
         return `
           <div class="device ${selected}">
             <strong>${escapeHtml(device.name || "Unnamed AdoRime")}</strong>
             <small class="code">${escapeHtml(device.address)}</small>
             <small>RSSI ${device.rssi ?? "?"} dBm · ${state}</small>
+            <small class="confidence-${confidence}">hiding confidence: ${confidence}</small>
           </div>
         `;
       }).join("");
@@ -417,6 +432,45 @@ DASHBOARD_HTML = """
         <div class="command">
           <strong>${escapeHtml(entry.source)}</strong> · ${escapeHtml(entry.name || entry.address)} · ${entry.thrust}% (${escapeHtml(entry.pattern)})
           <div class="code">${escapeHtml(entry.at)} · ${escapeHtml(entry.reason)}</div>
+        </div>
+      `).join("");
+    }
+
+    function renderHidingAssessment(assessment, supportedDevices, targetAddress) {
+      const root = document.getElementById("hiding-report");
+      if (!assessment || !supportedDevices.length) {
+        root.className = "empty";
+        root.textContent = "Waiting for enough observations to assess hiding behavior.";
+      } else {
+        root.className = "";
+        const methods = (assessment.primary_methods || []).length
+          ? assessment.primary_methods.map((method) => `<li>${escapeHtml(method)}</li>`).join("")
+          : "<li>No strong method pattern detected yet.</li>";
+        root.innerHTML = `
+          <div class="method">
+            <strong class="confidence-${escapeHtml(assessment.confidence || "low")}">Fleet confidence: ${escapeHtml(assessment.confidence || "low")}</strong>
+            <div class="code">evaluated devices: ${assessment.evaluated_devices ?? 0}</div>
+            <ul>${methods}</ul>
+            <div class="code">${escapeHtml(assessment.note || "")}</div>
+          </div>
+        `;
+      }
+
+      const targetRoot = document.getElementById("target-hiding-methods");
+      const target = supportedDevices.find((item) => item.address === targetAddress);
+      const targetMethods = target?.hiding_methods || [];
+      if (!target || !targetMethods.length) {
+        targetRoot.className = "empty";
+        targetRoot.textContent = target ? "No strong hiding method indicators yet." : "Select a target device to inspect method indicators.";
+        return;
+      }
+      targetRoot.className = "";
+      targetRoot.innerHTML = targetMethods.map((method) => `
+        <div class="method">
+          <strong>${escapeHtml(method.method || "unknown-method")}</strong>
+          <div class="confidence-${escapeHtml(method.confidence || "low")}">confidence: ${escapeHtml(method.confidence || "low")}</div>
+          <div>${escapeHtml(method.summary || "")}</div>
+          <div class="code">${escapeHtml(method.evidence || "")}</div>
         </div>
       `).join("");
     }

@@ -37,6 +37,7 @@ class AdorimeWebTests(unittest.TestCase):
         payload = asyncio.run(endpoint())
         self.assertIn("control", payload)
         self.assertIn("devices", payload)
+        self.assertIn("hiding_assessment", payload["control"])
 
     def test_manual_control_route(self) -> None:
         target_endpoint = self._route("/api/control/target", "POST")

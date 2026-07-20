@@ -96,6 +96,42 @@ class AdorimeStateTests(unittest.TestCase):
         idle = [event for event in events if event["type"] == "control-command" and event["control"]["thrust"] == 0]
         self.assertTrue(idle)
 
+    def test_hiding_method_assessment_detects_randomized_sparse_broadcast(self) -> None:
+        asyncio.run(self._hiding_assessment_flow())
+
+    async def _hiding_assessment_flow(self) -> None:
+        state = RadarState(stale_after=3.0)
+        now = datetime.now(UTC)
+        address = "C1:AA:11:22:33:44"
+        for delta, rssi in [(-12, -78), (-11, -76), (-6, -73), (-4, -71)]:
+            await state.observe(
+                Observation(
+                    address=address,
+                    name="AdoRime Ghost",
+                    address_type="random",
+                    rssi=rssi,
+                    observed_at=now + timedelta(seconds=delta),
+                )
+            )
+        await state.mark_stale()
+        await state.observe(
+            Observation(
+                address=address,
+                name="AdoRime Ghost",
+                address_type="random",
+                rssi=-70,
+                observed_at=now + timedelta(seconds=9),
+            )
+        )
+
+        snapshot = await state.snapshot()
+        device = next(item for item in snapshot["devices"] if item["address"] == address)
+        method_codes = {method["method"] for method in device["hiding_methods"]}
+        self.assertIn("private-address-randomization", method_codes)
+        self.assertIn("low-duty-cycle-advertising", method_codes)
+        self.assertIn(device["hiding_confidence"], {"medium", "high"})
+        self.assertGreaterEqual(device["reappear_count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -71,13 +71,23 @@ class DemoScannerBackend:
                 "base": -76,
                 "address_type": "random",
             },
+            {
+                "address": "DA:2B:91:AA:04:30",
+                "name": "AdoRime Vector",
+                "base": -78,
+                "address_type": "random",
+            },
         ]
 
         tick = 0
         while True:
             tick += 1
             for index, device in enumerate(devices):
-                if index == 2 and tick % 18 in {0, 1, 2}:
+                if index in {2, 3} and tick % 18 in {0, 1, 2, 3}:
+                    continue
+                if index == 2 and tick % 14 < 7:
+                    continue
+                if index == 3 and tick % 14 >= 7:
                     continue
                 drift = int(10 * random.uniform(-1, 1))
                 if index == 0:
