@@ -182,3 +182,71 @@ The app also auto-selects the next free port if the requested `--port` is busy.
 ```bash
 python3 -m unittest discover -s tests
 ```
+
+---
+
+# MacBook Battery Diagnostic
+
+Realtime charging and battery-health monitor aimed at Intel MacBook Pros
+(including 2018 models). It reads Apple’s `AppleSmartBattery` data via `ioreg`
+and shows:
+
+- live **voltage**, **amperage**, and **watts** (V × I at the pack)
+- **charge level** and adapter / charging state
+- **ETA to 80%** (optimized charge target) and **ETA to full**
+- **battery health %**, design vs worn capacity, **cycle count**, and wear band
+
+On non-macOS hosts (or when `ioreg` is unavailable) it auto-falls back to a
+demo session that simulates a worn 2018-class pack charging from ~42%.
+
+## Quick start
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .
+python3 -m mac_battery --demo
+```
+
+Open the printed dashboard URL (default <http://127.0.0.1:8780>). The terminal
+also redraws a live snapshot every second.
+
+On a MacBook:
+
+```bash
+python3 -m mac_battery
+```
+
+Single snapshot (no live loop / dashboard):
+
+```bash
+python3 -m mac_battery --once
+```
+
+## Command options
+
+```text
+python3 -m mac_battery --host 127.0.0.1 --port 8780 --interval 1 --target 80
+```
+
+- `--demo`: simulate a 2018 MBP charge session
+- `--once`: print one snapshot and exit
+- `--interval`: seconds between samples (default `1`)
+- `--target`: optimized charge percent for ETA (default `80`)
+- `--no-web`: terminal-only monitor
+- `--no-terminal`: dashboard only
+- `--no-auto-demo-fallback`: exit instead of using demo data when live read fails
+- `--host` / `--port` / `--log-level`
+
+## API
+
+- `GET /api/snapshot`: latest report plus short history and events
+- `GET /api/events`: Server-Sent Events stream for live UI updates
+
+## Notes
+
+- Watts and amps are **battery-side** values from IOKit, not the AC adapter’s
+  nameplate wattage.
+- ETA uses a smoothed charge current; it is an estimate and will move as the
+  pack tapers near full (CC/CV behavior).
+- Apple’s own “time remaining” is shown when the firmware reports a valid value.
