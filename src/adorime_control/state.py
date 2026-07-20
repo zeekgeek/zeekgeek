@@ -9,6 +9,13 @@ from datetime import UTC, datetime
 from statistics import pstdev
 from typing import Any
 
+from .connection import DeviceConnectionManager
+from .protocol import (
+    classify_protocol,
+    friendly_device_name,
+    is_adorime_candidate,
+)
+
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
@@ -22,13 +29,6 @@ def clamp_int(value: int, minimum: int, maximum: int) -> int:
     return max(minimum, min(value, maximum))
 
 
-def is_adorime_device(name: str | None) -> bool:
-    if not name:
-        return False
-    normalized = name.strip().lower()
-    return "adorime" in normalized or "ado rime" in normalized
-
-
 @dataclass
 class Observation:
     address: str
@@ -36,6 +36,7 @@ class Observation:
     name: str | None = None
     address_type: str | None = None
     tx_power: int | None = None
+    service_uuids: list[str] = field(default_factory=list)
     observed_at: datetime = field(default_factory=utc_now)
 
 
@@ -47,6 +48,7 @@ class DeviceTrack:
     name: str | None = None
     address_type: str | None = None
     tx_power: int | None = None
+    service_uuids: list[str] = field(default_factory=list)
     seen_count: int = 0
     reappear_count: int = 0
     present: bool = True
@@ -61,6 +63,9 @@ class DeviceTrack:
         self.name = observation.name or self.name
         self.address_type = observation.address_type or self.address_type
         self.tx_power = observation.tx_power if observation.tx_power is not None else self.tx_power
+        if observation.service_uuids:
+            merged = list(dict.fromkeys([*self.service_uuids, *observation.service_uuids]))
+            self.service_uuids = merged
         self.rssi_history.append(observation.rssi)
         self.time_history.append(iso_time(observation.observed_at))
         self.observed_history.append(observation.observed_at)
@@ -77,11 +82,16 @@ class DeviceTrack:
         rssi_values = list(self.rssi_history)
         current_rssi = rssi_values[-1] if rssi_values else None
         smoothed = smooth_rssi(rssi_values)
+        protocol = classify_protocol(self.service_uuids, self.name)
+        display_name = friendly_device_name(self.name) or self.name
         return {
             "address": self.address,
             "name": self.name,
+            "display_name": display_name,
             "address_type": self.address_type,
             "tx_power": self.tx_power,
+            "service_uuids": list(self.service_uuids),
+            "protocol": protocol,
             "first_seen": iso_time(self.first_seen),
             "last_seen": iso_time(self.last_seen),
             "stale_seconds": round((now - self.last_seen).total_seconds(), 1),
@@ -93,7 +103,7 @@ class DeviceTrack:
             "rssi_history": rssi_values,
             "time_history": list(self.time_history),
             "movement": movement_label(rssi_values),
-            "adorime_candidate": is_adorime_device(self.name),
+            "adorime_candidate": is_adorime_candidate(self.name, self.service_uuids),
         }
 
 
@@ -117,6 +127,9 @@ class RadarState:
         self._events: deque[dict[str, Any]] = deque(maxlen=240)
         self._control = ControlState()
         self._lock = asyncio.Lock()
+        self.connections = DeviceConnectionManager()
+        self.scan_mode = "live"
+        self.scanner_error: str | None = None
 
     async def observe(self, observation: Observation) -> list[dict[str, Any]]:
         async with self._lock:
@@ -130,6 +143,7 @@ class RadarState:
                     name=observation.name,
                     address_type=observation.address_type,
                     tx_power=observation.tx_power,
+                    service_uuids=list(observation.service_uuids),
                     seen_count=1,
                 )
                 track.rssi_history.append(observation.rssi)
@@ -144,7 +158,7 @@ class RadarState:
                     track.reappear_count += 1
                     emitted.append(self._event("entered", track, "Device came back into range", at=observation.observed_at))
 
-            ai_event = self._maybe_emit_ai_command(observation.observed_at)
+            ai_event = await self._maybe_emit_ai_command(observation.observed_at)
             if ai_event is not None:
                 emitted.append(ai_event)
 
@@ -159,7 +173,7 @@ class RadarState:
                 if track.mark_left_if_stale(now, self.stale_after):
                     emitted.append(self._event("left", track, "Device is no longer being observed", at=now))
 
-            idle_event = self._emit_idle_command_if_target_missing(now)
+            idle_event = await self._emit_idle_command_if_target_missing(now)
             if idle_event is not None:
                 emitted.append(idle_event)
 
@@ -175,6 +189,7 @@ class RadarState:
                 methods = self._hiding_methods_for_track(track)
                 payload["hiding_methods"] = methods
                 payload["hiding_confidence"] = _max_confidence(methods)
+                payload["gatt"] = self.connections.connection_snapshot(track.address)
                 devices.append(payload)
             devices.sort(
                 key=lambda item: (item["present"], item["rssi"] if item["rssi"] is not None else -999),
@@ -182,6 +197,8 @@ class RadarState:
             )
             return {
                 "generated_at": iso_time(now),
+                "scan_mode": self.scan_mode,
+                "scanner_error": self.scanner_error,
                 "device_count": len(devices),
                 "present_count": sum(1 for item in devices if item["present"]),
                 "devices": devices,
@@ -193,11 +210,23 @@ class RadarState:
         async with self._lock:
             return self._control_payload(utc_now())
 
+    async def set_scan_status(self, *, mode: str, error: str | None = None) -> dict[str, Any]:
+        async with self._lock:
+            self.scan_mode = mode
+            self.scanner_error = error
+            message = f"Scanner mode: {mode}" + (f" ({error})" if error else "")
+            event = self._event("scanner-status", None, message, at=utc_now())
+            self._events.append(event)
+            return event
+
     async def set_control_target(self, address: str | None) -> dict[str, Any]:
         async with self._lock:
             if address is None:
+                previous = self._control.target_address
                 self._control.target_address = None
                 self._control.ai_enabled = False
+                if previous:
+                    await self.connections.disconnect(previous)
                 event = self._event("control-target", None, "Control target cleared", at=utc_now())
                 self._events.append(event)
                 return event
@@ -205,17 +234,56 @@ class RadarState:
             track = self._devices.get(address)
             if track is None:
                 raise ValueError(f"Unknown device address: {address}")
-            if not is_adorime_device(track.name):
-                raise ValueError("Selected device is not recognized as an AdoRime target")
+            if not is_adorime_candidate(track.name, track.service_uuids):
+                raise ValueError("Selected device is not recognized as an AdoRime/Galaku target")
+
+            if self._control.target_address and self._control.target_address != address:
+                await self.connections.disconnect(self._control.target_address)
 
             self._control.target_address = address
             self._control.last_ai_command_at = None
+            label = friendly_device_name(track.name) or track.name or track.address
             event = self._event(
                 "control-target",
                 track,
-                f"Control target set to {track.name or track.address}",
+                f"Control target set to {label}",
                 at=utc_now(),
             )
+            self._events.append(event)
+            return event
+
+    async def connect_target(self) -> dict[str, Any]:
+        async with self._lock:
+            track = self._require_target()
+            try:
+                gatt = await self.connections.connect(
+                    address=track.address,
+                    name=track.name,
+                    service_uuids=track.service_uuids,
+                )
+            except Exception as exc:
+                event = self._event(
+                    "control-connect-error",
+                    track,
+                    f"GATT connect failed: {type(exc).__name__}: {exc}",
+                    at=utc_now(),
+                )
+                self._events.append(event)
+                raise
+            event = self._event(
+                "control-connect",
+                track,
+                f"Connected over GATT ({gatt.get('protocol')})",
+                at=utc_now(),
+            )
+            self._events.append(event)
+            return event
+
+    async def disconnect_target(self) -> dict[str, Any]:
+        async with self._lock:
+            track = self._require_target()
+            await self.connections.disconnect(track.address)
+            event = self._event("control-disconnect", track, "Disconnected GATT session", at=utc_now())
             self._events.append(event)
             return event
 
@@ -225,6 +293,7 @@ class RadarState:
             level = clamp_int(int(thrust), 0, 100)
             self._control.mode = "manual"
             self._control.ai_enabled = False
+            wire = await self._write_thrust(track, level, pattern)
             event = self._record_command(
                 track=track,
                 source="manual",
@@ -232,6 +301,7 @@ class RadarState:
                 pattern=_normalize_pattern(pattern),
                 reason="Manual thrust override",
                 at=utc_now(),
+                wire=wire,
             )
             self._events.append(event)
             return event
@@ -272,7 +342,7 @@ class RadarState:
         async with self._lock:
             if not self._control.ai_enabled:
                 raise ValueError("AI thrust mode is disabled")
-            event = self._maybe_emit_ai_command(utc_now(), force=True)
+            event = await self._maybe_emit_ai_command(utc_now(), force=True)
             if event is None:
                 raise ValueError("Unable to produce AI thrust command")
             self._events.append(event)
@@ -286,28 +356,37 @@ class RadarState:
 
     def _control_payload(self, now: datetime) -> dict[str, Any]:
         target = self._devices.get(self._control.target_address or "")
-        supported = [track.snapshot(now) for track in self._devices.values() if is_adorime_device(track.name)]
+        supported = [
+            track.snapshot(now)
+            for track in self._devices.values()
+            if is_adorime_candidate(track.name, track.service_uuids)
+        ]
         supported.sort(
             key=lambda item: (item["present"], item["rssi"] if item["rssi"] is not None else -999),
             reverse=True,
         )
         ai_preview = self._predict_ai_command(target) if target is not None else None
         fleet_assessment = self._fleet_hiding_assessment()
+        gatt = self.connections.connection_snapshot(self._control.target_address)
         return {
             "target_address": self._control.target_address,
-            "target_name": target.name if target else None,
+            "target_name": (friendly_device_name(target.name) or target.name) if target else None,
             "target_present": target.present if target else False,
             "mode": self._control.mode,
             "ai_enabled": self._control.ai_enabled,
             "ai_aggressiveness": round(self._control.ai_aggressiveness, 2),
             "min_thrust": self._control.min_thrust,
             "max_thrust": self._control.max_thrust,
+            "gatt": gatt,
             "supported_devices": [
                 {
                     "address": item["address"],
                     "name": item["name"],
+                    "display_name": item["display_name"],
                     "present": item["present"],
                     "rssi": item["rssi"],
+                    "protocol": item["protocol"],
+                    "gatt": self.connections.connection_snapshot(item["address"]),
                     "hiding_methods": self._hiding_methods_for_address(item["address"]),
                     "hiding_confidence": _max_confidence(self._hiding_methods_for_address(item["address"])),
                 }
@@ -318,6 +397,147 @@ class RadarState:
             "last_command": self._control.last_command,
             "history": list(self._control.history),
         }
+
+    async def _maybe_emit_ai_command(self, now: datetime, *, force: bool = False) -> dict[str, Any] | None:
+        if not self._control.ai_enabled:
+            return None
+        if not force and self._control.last_ai_command_at is not None:
+            elapsed = (now - self._control.last_ai_command_at).total_seconds()
+            if elapsed < 1.0:
+                return None
+        try:
+            track = self._require_target(present_required=True)
+        except ValueError:
+            return None
+        prediction = self._predict_ai_command(track)
+        if prediction is None:
+            return None
+        self._control.last_ai_command_at = now
+        wire = await self._write_thrust(track, prediction["thrust"], prediction["pattern"])
+        return self._record_command(
+            track=track,
+            source="ai-thrust",
+            thrust=prediction["thrust"],
+            pattern=prediction["pattern"],
+            reason=prediction["reason"],
+            at=now,
+            wire=wire,
+        )
+
+    async def _emit_idle_command_if_target_missing(self, now: datetime) -> dict[str, Any] | None:
+        if not self._control.ai_enabled:
+            return None
+        target = self._devices.get(self._control.target_address or "")
+        if target is None or target.present:
+            return None
+        last_command = self._control.last_command or {}
+        if int(last_command.get("thrust", -1)) == 0:
+            return None
+        wire = await self._write_thrust(target, 0, "idle")
+        return self._record_command(
+            track=target,
+            source="ai-thrust",
+            thrust=0,
+            pattern="idle",
+            reason="Target out of range",
+            at=now,
+            wire=wire,
+        )
+
+    async def _write_thrust(self, track: DeviceTrack, thrust: int, pattern: str) -> dict[str, Any] | None:
+        if self.scan_mode == "demo":
+            return {
+                "mode": "demo",
+                "address": track.address,
+                "thrust": thrust,
+                "pattern": pattern,
+                "note": "Demo mode: command recorded locally only (no GATT write).",
+            }
+        if not self.connections.is_connected(track.address):
+            # Auto-connect like the AdoRime app before sending the first command.
+            await self.connections.connect(
+                address=track.address,
+                name=track.name,
+                service_uuids=track.service_uuids,
+            )
+        return await self.connections.send_thrust(track.address, thrust, pattern=pattern)
+
+    def _predict_ai_command(self, track: DeviceTrack) -> dict[str, Any] | None:
+        if not track.present:
+            return {"thrust": 0, "pattern": "idle", "reason": "Target out of range"}
+
+        rssi_values = list(track.rssi_history)
+        smoothed = smooth_rssi(rssi_values)
+        if smoothed is None:
+            return None
+
+        near_score = max(0.0, min((smoothed + 92) / 50.0, 1.0))
+        recent = rssi_values[-10:]
+        volatility_db = pstdev(recent) if len(recent) >= 2 else 0.0
+        volatility_score = max(0.0, min(volatility_db / 14.0, 1.0))
+        movement = movement_label(rssi_values)
+        movement_boost = 0.12 if movement == "approaching" else (-0.10 if movement == "departing" else 0.0)
+
+        score = (
+            0.45 * near_score
+            + 0.35 * self._control.ai_aggressiveness
+            + 0.20 * volatility_score
+            + movement_boost
+        )
+        score = max(0.0, min(score, 1.0))
+        thrust = round(self._control.min_thrust + score * (self._control.max_thrust - self._control.min_thrust))
+
+        pattern = "steady"
+        if movement == "approaching":
+            pattern = "ramp"
+        if volatility_score >= 0.65:
+            pattern = "pulse"
+        reason = f"RSSI {smoothed} dBm, movement {movement}, volatility {volatility_db:.1f} dB"
+        return {"thrust": clamp_int(thrust, 0, 100), "pattern": pattern, "reason": reason}
+
+    def _record_command(
+        self,
+        *,
+        track: DeviceTrack,
+        source: str,
+        thrust: int,
+        pattern: str,
+        reason: str,
+        at: datetime,
+        wire: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        command = {
+            "at": iso_time(at),
+            "source": source,
+            "mode": self._control.mode,
+            "address": track.address,
+            "name": friendly_device_name(track.name) or track.name,
+            "thrust": clamp_int(thrust, 0, 100),
+            "pattern": pattern,
+            "reason": reason,
+            "wire": wire,
+        }
+        self._control.last_command = command
+        self._control.history.append(command)
+        return {
+            "type": "control-command",
+            "address": track.address,
+            "name": command["name"],
+            "message": f"{source} thrust {command['thrust']}% ({pattern})",
+            "at": command["at"],
+            "control": command,
+        }
+
+    def _require_target(self, *, present_required: bool = False) -> DeviceTrack:
+        address = self._control.target_address
+        if not address:
+            raise ValueError("No control target selected")
+        track = self._devices.get(address)
+        if track is None:
+            raise ValueError(f"Target {address} is not known")
+        if present_required and not track.present:
+            raise ValueError(f"Target {address} is not currently in range")
+        return track
 
     def _hiding_methods_for_address(self, address: str) -> list[dict[str, Any]]:
         track = self._devices.get(address)
@@ -363,37 +583,22 @@ class RadarState:
                     "evidence": "device name missing in advertisements",
                 }
             )
-
-        alias_peers = [
-            peer
-            for peer in self._devices.values()
-            if peer.address != track.address
-            and is_adorime_device(peer.name)
-            and _uses_private_address(peer.address, peer.address_type)
-        ]
-        if alias_peers:
-            base_mean = _average_rssi(track.rssi_history)
-            similar_peers = [
-                peer
-                for peer in alias_peers
-                if _average_rssi(peer.rssi_history) is not None
-                and base_mean is not None
-                and abs(_average_rssi(peer.rssi_history) - base_mean) <= 8
-            ]
-            if similar_peers and (track.reappear_count + sum(peer.reappear_count for peer in similar_peers) >= 2):
-                methods.append(
-                    {
-                        "method": "probable-alias-rotation",
-                        "confidence": "medium",
-                        "summary": "Multiple similar AdoRime identities suggest rotating pseudonyms.",
-                        "evidence": f"peer_candidates={len(similar_peers)}, reappearances={track.reappear_count}",
-                    }
-                )
+        elif track.name.upper() in {"QD48", "BGSF", "BGQS", "AX05", "DT01", "BGZY", "A531", "SN80", "BGCD", "YXSJ"}:
+            methods.append(
+                {
+                    "method": "opaque-local-name",
+                    "confidence": "high",
+                    "summary": "Advertises a short opaque product code instead of the AdoRime brand name.",
+                    "evidence": f"local_name={track.name}",
+                }
+            )
 
         return methods
 
     def _fleet_hiding_assessment(self) -> dict[str, Any]:
-        adorime_tracks = [track for track in self._devices.values() if is_adorime_device(track.name)]
+        adorime_tracks = [
+            track for track in self._devices.values() if is_adorime_candidate(track.name, track.service_uuids)
+        ]
         findings = [(track, self._hiding_methods_for_track(track)) for track in adorime_tracks]
         flat_methods = [entry["method"] for _, methods in findings for entry in methods]
         confidence = _max_confidence([entry for _, methods in findings for entry in methods])
@@ -407,133 +612,16 @@ class RadarState:
             "evaluated_devices": len(adorime_tracks),
             "note": (
                 "Heuristic estimate from observed BLE traffic only. "
-                "This cannot prove vendor internals, but it can indicate likely hiding tactics."
+                "AdoRime toys typically hide as short Galaku-family codes (e.g. BGSF/QD48), not 'Adorime'."
             ),
         }
-
-    def _maybe_emit_ai_command(self, now: datetime, *, force: bool = False) -> dict[str, Any] | None:
-        if not self._control.ai_enabled:
-            return None
-        if not force and self._control.last_ai_command_at is not None:
-            elapsed = (now - self._control.last_ai_command_at).total_seconds()
-            if elapsed < 1.0:
-                return None
-        try:
-            track = self._require_target(present_required=True)
-        except ValueError:
-            return None
-        prediction = self._predict_ai_command(track)
-        if prediction is None:
-            return None
-        self._control.last_ai_command_at = now
-        return self._record_command(
-            track=track,
-            source="ai-thrust",
-            thrust=prediction["thrust"],
-            pattern=prediction["pattern"],
-            reason=prediction["reason"],
-            at=now,
-        )
-
-    def _emit_idle_command_if_target_missing(self, now: datetime) -> dict[str, Any] | None:
-        if not self._control.ai_enabled:
-            return None
-        target = self._devices.get(self._control.target_address or "")
-        if target is None or target.present:
-            return None
-        last_command = self._control.last_command or {}
-        if int(last_command.get("thrust", -1)) == 0:
-            return None
-        return self._record_command(
-            track=target,
-            source="ai-thrust",
-            thrust=0,
-            pattern="idle",
-            reason="Target out of range",
-            at=now,
-        )
-
-    def _predict_ai_command(self, track: DeviceTrack) -> dict[str, Any] | None:
-        if not track.present:
-            return {"thrust": 0, "pattern": "idle", "reason": "Target out of range"}
-
-        rssi_values = list(track.rssi_history)
-        smoothed = smooth_rssi(rssi_values)
-        if smoothed is None:
-            return None
-
-        near_score = max(0.0, min((smoothed + 92) / 50.0, 1.0))
-        recent = rssi_values[-10:]
-        volatility_db = pstdev(recent) if len(recent) >= 2 else 0.0
-        volatility_score = max(0.0, min(volatility_db / 14.0, 1.0))
-        movement = movement_label(rssi_values)
-        movement_boost = 0.12 if movement == "approaching" else (-0.10 if movement == "departing" else 0.0)
-
-        score = (
-            0.45 * near_score
-            + 0.35 * self._control.ai_aggressiveness
-            + 0.20 * volatility_score
-            + movement_boost
-        )
-        score = max(0.0, min(score, 1.0))
-        thrust = round(self._control.min_thrust + score * (self._control.max_thrust - self._control.min_thrust))
-
-        pattern = "steady"
-        if movement == "approaching":
-            pattern = "ramp"
-        if volatility_score >= 0.65:
-            pattern = "pulse"
-        reason = f"RSSI {smoothed} dBm, movement {movement}, volatility {volatility_db:.1f} dB"
-        return {"thrust": clamp_int(thrust, 0, 100), "pattern": pattern, "reason": reason}
-
-    def _record_command(
-        self,
-        *,
-        track: DeviceTrack,
-        source: str,
-        thrust: int,
-        pattern: str,
-        reason: str,
-        at: datetime,
-    ) -> dict[str, Any]:
-        command = {
-            "at": iso_time(at),
-            "source": source,
-            "mode": self._control.mode,
-            "address": track.address,
-            "name": track.name,
-            "thrust": clamp_int(thrust, 0, 100),
-            "pattern": pattern,
-            "reason": reason,
-        }
-        self._control.last_command = command
-        self._control.history.append(command)
-        return {
-            "type": "control-command",
-            "address": track.address,
-            "name": track.name,
-            "message": f"{source} thrust {command['thrust']}% ({pattern})",
-            "at": command["at"],
-            "control": command,
-        }
-
-    def _require_target(self, *, present_required: bool = False) -> DeviceTrack:
-        address = self._control.target_address
-        if not address:
-            raise ValueError("No control target selected")
-        track = self._devices.get(address)
-        if track is None:
-            raise ValueError(f"Target {address} is not known")
-        if present_required and not track.present:
-            raise ValueError(f"Target {address} is not currently in range")
-        return track
 
     @staticmethod
     def _event(event_type: str, track: DeviceTrack | None, message: str, *, at: datetime) -> dict[str, Any]:
         return {
             "type": event_type,
             "address": track.address if track else "system",
-            "name": track.name if track else "Control",
+            "name": (friendly_device_name(track.name) or track.name) if track else "Control",
             "message": message,
             "at": iso_time(at),
         }
@@ -566,10 +654,7 @@ def _observation_gaps_seconds(history: deque[datetime]) -> list[float]:
     if len(history) < 2:
         return []
     values = list(history)
-    return [
-        max(0.0, (values[index] - values[index - 1]).total_seconds())
-        for index in range(1, len(values))
-    ]
+    return [max(0.0, (values[index] - values[index - 1]).total_seconds()) for index in range(1, len(values))]
 
 
 def _uses_private_address(address: str, address_type: str | None) -> bool:
@@ -582,15 +667,7 @@ def _uses_private_address(address: str, address_type: str | None) -> bool:
         first_octet = int(parts[0], 16)
     except ValueError:
         return False
-    # BLE random/private addresses have the two MSBs set in the first octet.
     return (first_octet & 0b1100_0000) == 0b1100_0000
-
-
-def _average_rssi(values: deque[int]) -> float | None:
-    if not values:
-        return None
-    numeric = list(values)
-    return sum(numeric) / len(numeric)
 
 
 def _max_confidence(methods: list[dict[str, Any]]) -> str:

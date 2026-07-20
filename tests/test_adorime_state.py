@@ -1,7 +1,14 @@
 import asyncio
 import unittest
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, patch
 
+from adorime_control.protocol import (
+    encode_galaku_single,
+    is_adorime_candidate,
+    classify_protocol,
+    GALAKU_SERVICE_UUID,
+)
 from adorime_control.state import Observation, RadarState, movement_label
 
 
@@ -11,18 +18,35 @@ class AdorimeStateTests(unittest.TestCase):
         self.assertEqual(movement_label([-85, -79, -70]), "approaching")
         self.assertEqual(movement_label([-52, -62, -70]), "departing")
 
+    def test_galaku_name_and_service_detection(self) -> None:
+        self.assertTrue(is_adorime_candidate("BGSF", None))
+        self.assertTrue(is_adorime_candidate(None, [GALAKU_SERVICE_UUID]))
+        self.assertFalse(is_adorime_candidate("Keyboard", None))
+        self.assertEqual(classify_protocol([GALAKU_SERVICE_UUID], "BGSF"), "galaku")
+        self.assertEqual(classify_protocol(None, "QD48"), "galaku")
+
+    def test_galaku_command_encoding_is_stable(self) -> None:
+        payload = encode_galaku_single(55)
+        self.assertIsInstance(payload, (bytes, bytearray))
+        self.assertGreaterEqual(len(payload), 8)
+        # Wire frames are encrypted; re-encoding the same speed must be deterministic.
+        self.assertEqual(payload, encode_galaku_single(55))
+        self.assertNotEqual(encode_galaku_single(0), encode_galaku_single(100))
+
     def test_manual_and_ai_control_flow(self) -> None:
         asyncio.run(self._control_flow())
 
     async def _control_flow(self) -> None:
         state = RadarState(stale_after=2.0)
+        await state.set_scan_status(mode="demo", error=None)
         now = datetime.now(UTC)
         await state.observe(
             Observation(
                 address="A1:42:19:77:33:10",
-                name="AdoRime Thrust Pod",
+                name="BGSF",
                 address_type="random",
                 rssi=-58,
+                service_uuids=[GALAKU_SERVICE_UUID],
                 observed_at=now,
             )
         )
@@ -34,6 +58,7 @@ class AdorimeStateTests(unittest.TestCase):
         self.assertEqual(manual["type"], "control-command")
         self.assertEqual(manual["control"]["thrust"], 73)
         self.assertEqual(manual["control"]["source"], "manual")
+        self.assertEqual(manual["control"]["wire"]["mode"], "demo")
 
         await state.configure_ai_thrust(enabled=True, aggressiveness=0.75, min_thrust=20, max_thrust=88)
         ai_event = await state.run_ai_thrust_step()
@@ -44,6 +69,7 @@ class AdorimeStateTests(unittest.TestCase):
 
         snapshot = await state.snapshot()
         self.assertEqual(snapshot["control"]["target_address"], "A1:42:19:77:33:10")
+        self.assertEqual(snapshot["control"]["target_name"], "Adorime Male Masturbator")
         self.assertTrue(snapshot["control"]["history"])
 
     def test_non_adorime_target_is_rejected(self) -> None:
@@ -68,14 +94,16 @@ class AdorimeStateTests(unittest.TestCase):
 
     async def _idle_flow(self) -> None:
         state = RadarState(stale_after=1.0)
+        await state.set_scan_status(mode="demo", error=None)
         now = datetime.now(UTC)
         target = "A1:42:19:77:33:10"
         await state.observe(
             Observation(
                 address=target,
-                name="AdoRime Vector",
+                name="QD48",
                 address_type="random",
                 rssi=-60,
+                service_uuids=[GALAKU_SERVICE_UUID],
                 observed_at=now,
             )
         )
@@ -86,9 +114,10 @@ class AdorimeStateTests(unittest.TestCase):
         await state.observe(
             Observation(
                 address=target,
-                name="AdoRime Vector",
+                name="QD48",
                 address_type="random",
                 rssi=-90,
+                service_uuids=[GALAKU_SERVICE_UUID],
                 observed_at=now - timedelta(seconds=5),
             )
         )
@@ -107,9 +136,10 @@ class AdorimeStateTests(unittest.TestCase):
             await state.observe(
                 Observation(
                     address=address,
-                    name="AdoRime Ghost",
+                    name="BGSF",
                     address_type="random",
                     rssi=rssi,
+                    service_uuids=[GALAKU_SERVICE_UUID],
                     observed_at=now + timedelta(seconds=delta),
                 )
             )
@@ -117,9 +147,10 @@ class AdorimeStateTests(unittest.TestCase):
         await state.observe(
             Observation(
                 address=address,
-                name="AdoRime Ghost",
+                name="BGSF",
                 address_type="random",
                 rssi=-70,
+                service_uuids=[GALAKU_SERVICE_UUID],
                 observed_at=now + timedelta(seconds=9),
             )
         )
@@ -129,8 +160,41 @@ class AdorimeStateTests(unittest.TestCase):
         method_codes = {method["method"] for method in device["hiding_methods"]}
         self.assertIn("private-address-randomization", method_codes)
         self.assertIn("low-duty-cycle-advertising", method_codes)
+        self.assertIn("opaque-local-name", method_codes)
         self.assertIn(device["hiding_confidence"], {"medium", "high"})
         self.assertGreaterEqual(device["reappear_count"], 1)
+
+    def test_live_manual_command_uses_gatt_writer(self) -> None:
+        asyncio.run(self._live_write_flow())
+
+    async def _live_write_flow(self) -> None:
+        state = RadarState(stale_after=2.0)
+        await state.set_scan_status(mode="live", error=None)
+        await state.observe(
+            Observation(
+                address="AA:BB:CC:DD:EE:01",
+                name="BGSF",
+                address_type="random",
+                rssi=-50,
+                service_uuids=[GALAKU_SERVICE_UUID],
+                observed_at=datetime.now(UTC),
+            )
+        )
+        await state.set_control_target("AA:BB:CC:DD:EE:01")
+
+        with (
+            patch.object(state.connections, "is_connected", return_value=True),
+            patch.object(
+                state.connections,
+                "send_thrust",
+                new=AsyncMock(return_value={"bytes_hex": "aabb", "protocol": "galaku", "thrust": 40}),
+            ) as send_mock,
+        ):
+            event = await state.send_manual_thrust(40, pattern="steady")
+
+        send_mock.assert_awaited_once()
+        self.assertEqual(event["control"]["wire"]["protocol"], "galaku")
+        self.assertEqual(event["control"]["wire"]["bytes_hex"], "aabb")
 
 
 if __name__ == "__main__":

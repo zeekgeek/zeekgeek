@@ -84,24 +84,35 @@ For example, if `8765` is taken it will try `8766`, `8767`, etc.
 ## AdoRime Control (separate app)
 
 `adorime_control` is a standalone Bluetooth control app, separate from
-`bt_radar`. It includes:
+`bt_radar`. It mirrors the AdoRime iOS app connection flow:
 
-- BLE scan + dashboard in one process
-- target selection for AdoRime-named devices
+1. Scan BLE advertisements (no OS pairing PIN)
+2. Match Galaku-family toys by short local names (`BGSF`, `QD48`, `SN80`, …)
+   or service UUID `00001000-0000-1000-8000-00805f9b34fb`
+3. GATT-connect and write encrypted Galaku thrust frames to TX
+   `00001001-0000-1000-8000-00805f9b34fb`
+
+It includes:
+
+- live BLE scan + dashboard in one process (default; not simulated)
+- target selection for AdoRime/Galaku toys
+- GATT connect/disconnect controls
 - manual thrust commands (`thrust` + `pattern`)
 - AI thrust control mode that auto-generates bounded commands
 - control/event API endpoints for remote automation
 
-Quick start:
+Quick start (live Bluetooth):
 
 ```bash
 source .venv/bin/activate
-python3 -m adorime_control
+python3 -m adorime_control --host 0.0.0.0 --port 8785
 ```
 
 Open the printed dashboard URL (default `http://127.0.0.1:8785`).
 
-If your environment has no Bluetooth hardware/service (common on cloud VMs), use:
+If your environment has no Bluetooth hardware/service (common on cloud VMs), the
+dashboard still stays up in `live-error` mode with no simulated devices. To force
+simulated ads for UI testing only:
 
 ```bash
 python3 -m adorime_control --demo
@@ -109,16 +120,18 @@ python3 -m adorime_control --demo
 
 CLI options:
 
-- `--demo`: run simulated devices (recommended on cloud VMs)
+- `--demo`: run simulated devices (explicit only)
 - `--host` / `--port`
 - `--stale-after`
-- `--allow-demo-fallback`: if live scan fails, switch to demo data instead of exiting
+- `--allow-demo-fallback`: if live scan fails, switch to demo data instead of staying in live-error
 - `--log-level`
 
 API endpoints:
 
-- `GET /api/status`: full device + control snapshot
+- `GET /api/status`: full device + control snapshot (`scan_mode`, GATT state, hiding assessment)
 - `POST /api/control/target`: set/clear target, body `{"address": "..."}`
+- `POST /api/control/connect`: GATT-connect the current target
+- `POST /api/control/disconnect`: disconnect the current target
 - `POST /api/control/manual`: send manual command, body `{"thrust": 55, "pattern": "pulse"}`
 - `POST /api/control/ai`: configure AI mode, body `{"enabled": true, "aggressiveness": 0.7, "min_thrust": 25, "max_thrust": 92}`
 - `POST /api/control/ai/step`: force one immediate AI command

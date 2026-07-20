@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
 
+from .protocol import GALAKU_SERVICE_UUID, ADORIME_BLE_NAME_MAP
 from .state import Observation, RadarState
 
 LOGGER = logging.getLogger(__name__)
@@ -29,8 +30,9 @@ class BleakScannerBackend:
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError("Install the 'bleak' package for live Bluetooth scanning.") from exc
 
+        await self.state.set_scan_status(mode="live", error=None)
         scanner = BleakScanner(detection_callback=self._on_detection)
-        LOGGER.info("Starting live Bluetooth scanner")
+        LOGGER.info("Starting live Bluetooth scanner (AdoRime/Galaku discovery)")
         async with scanner:
             while True:
                 await asyncio.sleep(1)
@@ -51,31 +53,37 @@ class DemoScannerBackend:
     interval: float = 1.0
 
     async def run(self) -> None:
-        LOGGER.info("Starting demo AdoRime scanner")
+        await self.state.set_scan_status(mode="demo", error=None)
+        LOGGER.info("Starting demo AdoRime scanner (simulated Galaku advertisements)")
+        # Simulated advertisements use real AdoRime BLE local-name codes, not brand text.
         devices = [
             {
                 "address": "A1:42:19:77:33:10",
-                "name": "AdoRime Thrust Pod",
+                "name": "BGSF",
                 "base": -62,
                 "address_type": "random",
+                "service_uuids": [GALAKU_SERVICE_UUID],
             },
             {
                 "address": "D4:8A:FC:12:34:56",
                 "name": "Keyboard",
                 "base": -72,
                 "address_type": "public",
+                "service_uuids": [],
             },
             {
                 "address": "7A:2B:91:AA:04:2F",
-                "name": "AdoRime Vector",
+                "name": "QD48",
                 "base": -76,
                 "address_type": "random",
+                "service_uuids": [GALAKU_SERVICE_UUID],
             },
             {
                 "address": "DA:2B:91:AA:04:30",
-                "name": "AdoRime Vector",
+                "name": "SN80",
                 "base": -78,
                 "address_type": "random",
+                "service_uuids": [GALAKU_SERVICE_UUID],
             },
         ]
 
@@ -98,6 +106,7 @@ class DemoScannerBackend:
                         name=device["name"],
                         address_type=device["address_type"],
                         rssi=int(device["base"]) + drift,
+                        service_uuids=list(device["service_uuids"]),
                         observed_at=datetime.now(UTC),
                     )
                 )
@@ -106,11 +115,18 @@ class DemoScannerBackend:
 
 
 def _observation_from_bleak(device, advertisement_data) -> Observation:  # type: ignore[no-untyped-def]
+    local_name = getattr(device, "name", None) or getattr(advertisement_data, "local_name", None)
+    service_uuids = [str(uuid).lower() for uuid in (getattr(advertisement_data, "service_uuids", None) or [])]
     return Observation(
         address=getattr(device, "address", "unknown"),
-        name=getattr(device, "name", None) or getattr(advertisement_data, "local_name", None),
+        name=local_name,
         address_type=getattr(device, "address_type", None),
         tx_power=getattr(advertisement_data, "tx_power", None),
+        service_uuids=service_uuids,
         rssi=int(getattr(advertisement_data, "rssi", getattr(device, "rssi", -127)) or -127),
         observed_at=datetime.now(UTC),
     )
+
+
+def known_adorime_demo_names() -> dict[str, str]:
+    return dict(ADORIME_BLE_NAME_MAP)

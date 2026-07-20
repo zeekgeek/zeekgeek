@@ -48,11 +48,27 @@ def create_app(state: RadarState) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return JSONResponse({"event": event, "control": await state.control_snapshot()})
 
+    @app.post("/api/control/connect")
+    async def connect_target() -> JSONResponse:
+        try:
+            event = await state.connect_target()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return JSONResponse({"event": event, "control": await state.control_snapshot()})
+
+    @app.post("/api/control/disconnect")
+    async def disconnect_target() -> JSONResponse:
+        try:
+            event = await state.disconnect_target()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return JSONResponse({"event": event, "control": await state.control_snapshot()})
+
     @app.post("/api/control/manual")
     async def manual_command(request: ManualCommandRequest) -> JSONResponse:
         try:
             event = await state.send_manual_thrust(request.thrust, pattern=request.pattern)
-        except ValueError as exc:
+        except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return JSONResponse({"event": event, "control": await state.control_snapshot()})
 
@@ -73,7 +89,7 @@ def create_app(state: RadarState) -> FastAPI:
     async def run_ai_step() -> JSONResponse:
         try:
             event = await state.run_ai_thrust_step()
-        except ValueError as exc:
+        except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return JSONResponse({"event": event, "control": await state.control_snapshot()})
 
@@ -152,6 +168,7 @@ DASHBOARD_HTML = """
     <div>
       <h1>AdoRime Bluetooth Control</h1>
       <div class="stats">
+        <span id="scan-mode" class="pill warn">scan: starting</span>
         <span id="counts">Waiting for Bluetooth scan...</span>
         <span id="updated"></span>
       </div>
@@ -173,11 +190,18 @@ DASHBOARD_HTML = """
           <select id="target"></select>
           <button id="set-target" class="secondary">Set target</button>
           <button id="clear-target" class="secondary">Clear</button>
+          <button id="connect-target">Connect GATT</button>
+          <button id="disconnect-target" class="secondary">Disconnect</button>
         </div>
         <div class="row">
           <span id="target-state" class="pill warn">No target selected</span>
           <span id="mode-state" class="pill warn">manual</span>
+          <span id="gatt-state" class="pill warn">GATT: disconnected</span>
         </div>
+        <p class="code" style="margin-top:8px;">
+          Matches AdoRime iOS flow: scan BLE ads → select toy → GATT connect (no OS pairing PIN) → write Galaku encrypted thrust frames.
+          Toys usually advertise short codes (BGSF, QD48, SN80…), not the word “Adorime”.
+        </p>
         <hr style="border-color:#243047; margin:14px 0;">
 
         <h3 style="margin:0 0 8px 0;">Manual thrust control</h3>
@@ -240,6 +264,8 @@ DASHBOARD_HTML = """
     const targetSelect = document.getElementById("target");
     const targetState = document.getElementById("target-state");
     const modeState = document.getElementById("mode-state");
+    const gattState = document.getElementById("gatt-state");
+    const scanMode = document.getElementById("scan-mode");
     const manualThrust = document.getElementById("manual-thrust");
     const manualThrustValue = document.getElementById("manual-thrust-value");
     const manualPattern = document.getElementById("manual-pattern");
@@ -276,6 +302,14 @@ DASHBOARD_HTML = """
 
     document.getElementById("clear-target").onclick = async () => {
       await postJson("/api/control/target", { address: null });
+    };
+
+    document.getElementById("connect-target").onclick = async () => {
+      await postJson("/api/control/connect", {});
+    };
+
+    document.getElementById("disconnect-target").onclick = async () => {
+      await postJson("/api/control/disconnect", {});
     };
 
     document.getElementById("send-manual").onclick = async () => {
@@ -338,6 +372,11 @@ DASHBOARD_HTML = """
       if (!snapshot) return;
       const control = snapshot.control || {};
       const supported = control.supported_devices || [];
+      const mode = snapshot.scan_mode || "unknown";
+      scanMode.textContent = snapshot.scanner_error
+        ? `scan: ${mode} (${snapshot.scanner_error})`
+        : `scan: ${mode}`;
+      scanMode.className = `pill ${mode === "live" ? "ok" : "warn"}`;
       document.getElementById("counts").textContent = `${snapshot.present_count} in range / ${snapshot.device_count} total Bluetooth devices`;
       document.getElementById("updated").textContent = `Updated ${snapshot.generated_at}`;
 
@@ -353,7 +392,7 @@ DASHBOARD_HTML = """
     function renderDevices(devices, targetAddress) {
       if (!devices.length) {
         devicesRoot.className = "devices empty";
-        devicesRoot.textContent = "No AdoRime-compatible devices detected yet.";
+        devicesRoot.textContent = "No AdoRime/Galaku toys detected yet. Turn the toy on (flashing light) and keep it near the adapter.";
         return;
       }
       devicesRoot.className = "devices";
@@ -361,12 +400,15 @@ DASHBOARD_HTML = """
         const selected = device.address === targetAddress ? "selected" : "";
         const state = device.present ? "in range" : "left";
         const confidence = escapeHtml(device.hiding_confidence || "low");
+        const connected = device.gatt && device.gatt.connected ? "GATT connected" : "GATT idle";
+        const title = escapeHtml(device.display_name || device.name || "Unnamed AdoRime");
+        const code = escapeHtml(device.name || "no-local-name");
         return `
           <div class="device ${selected}">
-            <strong>${escapeHtml(device.name || "Unnamed AdoRime")}</strong>
-            <small class="code">${escapeHtml(device.address)}</small>
-            <small>RSSI ${device.rssi ?? "?"} dBm · ${state}</small>
-            <small class="confidence-${confidence}">hiding confidence: ${confidence}</small>
+            <strong>${title}</strong>
+            <small class="code">${escapeHtml(device.address)} · BLE name ${code}</small>
+            <small>RSSI ${device.rssi ?? "?"} dBm · ${state} · ${connected}</small>
+            <small class="confidence-${confidence}">protocol: ${escapeHtml(device.protocol || "unknown")} · hiding: ${confidence}</small>
           </div>
         `;
       }).join("");
@@ -374,9 +416,10 @@ DASHBOARD_HTML = """
 
     function renderTargetSelect(devices, targetAddress) {
       const previous = targetSelect.value;
-      targetSelect.innerHTML = devices.map((device) =>
-        `<option value="${escapeHtml(device.address)}">${escapeHtml(device.name || device.address)} (${device.present ? "in range" : "left"})</option>`
-      ).join("");
+      targetSelect.innerHTML = devices.map((device) => {
+        const label = device.display_name || device.name || device.address;
+        return `<option value="${escapeHtml(device.address)}">${escapeHtml(label)} (${device.present ? "in range" : "left"})</option>`;
+      }).join("");
       if (targetAddress && devices.find((item) => item.address === targetAddress)) {
         targetSelect.value = targetAddress;
       } else if (previous && devices.find((item) => item.address === previous)) {
@@ -391,6 +434,11 @@ DASHBOARD_HTML = """
       targetState.className = `pill ${control.target_present ? "ok" : "warn"}`;
       modeState.textContent = `${control.mode} ${control.ai_enabled ? "(AI on)" : "(AI off)"}`;
       modeState.className = `pill ${control.ai_enabled ? "ok" : "warn"}`;
+      const gatt = control.gatt || {};
+      gattState.textContent = gatt.connected
+        ? `GATT: connected (${gatt.protocol || "unknown"})`
+        : "GATT: disconnected";
+      gattState.className = `pill ${gatt.connected ? "ok" : "warn"}`;
 
       if (!aiControlsDirty && !isAiControlFocused()) {
         aiEnabled.checked = Boolean(control.ai_enabled);
