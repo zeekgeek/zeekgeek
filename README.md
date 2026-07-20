@@ -81,6 +81,43 @@ For example, if `8765` is taken it will try `8766`, `8767`, etc.
 - `GET /api/devices`: current snapshot of devices and findings
 - `GET /api/events`: Server-Sent Events stream for live UI updates
 
+## AdoRime Control (separate app)
+
+`adorime_control` is a standalone Bluetooth control app, separate from
+`bt_radar`. It includes:
+
+- BLE scan + dashboard in one process
+- target selection for AdoRime-named devices
+- manual thrust commands (`thrust` + `pattern`)
+- AI thrust control mode that auto-generates bounded commands
+- control/event API endpoints for remote automation
+
+Quick start:
+
+```bash
+source .venv/bin/activate
+python3 -m adorime_control --demo
+```
+
+Open the printed dashboard URL (default `http://127.0.0.1:8785`).
+
+CLI options:
+
+- `--demo`: run simulated devices (recommended on cloud VMs)
+- `--host` / `--port`
+- `--stale-after`
+- `--no-auto-demo-fallback`
+- `--log-level`
+
+API endpoints:
+
+- `GET /api/status`: full device + control snapshot
+- `POST /api/control/target`: set/clear target, body `{"address": "..."}`
+- `POST /api/control/manual`: send manual command, body `{"thrust": 55, "pattern": "pulse"}`
+- `POST /api/control/ai`: configure AI mode, body `{"enabled": true, "aggressiveness": 0.7, "min_thrust": 25, "max_thrust": 92}`
+- `POST /api/control/ai/step`: force one immediate AI command
+- `GET /api/events`: Server-Sent Events stream
+
 ## Tests
 
 ```bash
