@@ -71,7 +71,8 @@ def render_snapshot(report: dict[str, Any], *, header: str | None = None) -> str
         f"    Max now     {h['max_capacity_mah']} mAh",
         f"    Current     {h['current_capacity_mah']} mAh",
         f"    Cycles      {h['cycle_count']} / {h['design_cycle_count']}"
-        f"  ({h['cycle_life_used_percent']}% used)  {h['cycle_band']}",
+        f"  ({'—' if h['cycle_life_used_percent'] is None else str(h['cycle_life_used_percent']) + '%'} used)"
+        f"  {h['cycle_band']}",
     ]
     if h.get("manufacturer") or h.get("device_name") or h.get("serial"):
         lines.append(
