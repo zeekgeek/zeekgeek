@@ -14,6 +14,7 @@ dependencies = [
 bt-radar = "bt_radar.__main__:main"
 wifi-radar = "wifi_radar.__main__:main"
 adorime-control = "adorime_control.__main__:main"
+mac-battery = "mac_battery.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
