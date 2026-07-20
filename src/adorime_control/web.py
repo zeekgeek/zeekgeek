@@ -220,6 +220,7 @@ DASHBOARD_HTML = """
 
   <script>
     let snapshot = null;
+    let aiControlsDirty = false;
     const notifiedEvents = new Set();
 
     const notifyBtn = document.getElementById("notify");
@@ -235,6 +236,7 @@ DASHBOARD_HTML = """
     const aiAggrValue = document.getElementById("ai-aggr-value");
     const aiMin = document.getElementById("ai-min");
     const aiMax = document.getElementById("ai-max");
+    const aiControlInputIds = new Set(["ai-enabled", "ai-aggressiveness", "ai-min", "ai-max"]);
 
     notifyBtn.onclick = async () => {
       if (!("Notification" in window)) {
@@ -248,8 +250,12 @@ DASHBOARD_HTML = """
       manualThrustValue.textContent = String(manualThrust.value);
     };
     aiAggressiveness.oninput = () => {
+      aiControlsDirty = true;
       aiAggrValue.textContent = Number(aiAggressiveness.value).toFixed(2);
     };
+    aiEnabled.onchange = () => { aiControlsDirty = true; };
+    aiMin.oninput = () => { aiControlsDirty = true; };
+    aiMax.oninput = () => { aiControlsDirty = true; };
 
     document.getElementById("set-target").onclick = async () => {
       const address = targetSelect.value || null;
@@ -268,12 +274,15 @@ DASHBOARD_HTML = """
     };
 
     document.getElementById("save-ai").onclick = async () => {
-      await postJson("/api/control/ai", {
+      const payload = await postJson("/api/control/ai", {
         enabled: aiEnabled.checked,
         aggressiveness: Number(aiAggressiveness.value),
         min_thrust: Number(aiMin.value),
         max_thrust: Number(aiMax.value),
       });
+      if (payload) {
+        aiControlsDirty = false;
+      }
     };
 
     document.getElementById("run-ai-step").onclick = async () => {
@@ -296,8 +305,9 @@ DASHBOARD_HTML = """
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         alert(payload.detail || "Command failed.");
-        return;
+        return null;
       }
+      return payload;
     }
 
     function maybeNotify(events) {
@@ -367,11 +377,18 @@ DASHBOARD_HTML = """
       modeState.textContent = `${control.mode} ${control.ai_enabled ? "(AI on)" : "(AI off)"}`;
       modeState.className = `pill ${control.ai_enabled ? "ok" : "warn"}`;
 
-      aiEnabled.checked = Boolean(control.ai_enabled);
-      aiAggressiveness.value = Number(control.ai_aggressiveness ?? 0.65);
-      aiAggrValue.textContent = Number(control.ai_aggressiveness ?? 0.65).toFixed(2);
-      aiMin.value = Number(control.min_thrust ?? 20);
-      aiMax.value = Number(control.max_thrust ?? 90);
+      if (!aiControlsDirty && !isAiControlFocused()) {
+        aiEnabled.checked = Boolean(control.ai_enabled);
+        aiAggressiveness.value = Number(control.ai_aggressiveness ?? 0.65);
+        aiAggrValue.textContent = Number(control.ai_aggressiveness ?? 0.65).toFixed(2);
+        aiMin.value = Number(control.min_thrust ?? 20);
+        aiMax.value = Number(control.max_thrust ?? 90);
+      }
+    }
+
+    function isAiControlFocused() {
+      const active = document.activeElement;
+      return !!active && aiControlInputIds.has(active.id);
     }
 
     function renderLastCommand(command) {

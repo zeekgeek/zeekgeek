@@ -81,7 +81,7 @@ class AdorimeStateTests(unittest.TestCase):
         )
         await state.set_control_target(target)
         await state.configure_ai_thrust(enabled=True, aggressiveness=0.7, min_thrust=10, max_thrust=80)
-        await state.send_manual_thrust(55)
+        await state.run_ai_thrust_step()
 
         await state.observe(
             Observation(
