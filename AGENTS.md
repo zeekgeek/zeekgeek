@@ -7,6 +7,7 @@ This repo contains self-contained Python apps under `src/`:
 - `bt_radar` — BLE scanner + FastAPI dashboard
 - `wifi_radar` — WiFi motion radar + FastAPI dashboard
 - `mac_battery` — MacBook battery/charging diagnostic + FastAPI dashboard
+- `jet_radar` — private-jet ADS-B movement radar + strange-event alarm dashboard
 
 There is no database and no frontend build step (dashboard HTML/JS is embedded
 in each package’s `web.py`).
@@ -16,14 +17,16 @@ also runs `pip install -e .`). Activate it before running anything: `source .ven
 
 Running the apps:
 - Cloud VMs have no Bluetooth adapter / `bluetoothd`, so live BLE scanning will not work.
-  Always run bt_radar in demo mode: `python3 -m bt_radar --demo`. (Without `--demo` the app tries
-  live scanning and auto-falls back to demo mode, printing a system event.)
+ Always run bt_radar in demo mode: `python3 -m bt_radar --demo`. (Without `--demo` the app tries
+ live scanning and auto-falls back to demo mode, printing a system event.)
 - WiFi radar: `python3 -m wifi_radar --demo` (live needs `iw` / wireless hardware).
 - Mac battery: `python3 -m mac_battery --demo` on non-macOS hosts (live needs macOS `ioreg` /
-  AppleSmartBattery). Default dashboard port is `8780`.
+ AppleSmartBattery). Default dashboard port is `8780`.
+- Jet radar: `python3 -m jet_radar --demo` (live polls adsb.lol; needs network egress).
+  Default dashboard port is `8790`.
 - Dashboards bind to `http://127.0.0.1:<port>` by default. If the port is busy the app
-  auto-increments to the next free port and prints the chosen URL, so read the startup log
-  rather than assuming the default. Pass `--port <n>` for deterministic binding.
+ auto-increments to the next free port and prints the chosen URL, so read the startup log
+ rather than assuming the default. Pass `--port <n>` for deterministic binding.
 
 Tests: `python3 -m unittest discover -s tests` (stdlib `unittest`; the package must be
 installed editable first, which the update script handles).
