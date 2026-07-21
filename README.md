@@ -306,3 +306,79 @@ python3 -m mac_battery --host 127.0.0.1 --port 8780 --interval 1 --target 80
 - ETA uses a smoothed charge current; it is an estimate and will move as the
   pack tapers near full (CC/CV behavior).
 - Apple’s own “time remaining” is shown when the firmware reports a valid value.
+
+---
+
+# Private Jet Movement Radar
+
+Watches public ADS-B traffic for business jets, learns a **historical movement
+baseline**, and sounds a **strange-event alarm** when volume spikes and
+anomaly triggers pile up.
+
+It also scores publicly reported high-net-worth aircraft for **move vs sit
+still** posture, flags **military tanker rendezvous** and **high-speed
+maneuvers**, and ranks **privacy / hideout candidate** regions when watched
+jets go quiet near destinations with publicly reported HNW property corridors
+(Hawaii Kauai/Maui/Lanai, Jackson Hole, Aspen, NZ South Island, Montana, …).
+
+Attribution of a tail number to a named person is imperfect (LLC shells,
+fractional ownership, registration changes). The radar reports observable
+ADS-B patterns and publicly sourced watchlist notes — it does **not** claim
+that a named person is on board, or that any underground facility exists.
+
+## Quick start
+
+```bash
+source .venv/bin/activate
+pip install -e .
+python3 -m jet_radar --demo
+```
+
+Open the printed dashboard URL (default <http://127.0.0.1:8790>). Enable
+notifications and sound, then wait for the demo scramble / Hawaii quiet /
+tanker / surge sequence to trip the alarm.
+
+Live ADS-B (polls [adsb.lol](https://api.adsb.lol)):
+
+```bash
+python3 -m jet_radar
+```
+
+Optional regional watch:
+
+```bash
+python3 -m jet_radar --center 38.9,-77.0 --radius-nm 200
+```
+
+## What trips a trigger
+
+- `traffic-surge` / `departure-wave` — airborne count or new departures far above history
+- `watchlist-scramble` — several reactive watched jets depart together
+- `high-speed-maneuver` — extreme ground speed, turn rate, or climb
+- `tanker-rendezvous` — bizjet near a KC-135-class tanker at similar altitude
+- `emergency-squawk` — 7500 / 7600 / 7700
+- `dark-flight-spike` — unusual share of flights with no callsign
+- `privacy-landing` — watched jet leaves coverage inside a known privacy region
+
+Enough triggers in a short window fires the **strange-event alarm**.
+
+## Command options
+
+```text
+python3 -m jet_radar --host 127.0.0.1 --port 8790 --sigma 3 --trigger-threshold 3
+```
+
+- `--demo`: simulated scramble + Hawaii quiet + tanker + surge
+- `--poll-interval`: seconds between live ADS-B polls (default `60`)
+- `--stale-after`: seconds before a missing jet is marked left coverage
+- `--sigma`: z-score above baseline that counts as a surge trigger
+- `--trigger-threshold`: triggers in the recent window needed to alarm
+- `--baseline-samples`: poll cycles before anomaly scoring starts
+- `--center` / `--radius-nm`: optional regional filter
+- `--no-auto-demo-fallback` / `--host` / `--port` / `--log-level`
+
+## API
+
+- `GET /api/jets`: snapshot (jets, baseline, hideout candidates, watchlist moves, events)
+- `POST /api/sensitivity`: body `{"sigma": 3.0, "trigger_threshold": 3}`
+- `GET /api/events`: Server-Sent Events stream
