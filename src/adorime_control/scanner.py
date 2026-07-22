@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
 
+from .ble_stack import compact_error_for_api, ensure_system_dbus_address
 from .protocol import GALAKU_SERVICE_UUID, ADORIME_BLE_NAME_MAP
 from .state import Observation, RadarState
 
@@ -26,6 +27,7 @@ class BleakScannerBackend:
     retry_seconds: float = 8.0
 
     async def run(self) -> None:
+        ensure_system_dbus_address()
         try:
             from bleak import BleakScanner
         except ImportError as exc:  # pragma: no cover
@@ -45,7 +47,7 @@ class BleakScannerBackend:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                message = f"{type(exc).__name__}: {exc}"
+                message = compact_error_for_api(exc)
                 LOGGER.warning("Live scanner interrupted (%s); retrying in %.0fs", message, self.retry_seconds)
                 await self.state.set_scan_status(mode="live-error", error=message)
                 await self.state.add_system_event(

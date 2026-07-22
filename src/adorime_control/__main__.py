@@ -11,6 +11,7 @@ from contextlib import suppress
 
 import uvicorn
 
+from .ble_stack import compact_error_for_api, ensure_system_dbus_address, startup_scan_hints
 from .scanner import BleakScannerBackend, DemoScannerBackend
 from .state import RadarState
 from .web import create_app
@@ -35,7 +36,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
+    ensure_system_dbus_address()
     logging.basicConfig(level=getattr(logging, args.log_level.upper()))
+    for hint in startup_scan_hints(demo=args.demo):
+        print(f"WARNING: {hint}")
     asyncio.run(run(args))
 
 
@@ -140,7 +144,7 @@ async def _run_scanner(*, state: RadarState, force_demo: bool, allow_demo_fallba
         # BleakScannerBackend retries forever when the adapter/stack comes back.
         await BleakScannerBackend(state).run()
     except Exception as exc:
-        strict_message = f"Live scanner unavailable ({type(exc).__name__}: {exc})."
+        strict_message = f"Live scanner unavailable ({compact_error_for_api(exc)})."
         LOGGER.warning(strict_message)
         if allow_demo_fallback:
             fallback_message = f"{strict_message} Switching to demo scanner because --allow-demo-fallback is set."
