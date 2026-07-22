@@ -1,11 +1,14 @@
 import unittest
 
 from adorime_control.ble_stack import (
+    assess_bluetooth_capability,
     bleak_scanner_kwargs,
     compact_error_for_api,
     describe_scan_failure,
     ensure_system_dbus_address,
+    is_linux,
     is_macos,
+    live_scan_blocked_message,
 )
 
 
@@ -36,6 +39,18 @@ class BleStackTests(unittest.TestCase):
         exc = Exception("[org.freedesktop.DBus.Error.ServiceUnknown] org.bluez was not provided")
         message = describe_scan_failure(exc)
         self.assertIn("BlueZ", message)
+
+    def test_linux_without_sysfs_is_not_capable(self) -> None:
+        if not is_linux():
+            self.skipTest("Linux-only")
+        assessment = assess_bluetooth_capability()
+        if assessment["capable"]:
+            self.skipTest("this host has Bluetooth hardware")
+        self.assertFalse(assessment["capable"])
+        self.assertIn("Mac", assessment["fix"] or "")
+        blocked = live_scan_blocked_message()
+        self.assertIsNotNone(blocked)
+        self.assertIn("Mac", blocked or "")
 
     def test_macos_scanner_kwargs_active(self) -> None:
         if not is_macos():

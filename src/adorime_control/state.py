@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from statistics import pstdev
 from typing import Any
 
-from .ble_stack import bleak_backend_label, host_platform
+from .ble_stack import assess_bluetooth_capability, bleak_backend_label, host_platform
 from .connection import DeviceConnectionManager
 from .protocol import (
     classify_protocol,
@@ -209,6 +209,7 @@ class RadarState:
                 "generated_at": iso_time(now),
                 "host_platform": host_platform(),
                 "ble_backend": bleak_backend_label(),
+                "bluetooth": assess_bluetooth_capability(),
                 "scan_mode": self.scan_mode,
                 "scanner_error": self.scanner_error,
                 "device_count": len(devices),

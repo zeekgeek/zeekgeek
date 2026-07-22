@@ -9,7 +9,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
 
-from .ble_stack import compact_error_for_api, bleak_scanner_kwargs, prepare_ble_runtime
+from .ble_stack import (
+    assess_bluetooth_capability,
+    compact_error_for_api,
+    bleak_scanner_kwargs,
+    live_scan_blocked_message,
+    prepare_ble_runtime,
+)
 from .protocol import GALAKU_SERVICE_UUID, ADORIME_BLE_NAME_MAP
 from .state import Observation, RadarState
 
@@ -36,6 +42,15 @@ class BleakScannerBackend:
         scan_kwargs = bleak_scanner_kwargs()
         attempt = 0
         while True:
+            blocked = live_scan_blocked_message()
+            if blocked:
+                LOGGER.warning("Live BLE scan blocked on this host: %s", blocked)
+                await self.state.set_scan_status(mode="live-error", error=blocked)
+                await self.state.add_system_event("scanner-blocked", blocked)
+                # Re-check occasionally in case a USB adapter is hot-plugged.
+                await asyncio.sleep(max(self.retry_seconds, 30.0))
+                continue
+
             attempt += 1
             try:
                 await self.state.set_scan_status(mode="live", error=None)

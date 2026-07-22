@@ -435,18 +435,27 @@ DASHBOARD_HTML = """
     }
 
     function renderScanHelp(mode, error) {
-      const platform = snapshot.host_platform || "";
-      const backend = snapshot.ble_backend || "";
+      const bt = snapshot.bluetooth || {};
+      const platform = snapshot.host_platform || bt.platform || "";
       if (mode !== "live-error") {
         scanHelp.className = "banner";
         return;
       }
       scanHelp.className = "banner visible";
+      const blocked = bt.capable === false;
+      const title = blocked
+        ? "This server cannot scan Bluetooth"
+        : "Bluetooth scan is not running";
+      scanHelp.querySelector("strong").textContent = title;
+      if (blocked && bt.fix) {
+        scanHelpDetail.textContent = `${bt.reason || error || ""} ${bt.fix}`;
+        return;
+      }
       const platformHint = platform === "Darwin"
-        ? "On macOS (Core Bluetooth): System Settings → Privacy & Security → Bluetooth → allow Terminal or your IDE. Toggle Bluetooth off/on if needed."
-        : "On Linux (BlueZ): enable Bluetooth and start bluetoothd.";
+        ? "On macOS: System Settings → Privacy & Security → Bluetooth → allow Terminal or your IDE."
+        : "On Linux with an adapter: sudo systemctl start bluetooth and ensure rfkill is unblocked.";
       scanHelpDetail.textContent = error
-        ? `${error} ${platformHint} Backend: ${backend || "unknown"}. Keep the toy powered on (flashing light) nearby. Retries automatically.`
+        ? `${error} ${platformHint} Keep the toy powered on (flashing light) nearby.`
         : `${platformHint} Keep the toy powered on nearby. The scanner retries automatically.`;
     }
 

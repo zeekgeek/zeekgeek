@@ -70,11 +70,77 @@ def linux_has_bluetooth_sysfs() -> bool:
     return Path("/sys/class/bluetooth").is_dir()
 
 
+def assess_bluetooth_capability() -> dict[str, Any]:
+    """
+    Pre-flight check before starting Bleak.
+
+    Returns JSON-friendly fields for the dashboard API.
+    """
+    platform_name = host_platform()
+    backend = bleak_backend_label()
+    if is_macos():
+        return {
+            "capable": True,
+            "platform": platform_name,
+            "backend": backend,
+            "reason": None,
+            "fix": (
+                "Run on this Mac in Terminal (not a remote cloud URL). "
+                "Allow Bluetooth under System Settings → Privacy & Security → Bluetooth."
+            ),
+        }
+    if is_linux() and not linux_has_bluetooth_sysfs():
+        return {
+            "capable": False,
+            "platform": platform_name,
+            "backend": backend,
+            "reason": "No Bluetooth adapter on this Linux host (/sys/class/bluetooth is missing).",
+            "fix": (
+                "This server cannot scan BLE (typical for cloud VMs). "
+                "On your Mac, run locally: python3 -m adorime_control --host 127.0.0.1 --port 8785 "
+                "and open http://127.0.0.1:8785 in the browser on that same Mac."
+            ),
+        }
+    if is_linux():
+        if ensure_system_dbus_address() is None:
+            return {
+                "capable": False,
+                "platform": platform_name,
+                "backend": backend,
+                "reason": "System D-Bus is not available for BlueZ.",
+                "fix": "Start D-Bus, install bluez, then run: sudo systemctl start bluetooth",
+            }
+        return {
+            "capable": True,
+            "platform": platform_name,
+            "backend": backend,
+            "reason": None,
+            "fix": "Ensure Bluetooth is on and bluetoothd is running (sudo systemctl start bluetooth).",
+        }
+    return {
+        "capable": True,
+        "platform": platform_name,
+        "backend": backend,
+        "reason": None,
+        "fix": None,
+    }
+
+
+def live_scan_blocked_message() -> str | None:
+    """If live scan cannot work on this host, return a single user-facing message."""
+    assessment = assess_bluetooth_capability()
+    if assessment["capable"]:
+        return None
+    reason = assessment.get("reason") or "Bluetooth scanning is unavailable on this host."
+    fix = assessment.get("fix") or ""
+    return f"{reason} {fix}".strip()
+
+
 def bleak_scanner_kwargs() -> dict[str, Any]:
     """
     Platform-tuned kwargs for :class:`bleak.BleakScanner`.
 
-  macOS Sequoia uses Core Bluetooth (not BlueZ). Active scanning is required.
+    macOS Sequoia uses Core Bluetooth (not BlueZ). Active scanning is required.
     """
     if is_macos():
         # Do not set service_uuids filter — toys may only expose the Galaku name
@@ -137,11 +203,16 @@ def describe_scan_failure(exc: BaseException) -> str:
         )
 
     if "spawn.childexited" in combined or "launch helper exited" in combined:
+        if is_linux() and not linux_has_bluetooth_sysfs():
+            return (
+                "No Bluetooth hardware on this server — BlueZ cannot scan without a physical adapter. "
+                "Run the app on your Mac at http://127.0.0.1:8785 (local Terminal), not a remote cloud dashboard."
+            )
         if is_linux():
             return (
                 f"{name}: {text}. "
-                "BlueZ could not talk to a Bluetooth controller — check that an adapter is plugged in "
-                "and not blocked (rfkill)."
+                "BlueZ could not talk to a Bluetooth controller — plug in a USB BLE adapter, "
+                "unblock with rfkill, and run: sudo systemctl start bluetooth"
             )
         return f"{name}: {text}."
 
