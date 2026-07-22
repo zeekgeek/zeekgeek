@@ -33,3 +33,42 @@ installed editable first, which the update script handles).
 
 Lint/build: no linter/formatter is configured, and there is no separate build step
 (editable install is the build). See `README.md` for full command options.
+
+## User-requested removal (minimal public footprint)
+
+When the user asks to delete a feature, app, or thread of work, optimize for **few
+lasting public artifacts in the repo**, not for erasing platform logs (Cursor/GitHub
+still retain account activity — agents cannot scrub those).
+
+**Do immediately**
+
+1. Stop related processes (servers, tmux sessions, background scanners).
+2. Delete source, tests, CLI entry in `pyproject.toml`, README/AGENTS sections — one
+   focused commit or a **single revert** of the merge commit that introduced the feature
+   on `main` (prefer revert on `main` over a long-lived feature branch).
+3. Close obsolete open PRs; delete remote feature branches after the revert/ removal PR
+   is open or merged.
+4. Use **neutral commit/PR titles** (e.g. “Remove unused module”, “Revert #N”) — avoid
+   sensitive product names in titles if the user asked for discretion.
+5. Do not add new docs, demos, recordings, or long PR narratives about the removed work.
+
+**Prefer for `main`**
+
+- One PR that **reverts the original merge commit** (clean undo) rather than many
+  follow-up commits on a named feature branch.
+
+**Optional (user must explicitly ask)**
+
+- Rewrite git history (`git filter-repo` / BFG) to purge paths from all commits —
+  requires force-push, breaks forks/clones, needs coordinated consent.
+
+**Tell the user they control outside the repo**
+
+- Archive/delete cloud agent runs in Cursor if the UI allows.
+- Merge the removal PR, then `git pull` and reinstall locally; remove local clones if desired.
+- GitHub will still show closed PRs and old commits unless history was rewritten.
+
+**Do not claim**
+
+- That chat transcripts, IP/account audit logs, or all Git history are gone — only that
+  the **current tree and default branch** no longer contain the code after merge.
