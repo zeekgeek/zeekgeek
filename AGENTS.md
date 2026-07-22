@@ -7,6 +7,8 @@ This repo contains self-contained Python apps under `src/`:
 - `bt_radar` — BLE scanner + FastAPI dashboard
 - `wifi_radar` — WiFi motion radar + FastAPI dashboard
 - `mac_battery` — MacBook battery/charging diagnostic + FastAPI dashboard
+- `jet_radar` — private-jet ADS-B movement radar + strange-event alarm dashboard
+- `adorime_control` — AdoRime/Galaku BLE toy control + dashboard (default port `8785`)
 
 There is no database and no frontend build step (dashboard HTML/JS is embedded
 in each package’s `web.py`).
@@ -23,10 +25,12 @@ Running the apps:
   at `http://127.0.0.1:8785` (default port `8785`).
 - WiFi radar: `python3 -m wifi_radar --demo` (live needs `iw` / wireless hardware).
 - Mac battery: `python3 -m mac_battery --demo` on non-macOS hosts (live needs macOS `ioreg` /
-  AppleSmartBattery). Default dashboard port is `8780`.
+ AppleSmartBattery). Default dashboard port is `8780`.
+- Jet radar: `python3 -m jet_radar --demo` (live polls adsb.lol; needs network egress).
+  Default dashboard port is `8790`.
 - Dashboards bind to `http://127.0.0.1:<port>` by default. If the port is busy the app
-  auto-increments to the next free port and prints the chosen URL, so read the startup log
-  rather than assuming the default. Pass `--port <n>` for deterministic binding.
+ auto-increments to the next free port and prints the chosen URL, so read the startup log
+ rather than assuming the default. Pass `--port <n>` for deterministic binding.
 
 Tests: `python3 -m unittest discover -s tests` (stdlib `unittest`; the package must be
 installed editable first, which the update script handles).
