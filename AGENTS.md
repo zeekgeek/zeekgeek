@@ -33,3 +33,12 @@ installed editable first, which the update script handles).
 
 Lint/build: no linter/formatter is configured, and there is no separate build step
 (editable install is the build). See `README.md` for full command options.
+
+## User-requested removal (minimal public footprint)
+
+When the user asks to delete a feature entirely, prefer a **single revert PR** on
+`main` for the merge commit that introduced it. For **history rewrite** (user must
+explicitly request it): drop that merge with
+`git rebase --onto <parent-before-feature> <feature-tip> <branch-tip>`, then
+`git push --force-with-lease`. See `docs/history-rewrite-test.md`. Rewrites do not
+erase GitHub PRs, Cursor logs, or account audit trails.
