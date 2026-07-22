@@ -110,6 +110,12 @@ python3 -m adorime_control --host 0.0.0.0 --port 8785
 
 Open the printed dashboard URL (default `http://127.0.0.1:8785`).
 
+**macOS (Sequoia and other recent releases):** live scan uses Core Bluetooth via Bleak
+(not BlueZ). On first run, allow Bluetooth for Terminal or your IDE under
+**System Settings → Privacy & Security → Bluetooth**. Toy addresses appear as
+Core Bluetooth UUIDs in the dashboard; use **Select & connect** after the toy
+advertises (power on, flashing light).
+
 If your environment has no Bluetooth hardware/service (common on cloud VMs), the
 dashboard still stays up in `live-error` mode with no simulated devices. To force
 simulated ads for UI testing only:

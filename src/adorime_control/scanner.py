@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
 
-from .ble_stack import compact_error_for_api, ensure_system_dbus_address
+from .ble_stack import compact_error_for_api, bleak_scanner_kwargs, prepare_ble_runtime
 from .protocol import GALAKU_SERVICE_UUID, ADORIME_BLE_NAME_MAP
 from .state import Observation, RadarState
 
@@ -27,19 +27,24 @@ class BleakScannerBackend:
     retry_seconds: float = 8.0
 
     async def run(self) -> None:
-        ensure_system_dbus_address()
+        prepare_ble_runtime()
         try:
             from bleak import BleakScanner
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError("Install the 'bleak' package for live Bluetooth scanning.") from exc
 
+        scan_kwargs = bleak_scanner_kwargs()
         attempt = 0
         while True:
             attempt += 1
             try:
                 await self.state.set_scan_status(mode="live", error=None)
-                scanner = BleakScanner(detection_callback=self._on_detection)
-                LOGGER.info("Starting live Bluetooth scanner (AdoRime/Galaku discovery), attempt %s", attempt)
+                scanner = BleakScanner(detection_callback=self._on_detection, **scan_kwargs)
+                LOGGER.info(
+                    "Starting live Bluetooth scanner (AdoRime/Galaku discovery), attempt %s, kwargs=%s",
+                    attempt,
+                    {key: scan_kwargs[key] for key in scan_kwargs if key != "detection_callback"},
+                )
                 async with scanner:
                     while True:
                         await asyncio.sleep(1)
@@ -150,14 +155,20 @@ class DemoScannerBackend:
 def _observation_from_bleak(device, advertisement_data) -> Observation:  # type: ignore[no-untyped-def]
     local_name = getattr(device, "name", None) or getattr(advertisement_data, "local_name", None)
     service_uuids = [str(uuid).lower() for uuid in (getattr(advertisement_data, "service_uuids", None) or [])]
+    address = getattr(device, "address", "unknown")
+    address_type = getattr(device, "address_type", None)
+    # macOS Core Bluetooth uses peripheral UUIDs as addresses; Linux uses public/random.
+    if address_type is None and address and "-" in address and len(address) > 20:
+        address_type = "corebluetooth-uuid"
     return Observation(
-        address=getattr(device, "address", "unknown"),
+        address=address,
         name=local_name,
-        address_type=getattr(device, "address_type", None),
+        address_type=address_type,
         tx_power=getattr(advertisement_data, "tx_power", None),
         service_uuids=service_uuids,
         rssi=int(getattr(advertisement_data, "rssi", getattr(device, "rssi", -127)) or -127),
         observed_at=datetime.now(UTC),
+        ble_device=device,
     )
 
 

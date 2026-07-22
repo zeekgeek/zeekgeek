@@ -435,14 +435,19 @@ DASHBOARD_HTML = """
     }
 
     function renderScanHelp(mode, error) {
+      const platform = snapshot.host_platform || "";
+      const backend = snapshot.ble_backend || "";
       if (mode !== "live-error") {
         scanHelp.className = "banner";
         return;
       }
       scanHelp.className = "banner visible";
+      const platformHint = platform === "Darwin"
+        ? "On macOS (Core Bluetooth): System Settings → Privacy & Security → Bluetooth → allow Terminal or your IDE. Toggle Bluetooth off/on if needed."
+        : "On Linux (BlueZ): enable Bluetooth and start bluetoothd.";
       scanHelpDetail.textContent = error
-        ? `${error} — on Linux enable Bluetooth / start bluetoothd; this app retries automatically. Keep the toy powered on (flashing light) within a few meters of the adapter.`
-        : "Enable Bluetooth and keep the toy powered on nearby. The scanner retries automatically.";
+        ? `${error} ${platformHint} Backend: ${backend || "unknown"}. Keep the toy powered on (flashing light) nearby. Retries automatically.`
+        : `${platformHint} Keep the toy powered on nearby. The scanner retries automatically.`;
     }
 
     function renderDevices(devices, targetAddress) {

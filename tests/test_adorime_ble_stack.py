@@ -1,9 +1,11 @@
 import unittest
 
 from adorime_control.ble_stack import (
+    bleak_scanner_kwargs,
     compact_error_for_api,
     describe_scan_failure,
     ensure_system_dbus_address,
+    is_macos,
 )
 
 
@@ -28,12 +30,26 @@ class BleStackTests(unittest.TestCase):
 
     def test_describe_file_not_found(self) -> None:
         message = describe_scan_failure(FileNotFoundError(2, "No such file or directory"))
-        self.assertIn("D-Bus", message)
+        self.assertIn("DBUS", message)
 
     def test_describe_missing_bluez(self) -> None:
         exc = Exception("[org.freedesktop.DBus.Error.ServiceUnknown] org.bluez was not provided")
         message = describe_scan_failure(exc)
         self.assertIn("BlueZ", message)
+
+    def test_macos_scanner_kwargs_active(self) -> None:
+        if not is_macos():
+            self.skipTest("macOS-only")
+        kwargs = bleak_scanner_kwargs()
+        self.assertEqual(kwargs.get("scanning_mode"), "active")
+
+    def test_describe_macos_permission(self) -> None:
+        exc = Exception("Bluetooth permission denied: not authorized")
+        message = describe_scan_failure(exc)
+        if is_macos():
+            self.assertIn("Privacy & Security", message)
+        else:
+            self.assertIn("permission denied", message.lower())
 
     def test_compact_error_single_line(self) -> None:
         text = compact_error_for_api(Exception("line one\nline two"))

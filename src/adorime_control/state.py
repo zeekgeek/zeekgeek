@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from statistics import pstdev
 from typing import Any
 
+from .ble_stack import bleak_backend_label, host_platform
 from .connection import DeviceConnectionManager
 from .protocol import (
     classify_protocol,
@@ -41,6 +42,7 @@ class Observation:
     tx_power: int | None = None
     service_uuids: list[str] = field(default_factory=list)
     observed_at: datetime = field(default_factory=utc_now)
+    ble_device: Any | None = None
 
 
 @dataclass
@@ -58,6 +60,7 @@ class DeviceTrack:
     rssi_history: deque[int] = field(default_factory=lambda: deque(maxlen=120))
     time_history: deque[str] = field(default_factory=lambda: deque(maxlen=120))
     observed_history: deque[datetime] = field(default_factory=lambda: deque(maxlen=120))
+    ble_device: Any | None = None
 
     def update(self, observation: Observation) -> None:
         self.last_seen = observation.observed_at
@@ -69,6 +72,8 @@ class DeviceTrack:
         if observation.service_uuids:
             merged = list(dict.fromkeys([*self.service_uuids, *observation.service_uuids]))
             self.service_uuids = merged
+        if observation.ble_device is not None:
+            self.ble_device = observation.ble_device
         self.rssi_history.append(observation.rssi)
         self.time_history.append(iso_time(observation.observed_at))
         self.observed_history.append(observation.observed_at)
@@ -152,6 +157,7 @@ class RadarState:
                     tx_power=observation.tx_power,
                     service_uuids=list(observation.service_uuids),
                     seen_count=1,
+                    ble_device=observation.ble_device,
                 )
                 track.rssi_history.append(observation.rssi)
                 track.time_history.append(iso_time(observation.observed_at))
@@ -201,6 +207,8 @@ class RadarState:
             devices.sort(key=_device_sort_key, reverse=True)
             return {
                 "generated_at": iso_time(now),
+                "host_platform": host_platform(),
+                "ble_backend": bleak_backend_label(),
                 "scan_mode": self.scan_mode,
                 "scanner_error": self.scanner_error,
                 "device_count": len(devices),
@@ -269,6 +277,7 @@ class RadarState:
                     address=track.address,
                     name=track.name,
                     service_uuids=track.service_uuids,
+                    ble_device=track.ble_device,
                 )
             except Exception as exc:
                 event = self._event(
@@ -482,6 +491,7 @@ class RadarState:
                 address=track.address,
                 name=track.name,
                 service_uuids=track.service_uuids,
+                ble_device=track.ble_device,
             )
         return await self.connections.send_thrust(track.address, thrust, pattern=pattern)
 

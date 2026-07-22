@@ -6,6 +6,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from .ble_stack import bleak_scanner_kwargs, is_macos
 from .protocol import (
     ProtocolProfile,
     classify_protocol,
@@ -67,13 +68,14 @@ class DeviceConnectionManager:
         address: str,
         name: str | None,
         service_uuids: list[str] | None = None,
+        ble_device: Any | None = None,
         timeout: float = 20.0,
     ) -> dict[str, Any]:
         if self.is_connected(address):
             return self.connection_snapshot(address)
 
         try:
-            from bleak import BleakClient
+            from bleak import BleakClient, BleakScanner
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError("Install the 'bleak' package for live Bluetooth connections.") from exc
 
@@ -82,8 +84,16 @@ class DeviceConnectionManager:
         if profile is None:
             raise ValueError(f"No GATT profile available for protocol '{protocol}'")
 
+        connect_target: Any = ble_device
+        if connect_target is None and is_macos():
+            connect_target = await BleakScanner.find_device_by_address(
+                address,
+                timeout=min(timeout, 15.0),
+                **bleak_scanner_kwargs(),
+            )
+
         # AdoRime iOS does not use OS pairing/PIN — plain GATT connect.
-        client = BleakClient(address, timeout=timeout, pair=False)
+        client = BleakClient(connect_target or address, timeout=timeout, pair=False)
         await client.connect()
         try:
             discovered_services = [service.uuid.lower() for service in client.services]

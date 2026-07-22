@@ -11,7 +11,7 @@ from contextlib import suppress
 
 import uvicorn
 
-from .ble_stack import compact_error_for_api, ensure_system_dbus_address, startup_scan_hints
+from .ble_stack import compact_error_for_api, host_platform, prepare_ble_runtime, startup_scan_hints
 from .scanner import BleakScannerBackend, DemoScannerBackend
 from .state import RadarState
 from .web import create_app
@@ -36,7 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
-    ensure_system_dbus_address()
+    prepare_ble_runtime()
     logging.basicConfig(level=getattr(logging, args.log_level.upper()))
     for hint in startup_scan_hints(demo=args.demo):
         print(f"WARNING: {hint}")
