@@ -11,7 +11,7 @@ from contextlib import suppress
 
 import uvicorn
 
-from .ble_stack import compact_error_for_api, host_platform, prepare_ble_runtime, startup_scan_hints
+from .ble_stack import compact_error_for_api, live_scan_blocked_message, prepare_ble_runtime, startup_scan_hints
 from .scanner import BleakScannerBackend, DemoScannerBackend
 from .state import RadarState
 from .web import create_app
@@ -24,33 +24,43 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--host", default="127.0.0.1", help="Dashboard host")
     parser.add_argument("--port", type=int, default=8785, help="Dashboard port")
     parser.add_argument("--stale-after", type=float, default=18.0, help="Seconds before a missing device is marked left")
-    parser.add_argument("--demo", action="store_true", help="Use simulated Bluetooth devices instead of live hardware")
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="Use simulated Bluetooth devices (disables live scan)",
+    )
     parser.add_argument(
         "--allow-demo-fallback",
         action="store_true",
-        help="If live scan fails, switch to demo data instead of keeping an empty live session",
+        help="If live scan fails, switch to simulated devices (default is live-only, no fallback)",
     )
     parser.add_argument("--log-level", default="info", choices=["debug", "info", "warning", "error"])
     return parser
+
+
+def resolve_scan_mode_flags(args: argparse.Namespace) -> tuple[bool, bool]:
+    """Return (force_demo, allow_demo_fallback). Live hardware is the default."""
+    return bool(args.demo), bool(args.allow_demo_fallback)
 
 
 def main() -> None:
     args = build_parser().parse_args()
     prepare_ble_runtime()
     logging.basicConfig(level=getattr(logging, args.log_level.upper()))
-    for hint in startup_scan_hints(demo=args.demo):
+    force_demo, allow_demo_fallback = resolve_scan_mode_flags(args)
+    for hint in startup_scan_hints(demo=force_demo):
         print(f"WARNING: {hint}")
-    asyncio.run(run(args))
+    asyncio.run(run(args, force_demo=force_demo, allow_demo_fallback=allow_demo_fallback))
 
 
-async def run(args: argparse.Namespace) -> None:
+async def run(args: argparse.Namespace, *, force_demo: bool, allow_demo_fallback: bool) -> None:
     state = RadarState(stale_after=args.stale_after)
     app = create_app(state)
     scanner_task = asyncio.create_task(
         _run_scanner(
             state=state,
-            force_demo=args.demo,
-            allow_demo_fallback=args.allow_demo_fallback,
+            force_demo=force_demo,
+            allow_demo_fallback=allow_demo_fallback,
         ),
         name="adorime-scanner",
     )
@@ -73,12 +83,12 @@ async def run(args: argparse.Namespace) -> None:
             loop.add_signal_handler(sig, stop_event.set)
 
     print(f"AdoRime control dashboard: http://{args.host}:{chosen_port}")
-    if args.demo:
+    if force_demo:
         print("Running in demo mode with simulated AdoRime devices.")
-    elif args.allow_demo_fallback:
-        print("Running live Bluetooth scan; demo fallback is enabled if live scan fails.")
+    elif allow_demo_fallback:
+        print("Running live Bluetooth scan; simulated fallback is enabled if live scan fails.")
     else:
-        print("Running live Bluetooth scan (Galaku/AdoRime GATT path). Dashboard stays up if hardware is missing.")
+        print("Running live Bluetooth scan only (real advertisements; no simulated fallback).")
 
     done, pending = await asyncio.wait(
         {scanner_task, server_task, stop_task},
@@ -90,7 +100,6 @@ async def run(args: argparse.Namespace) -> None:
         if task is stop_task:
             continue
         if task is scanner_task:
-            # Scanner ending is not fatal when it parks in live-error idle mode.
             exception = task.exception()
             if exception is not None and not isinstance(exception, asyncio.CancelledError):
                 LOGGER.warning("Scanner task ended with error: %s", exception)
@@ -135,36 +144,50 @@ def _port_is_available(host: str, port: int) -> bool:
             return False
 
 
+async def _start_demo_scanner(state: RadarState, *, reason: str) -> None:
+    message = (
+        f"Live Bluetooth unavailable ({reason}). "
+        "Switching to simulated devices because --allow-demo-fallback is set."
+    )
+    LOGGER.warning(message)
+    await state.add_system_event("scanner-fallback", message)
+    print(message)
+    await DemoScannerBackend(state).run()
+
+
+async def _park_live_error(state: RadarState, message: str) -> None:
+    await state.set_scan_status(mode="live-error", error=message)
+    await state.add_system_event("scanner-error", message)
+    print(message)
+    while True:
+        await asyncio.sleep(60)
+
+
 async def _run_scanner(*, state: RadarState, force_demo: bool, allow_demo_fallback: bool) -> None:
     if force_demo:
         await DemoScannerBackend(state).run()
         return
 
+    blocked = live_scan_blocked_message()
+    if blocked:
+        if allow_demo_fallback:
+            await _start_demo_scanner(state, reason=blocked)
+            return
+        await _park_live_error(state, blocked)
+        return
+
     try:
-        # BleakScannerBackend retries forever when the adapter/stack comes back.
         await BleakScannerBackend(state).run()
     except Exception as exc:
-        strict_message = f"Live scanner unavailable ({compact_error_for_api(exc)})."
-        LOGGER.warning(strict_message)
+        strict_message = compact_error_for_api(exc)
+        LOGGER.warning("Live scanner unavailable (%s)", strict_message)
         if allow_demo_fallback:
-            fallback_message = f"{strict_message} Switching to demo scanner because --allow-demo-fallback is set."
-            await state.add_system_event("scanner-fallback", fallback_message)
-            print(fallback_message)
-            await DemoScannerBackend(state).run()
+            await _start_demo_scanner(state, reason=strict_message)
             return
-
-        # Keep dashboard alive with live mode + error status (no simulated devices).
-        await state.set_scan_status(mode="live-error", error=str(exc))
-        await state.add_system_event(
-            "scanner-error",
-            (
-                f"{strict_message} Dashboard remains available. "
-                "On Linux: enable Bluetooth, start bluetoothd, then wait — the scanner retries automatically."
-            ),
+        await _park_live_error(
+            state,
+            f"Live scanner unavailable ({strict_message}). Dashboard stays live-only with no simulated data.",
         )
-        print(f"{strict_message} Keeping dashboard up without simulated data.")
-        while True:
-            await asyncio.sleep(60)
 
 
 if __name__ == "__main__":

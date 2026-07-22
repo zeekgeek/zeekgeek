@@ -416,9 +416,7 @@ DASHBOARD_HTML = """
       const nearby = control.nearby_devices || snapshot.devices || [];
       const supported = control.supported_devices || nearby.filter((d) => d.controllable || d.adorime_candidate);
       const mode = snapshot.scan_mode || "unknown";
-      scanMode.textContent = snapshot.scanner_error
-        ? `scan: ${mode}`
-        : `scan: ${mode}`;
+      scanMode.textContent = mode === "demo" ? "scan: demo (simulated)" : `scan: ${mode}`;
       scanMode.className = `pill ${mode === "live" || mode === "demo" ? "ok" : "warn"}`;
       const candidates = snapshot.candidate_count ?? supported.length;
       document.getElementById("counts").textContent =
@@ -435,6 +433,13 @@ DASHBOARD_HTML = """
     }
 
     function renderScanHelp(mode, error) {
+      if (mode === "demo") {
+        scanHelp.className = "banner visible";
+        scanHelp.querySelector("strong").textContent = "Demo mode (not live Bluetooth)";
+        scanHelpDetail.textContent =
+          "Simulated devices only. Restart without --demo for live scan.";
+        return;
+      }
       const bt = snapshot.bluetooth || {};
       const platform = snapshot.host_platform || bt.platform || "";
       if (mode !== "live-error") {

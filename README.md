@@ -117,20 +117,13 @@ Core Bluetooth UUIDs in the dashboard; use **Select & connect** after the toy
 advertises (power on, flashing light).
 
 If your environment has no Bluetooth hardware/service (common on cloud VMs), the
-dashboard still stays up in `live-error` mode with no simulated devices. To force
-simulated ads for UI testing only:
-
-```bash
-python3 -m adorime_control --demo
-```
+dashboard stays in **live-only** mode with `live-error` and no fake devices. For UI testing
+with simulated ads only, pass `--demo` or `--allow-demo-fallback`.
 
 CLI options:
 
 - `--demo`: run simulated devices (explicit only)
-- `--host` / `--port`
-- `--stale-after`
-- `--allow-demo-fallback`: if live scan fails, switch to demo data instead of staying in live-error
-- `--log-level`
+- `--allow-demo-fallback`: if live scan fails, switch to demo data (default is live-only)
 
 API endpoints:
 
