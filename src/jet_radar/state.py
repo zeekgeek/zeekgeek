@@ -18,7 +18,7 @@ from .anomaly import (
     evaluate_triggers,
     movement_posture,
 )
-from .watchlist import match_watchlist, nearest_privacy_destination
+from .watchlist import match_watchlist, nearest_privacy_destination, PRIVACY_DESTINATIONS
 
 
 def utc_now() -> datetime:
@@ -441,6 +441,17 @@ class RadarState:
                 "hideout_candidates": hideouts,
                 "watchlist_moves": list(self._watchlist_moves),
                 "posture_summary": {key: values for key, values in posture_summary.items()},
+                "privacy_regions": [
+                    {
+                        "code": dest.code,
+                        "name": dest.name,
+                        "lat": dest.lat,
+                        "lon": dest.lon,
+                        "radius_nm": dest.radius_nm,
+                        "notes": dest.notes,
+                    }
+                    for dest in PRIVACY_DESTINATIONS
+                ],
                 "jets": jets,
                 "events": list(self._events),
             }
