@@ -27,7 +27,7 @@ def create_app(state: RadarState) -> FastAPI:
 
     @app.get("/api/jets")
     async def jets() -> dict:
-        return await state.snapshot()
+        return await state.snapshot(stream=False)
 
     @app.post("/api/sensitivity")
     async def set_sensitivity(request: SensitivityRequest) -> JSONResponse:
@@ -38,7 +38,15 @@ def create_app(state: RadarState) -> FastAPI:
 
     @app.get("/api/events")
     async def events() -> StreamingResponse:
-        return StreamingResponse(_event_stream(state), media_type="text/event-stream")
+        return StreamingResponse(
+            _event_stream(state),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     return app
 
@@ -46,7 +54,7 @@ def create_app(state: RadarState) -> FastAPI:
 async def _event_stream(state: RadarState) -> AsyncIterator[str]:
     last_payload = ""
     while True:
-        snapshot = await state.snapshot()
+        snapshot = await state.snapshot(stream=True)
         payload = json.dumps(snapshot)
         if payload != last_payload:
             yield f"data: {payload}\n\n"
@@ -124,6 +132,8 @@ DASHBOARD_HTML = """
     .legend .t-dot::before { background: var(--amber); }
     .empty { color: var(--muted); text-align: center; padding: 34px 0; }
     .tiny-note { font-size: 12px; color: var(--muted); margin-top: 6px; }
+    #status-banner { display: none; background: rgba(56,189,248,.14); border: 1px solid var(--blue); color: #bae6fd; padding: 10px 14px; border-radius: 10px; margin: 12px 16px 0 16px; font-size: 14px; }
+    #status-banner.error { background: rgba(239,68,68,.14); border-color: var(--red); color: #fecaca; }
     #alarm-banner { display: none; background: rgba(239,68,68,.18); border: 1px solid var(--red); color: #fecaca; padding: 12px 16px; border-radius: 10px; margin: 12px 16px 0 16px; font-weight: 800; font-size: 15px; animation: pulse 1.2s infinite; }
     @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,.4); } 50% { box-shadow: 0 0 0 8px rgba(239,68,68,0); } }
     .baseline-chip { border: 1px solid #24314c; border-radius: 10px; padding: 6px 10px; font-size: 12px; color: var(--muted); background: var(--panel-2); }
@@ -155,6 +165,7 @@ DASHBOARD_HTML = """
     </div>
   </header>
 
+  <div id="status-banner"></div>
   <div id="alarm-banner"></div>
 
   <main>
@@ -242,24 +253,40 @@ DASHBOARD_HTML = """
       });
     }
 
-    const source = new EventSource("/api/events");
-    source.onmessage = (message) => {
-      snapshot = JSON.parse(message.data);
-      if (document.activeElement !== sigmaSlider) {
-        sigmaSlider.value = snapshot.sigma;
-        sigmaLabel.textContent = Number(snapshot.sigma).toFixed(1);
-      }
-      if (document.activeElement !== thresholdSlider) {
-        thresholdSlider.value = snapshot.trigger_threshold;
-        thresholdLabel.textContent = snapshot.trigger_threshold;
-      }
-      if (snapshot.jets.length && !snapshot.jets.find((j) => j.hex === selectedHex)) {
-        selectedHex = snapshot.jets[0].hex;
-      }
-      render();
-      handleEvents(snapshot.events || []);
-      if (snapshot.alarm_active) startSiren(); else stopSiren();
-    };
+    let source = null;
+
+    function connectEvents() {
+      if (source) source.close();
+      source = new EventSource("/api/events");
+      source.onmessage = (message) => {
+        document.getElementById("status-banner").style.display = "none";
+        snapshot = JSON.parse(message.data);
+        if (document.activeElement !== sigmaSlider) {
+          sigmaSlider.value = snapshot.sigma;
+          sigmaLabel.textContent = Number(snapshot.sigma).toFixed(1);
+        }
+        if (document.activeElement !== thresholdSlider) {
+          thresholdSlider.value = snapshot.trigger_threshold;
+          thresholdLabel.textContent = snapshot.trigger_threshold;
+        }
+        if (snapshot.jets.length && !snapshot.jets.find((j) => j.hex === selectedHex)) {
+          selectedHex = snapshot.jets[0].hex;
+        }
+        render();
+        handleEvents(snapshot.events || []);
+        if (snapshot.alarm_active) startSiren(); else stopSiren();
+      };
+      source.onerror = () => {
+        const banner = document.getElementById("status-banner");
+        banner.className = "error";
+        banner.style.display = "block";
+        banner.textContent = "Lost connection to the radar feed — reconnecting…";
+        source.close();
+        setTimeout(connectEvents, 2000);
+      };
+    }
+
+    connectEvents();
 
     function handleEvents(events) {
       const banner = document.getElementById("alarm-banner");
@@ -307,6 +334,16 @@ DASHBOARD_HTML = """
 
     function render() {
       if (!snapshot) return;
+      const statusBanner = document.getElementById("status-banner");
+      if (snapshot.awaiting_first_poll) {
+        statusBanner.className = "";
+        statusBanner.style.display = "block";
+        statusBanner.textContent = snapshot.scan_mode === "demo"
+          ? "Starting demo radar…"
+          : "Polling live ADS-B from adsb.lol — first update can take up to 60 seconds.";
+      } else if (statusBanner.className !== "error") {
+        statusBanner.style.display = "none";
+      }
       document.getElementById("counts").innerHTML =
         `<b>${snapshot.airborne_count}</b> jets · <b>${snapshot.watched_count || 0}</b> watched · ` +
         `<b>${snapshot.tanker_count || 0}</b> tankers · <b>${snapshot.dark_count}</b> dark · ` +
