@@ -601,9 +601,13 @@ DASHBOARD_HTML = """
 
     function recordTrail(jet) {
       if (!jet.present || jet.lat == null || jet.lon == null) return;
+      if (Array.isArray(jet.position_trail) && jet.position_trail.length) {
+        positionTrails.set(jet.hex, jet.position_trail.map((p) => ({ lat: p.lat, lon: p.lon })));
+        return;
+      }
       const trail = positionTrails.get(jet.hex) || [];
       const last = trail[trail.length - 1];
-      if (!last || Math.hypot(last.lat - jet.lat, last.lon - jet.lon) > 0.02) {
+      if (!last || Math.hypot(last.lat - jet.lat, last.lon - jet.lon) > 0.003) {
         trail.push({ lat: jet.lat, lon: jet.lon });
         if (trail.length > 36) trail.shift();
         positionTrails.set(jet.hex, trail);

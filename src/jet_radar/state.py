@@ -72,6 +72,7 @@ class JetTrack:
     airborne_flags: deque[bool] = field(default_factory=lambda: deque(maxlen=48))
     altitude_history: deque[int | None] = field(default_factory=lambda: deque(maxlen=120))
     time_history: deque[str] = field(default_factory=lambda: deque(maxlen=120))
+    position_history: deque[tuple[float, float]] = field(default_factory=lambda: deque(maxlen=36))
     privacy_visits: Counter = field(default_factory=Counter)
 
     def update(self, obs: JetObservation) -> None:
@@ -88,6 +89,10 @@ class JetTrack:
             self.lat = obs.lat
         if obs.lon is not None:
             self.lon = obs.lon
+        if obs.lat is not None and obs.lon is not None:
+            point = (obs.lat, obs.lon)
+            if not self.position_history or self.position_history[-1] != point:
+                self.position_history.append(point)
         self.altitude_ft = obs.altitude_ft
         self.ground_speed_kt = obs.ground_speed_kt
         self.track_deg = obs.track_deg
@@ -147,6 +152,10 @@ class JetTrack:
             data["privacy_visits"] = dict(self.privacy_visits)
             data["altitude_history"] = list(self.altitude_history)
             data["time_history"] = list(self.time_history)
+        if self.position_history:
+            data["position_trail"] = [
+                {"lat": lat, "lon": lon} for lat, lon in self.position_history
+            ]
         return data
 
 
