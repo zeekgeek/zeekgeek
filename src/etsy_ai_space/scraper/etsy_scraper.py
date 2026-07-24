@@ -13,6 +13,7 @@ from ..scoring import score_listing
 from ..scraper.demo import DemoScraperBackend
 from ..scraper.playwright import PlaywrightScraperBackend
 from ..tools.delays import human_delay
+from ..pipeline.state_tracker import SwarmStateTracker
 
 LOGGER = logging.getLogger(__name__)
 
@@ -25,14 +26,17 @@ async def scrape_niche_to_db(
     max_results: int = 48,
     min_score: float = 35.0,
     headless: bool = True,
+    tracker: SwarmStateTracker | None = None,
 ) -> dict[str, object]:
     """Search Etsy for a niche, extract listing metadata, persist high performers."""
+    state = tracker or SwarmStateTracker()
     scraper = DemoScraperBackend() if demo else PlaywrightScraperBackend(headless=headless)
     run = db.start_scrape_run(query=query, source=scraper.source)
     assert run.id is not None
 
     try:
         LOGGER.info("Scraping niche %r via %s", query, scraper.source)
+        state.log(f"Scraper searching Etsy for: {query}")
         listings = await scraper.scrape_search(query, max_results=max_results)
         for item in listings:
             score_listing(item)
@@ -40,6 +44,7 @@ async def scrape_niche_to_db(
         kept = [item for item in listings if (item.performance_score or 0.0) >= min_score]
         stored = db.insert_listings(run.id, kept)
         db.finish_scrape_run(run.id, listing_count=stored, status="completed")
+        state.log(f"Scraper stored {stored}/{len(listings)} listings for {query!r}")
 
         return {
             "run_id": run.id,
@@ -52,19 +57,25 @@ async def scrape_niche_to_db(
     except Exception as exc:
         LOGGER.exception("Scrape failed for %r", query)
         db.finish_scrape_run(run.id, listing_count=0, status=f"failed: {exc}")
+        state.log(f"Scrape failed: {exc}", level="ERROR")
         raise
 
 
 async def _cli(args: argparse.Namespace) -> int:
     db = StoreDatabase(args.db)
-    result = await scrape_niche_to_db(
-        args.query,
-        db,
-        demo=args.demo,
-        max_results=args.max_results,
-        min_score=args.min_score,
-        headless=args.headless,
-    )
+    tracker = SwarmStateTracker()
+    with tracker.agent_activity("Scraper", "Scraping"):
+        result = await scrape_niche_to_db(
+            args.query,
+            db,
+            demo=args.demo,
+            max_results=args.max_results,
+            min_score=args.min_score,
+            headless=args.headless,
+            tracker=tracker,
+        )
+    tracker.bump_metric("scrape_runs", 1)
+    tracker.set_agent("Scraper", "Idle")
     print(json.dumps(result, indent=2))
     return 0
 

@@ -346,7 +346,10 @@ src/etsy_ai_space/
 ├── agents/
 │   └── workers.py         # Copywriter, design (Midjourney), SEO workers
 ├── pipeline/
-│   └── orchestrator.py    # Manager agent → 5 concepts → export
+│   ├── orchestrator.py    # Manager agent → 5 concepts → export
+│   └── state.json         # Live agent status (gitignored; see state.schema.json)
+├── dashboard/
+│   └── app.py             # Streamlit live status UI
 ├── tools/                 # Humanized delays + QC rules
 └── obsidian_vault/        # Brief memory (Markdown)
 ```
@@ -416,6 +419,10 @@ python3 -m etsy_ai_space pipeline <query> [--demo] [--niche "..."] [--export-dir
 python3 -m etsy_ai_space export [--export-dir PATH]
 python3 -m etsy_ai_space stats
 python3 -m etsy_ai_space top [--limit 10]
+
+# Live Streamlit dashboard (auto-refreshes from pipeline/state.json)
+pip install -e ".[etsy]"
+python3 -m etsy_ai_space dashboard --port 8501
 
 # Standalone module entry points
 python3 -m etsy_ai_space.scraper.etsy_scraper "retro cat shirt" --demo

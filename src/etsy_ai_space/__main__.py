@@ -59,6 +59,10 @@ def build_parser() -> argparse.ArgumentParser:
     top = sub.add_parser("top", help="Print top stored listings by performance score")
     top.add_argument("--limit", type=int, default=10)
 
+    dashboard = sub.add_parser("dashboard", help="Launch Streamlit swarm status dashboard")
+    dashboard.add_argument("--port", type=int, default=8501)
+    dashboard.add_argument("--refresh", type=int, default=3, help="Auto-refresh interval in seconds")
+
     return parser
 
 
@@ -138,6 +142,30 @@ def cmd_top(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_dashboard(args: argparse.Namespace) -> int:
+    import subprocess
+    import sys
+
+    app_path = Path(__file__).resolve().parent / "dashboard" / "app.py"
+    env = {"ETSY_DASHBOARD_REFRESH": str(args.refresh)}
+    import os
+
+    merged = os.environ.copy()
+    merged.update(env)
+    cmd = [
+        sys.executable,
+        "-m",
+        "streamlit",
+        "run",
+        str(app_path),
+        "--server.port",
+        str(args.port),
+        "--server.headless",
+        "true",
+    ]
+    raise SystemExit(subprocess.call(cmd, env=merged))
+
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
@@ -155,6 +183,8 @@ def main() -> None:
         raise SystemExit(cmd_stats(args))
     if args.command == "top":
         raise SystemExit(cmd_top(args))
+    if args.command == "dashboard":
+        raise SystemExit(cmd_dashboard(args))
     parser.error(f"Unknown command: {args.command}")
 
 

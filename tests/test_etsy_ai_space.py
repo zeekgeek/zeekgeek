@@ -14,6 +14,7 @@ from etsy_ai_space.db import StoreDatabase
 from etsy_ai_space.export.bundle import export_pending_drafts
 from etsy_ai_space.models import CreativeBrief, ListingDraft, ProductConcept
 from etsy_ai_space.pipeline.orchestrator import ManagerAgent, run_orchestrator
+from etsy_ai_space.pipeline.state_tracker import SwarmStateTracker, default_state
 from etsy_ai_space.scraper.demo import DemoScraperBackend
 from etsy_ai_space.tools.humanize import humanize_text
 
@@ -78,16 +79,43 @@ class EtsyAiSpaceTests(unittest.IsolatedAsyncioTestCase):
     async def test_orchestrator_end_to_end_demo(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db = StoreDatabase(Path(tmp) / "store.db")
+            state_path = Path(tmp) / "state.json"
+            log_path = Path(tmp) / "system.log"
+            tracker = SwarmStateTracker(state_path=state_path, log_path=log_path)
             result = await run_orchestrator(
                 "retro cat shirt",
                 db,
                 demo=True,
                 concept_count=5,
                 export_dir=Path(tmp) / "exports",
+                tracker=tracker,
             )
             self.assertEqual(len(result["concepts"]), 5)
             self.assertEqual(len(result["drafts"]), 5)
             self.assertTrue(Path(result["export"]["json"]).exists())
+            loaded = tracker.load()
+            self.assertGreater(len(loaded["logs"]), 2)
+            self.assertEqual(len(loaded["agents"]), 5)
+
+    def test_state_tracker_writes_json_and_logs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tracker = SwarmStateTracker(
+                state_path=Path(tmp) / "state.json",
+                log_path=Path(tmp) / "system.log",
+            )
+            with tracker.agent_activity("Scraper", "Scraping"):
+                tracker.log("Test scrape complete")
+            state = tracker.load()
+            self.assertTrue((Path(tmp) / "state.json").exists())
+            scraper = next(a for a in state["agents"] if a["name"] == "Scraper")
+            self.assertEqual(scraper["success_count"], 1)
+            self.assertIn("Test scrape complete", tracker.tail_log_file())
+
+    def test_default_state_schema(self) -> None:
+        state = default_state()
+        self.assertIn("metrics", state)
+        self.assertEqual(len(state["agents"]), 5)
+        self.assertIn("listings_generated", state["metrics"])
 
     def test_designer_worker_builds_listing(self) -> None:
         brief = CreativeBrief(

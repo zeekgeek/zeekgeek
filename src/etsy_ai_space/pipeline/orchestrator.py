@@ -12,12 +12,13 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from ..agents.workers import workers_build_listing
+from ..agents.workers import copywriter_agent, design_agent, seo_agent
 from ..db import StoreDatabase, default_db_path
 from ..export.bundle import export_pending_drafts
-from ..models import ProductConcept
+from ..models import ListingDraft, ProductConcept
 from ..scraper.etsy_scraper import scrape_niche_to_db
 from ..tools.humanize import humanize_text
+from .state_tracker import SwarmStateTracker
 
 LOGGER = logging.getLogger(__name__)
 
@@ -147,34 +148,66 @@ async def run_orchestrator(
     concept_count: int = 5,
     export_dir: Path | None = None,
     scrape_first: bool = True,
+    tracker: SwarmStateTracker | None = None,
 ) -> dict[str, Any]:
     """Full pipeline: scrape → manager concepts → worker drafts → export bundle."""
+    state = tracker or SwarmStateTracker()
+    state.log(f"Orchestrator started for niche: {niche}")
+
     research: dict[str, object] | None = None
     if scrape_first:
-        research = await scrape_niche_to_db(
-            niche,
-            db,
-            demo=demo,
-            max_results=max_results,
-        )
+        with state.agent_activity("Scraper", "Scraping"):
+            research = await scrape_niche_to_db(
+                niche,
+                db,
+                demo=demo,
+                max_results=max_results,
+                tracker=state,
+            )
+        state.bump_metric("scrape_runs", 1)
 
     top = db.top_listings(limit=12)
     manager = ManagerAgent()
-    concepts = await manager.generate_concepts_with_claude(niche, top, count=concept_count)
+
+    with state.agent_activity("Manager", "Analyzing trends"):
+        trend_summary = manager.analyze_trends(top)
+
+    with state.agent_activity("Manager", "Generating concepts"):
+        concepts = await manager.generate_concepts_with_claude(niche, top, count=concept_count)
+        if manager.api_key:
+            state.bump_metric("compute_cost_usd", 0.012 * concept_count)
 
     saved_concepts: list[dict[str, Any]] = []
     drafts: list[dict[str, Any]] = []
     for concept in concepts:
         saved = db.save_concept(concept)
         concept.id = saved.id
-        draft = workers_build_listing(concept)
+
+        with state.agent_activity("Copywriter", "Writing copy"):
+            copy = copywriter_agent(concept)
+        with state.agent_activity("Designer", "Creating Midjourney prompt"):
+            design = design_agent(concept)
+        with state.agent_activity("SEO", "Writing SEO tags"):
+            seo = seo_agent(concept, copy.title)
+
+        draft = ListingDraft(
+            concept_id=concept.id,
+            title=copy.title,
+            description=copy.description,
+            tags=seo.tags,
+            price=24.99,
+            image_prompt=design.midjourney_prompt,
+            taxonomy_hint=concept.concept_name,
+        )
         report = humanize_text(draft.title, draft.description, draft.tags)
         if report.passed:
             draft.tags = report.cleaned_tags
             draft.status = "approved_for_export"
         else:
             draft.status = "needs_revision"
+            state.log(f"Humanization flagged {concept.concept_name}: {report.issues}", level="WARNING")
         stored = db.save_listing_draft(draft)
+        state.bump_metric("listings_generated", 1)
         saved_concepts.append(concept.to_dict())
         drafts.append(
             {
@@ -186,12 +219,17 @@ async def run_orchestrator(
             }
         )
 
-    out_dir = export_dir or Path.cwd() / "etsy_ai_space" / "exports"
-    export_paths = export_pending_drafts(db, out_dir)
+    with state.agent_activity("Manager", "Exporting bundle"):
+        out_dir = export_dir or Path.cwd() / "etsy_ai_space" / "exports"
+        export_paths = export_pending_drafts(db, out_dir)
+
+    state.log(f"Orchestrator finished — {len(drafts)} drafts exported")
+    for agent_name in ("Scraper", "Manager", "Copywriter", "Designer", "SEO"):
+        state.set_agent(agent_name, "Idle")
 
     return {
         "research": research,
-        "trend_summary": manager.analyze_trends(top),
+        "trend_summary": trend_summary,
         "concepts": saved_concepts,
         "drafts": drafts,
         "export": export_paths,
