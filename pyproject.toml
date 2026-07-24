@@ -10,11 +10,18 @@ dependencies = [
     "uvicorn[standard]",
 ]
 
+[project.optional-dependencies]
+etsy = [
+    "playwright",
+    "anthropic",
+]
+
 [project.scripts]
 bt-radar = "bt_radar.__main__:main"
 wifi-radar = "wifi_radar.__main__:main"
 mac-battery = "mac_battery.__main__:main"
 jet-radar = "jet_radar.__main__:main"
+etsy-ai-space = "etsy_ai_space.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -2,3 +2,6 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
+etsy_ai_space/data/
+etsy_ai_space/exports/
+etsy_ai_space/obsidian_vault/briefs/

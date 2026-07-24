@@ -326,3 +326,89 @@ python3 -m jet_radar --host 127.0.0.1 --port 8790 --sigma 3 --trigger-threshold 
 - `GET /api/jets`: snapshot (jets, baseline, hideout candidates, watchlist moves, events)
 - `POST /api/sensitivity`: body `{"sigma": 3.0, "trigger_threshold": 3}`
 - `GET /api/events`: Server-Sent Events stream
+
+---
+
+# Etsy AI Space
+
+Phased agent swarm for **safe** print-on-demand store research. It follows a
+manual-upload rollout: scrape trends → creative brief → listing copy → JSON/CSV
+export. Nothing publishes to Etsy automatically.
+
+## Architecture
+
+```text
+etsy_ai_space/
+├── agents/
+│   ├── ultron/          # Master orchestrator (phases 1–4)
+│   ├── researcher/      # Playwright/demo scraper → SQLite
+│   ├── designer/        # Tags, SEO copy, image prompts
+│   ├── warroom/         # Future: flag losers (manual action only)
+│   └── communicator/    # Future: draft replies (manual send)
+├── tools/               # Humanized delays + QC rules
+├── obsidian_vault/      # Brief memory (Markdown)
+└── data/ + exports/     # SQLite + upload bundles (gitignored)
+```
+
+## Quick start (demo — no Etsy network)
+
+```bash
+source .venv/bin/activate
+pip install -e .
+
+# Phase 1 only — scrape + SQLite
+python3 -m etsy_ai_space scrape "retro cat shirt" --demo
+
+# Full pipeline (phases 1–4) — exports JSON + CSV for manual upload
+python3 -m etsy_ai_space pipeline "retro cat shirt" --demo
+```
+
+Inspect stored trends:
+
+```bash
+python3 -m etsy_ai_space stats
+python3 -m etsy_ai_space top --limit 5
+```
+
+## Live scraping (Phase 1)
+
+Requires Playwright and a local Chromium install:
+
+```bash
+pip install -e ".[etsy]"
+playwright install chromium
+python3 -m etsy_ai_space scrape "cottagecore mushroom shirt"
+```
+
+The scraper uses randomized delays between actions. Start with low volume and
+ `--max-results 24` while you validate selectors.
+
+## Claude orchestration (Phase 2–3)
+
+Set `ANTHROPIC_API_KEY` and run the pipeline without `--demo` when ready:
+
+```bash
+export ANTHROPIC_API_KEY=sk-...
+python3 -m etsy_ai_space pipeline "retro cat shirt"
+```
+
+Without the key, Ultron falls back to deterministic templates so you can test
+the full export flow offline.
+
+## Safe scaling checklist
+
+1. Run demo pipeline locally and review `etsy_ai_space/exports/listing-bundle-*.json`.
+2. Generate artwork from `image_prompt` in your tool of choice; save paths into the bundle.
+3. Upload listings **manually** in Etsy Seller Manager (3–5/day for new shops).
+4. Only after the shop is established, consider Etsy Open API or browser assist tools.
+5. Never auto-delete listings — warroom outputs recommendations only.
+
+## Command reference
+
+```text
+python3 -m etsy_ai_space scrape <query> [--demo] [--max-results 48] [--min-score 35]
+python3 -m etsy_ai_space pipeline <query> [--demo] [--niche "..."] [--export-dir PATH]
+python3 -m etsy_ai_space export [--export-dir PATH]
+python3 -m etsy_ai_space stats
+python3 -m etsy_ai_space top [--limit 10]
+```
