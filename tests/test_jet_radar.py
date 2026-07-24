@@ -330,6 +330,11 @@ class WebRouteTests(unittest.TestCase):
         self.assertEqual(len(stream["jets"]), len(full["jets"]))
         self.assertNotIn("altitude_history", stream["jets"][0])
         self.assertIn("altitude_history", full["jets"][0])
+        self.assertFalse(stream["data_is_live"])
+        await state.set_scan_status(mode="live", awaiting_first_poll=False)
+        live = await state.snapshot(stream=True)
+        self.assertTrue(live["data_is_live"])
+        self.assertEqual(live["feed_source"], "adsb.lol")
 
 
 if __name__ == "__main__":

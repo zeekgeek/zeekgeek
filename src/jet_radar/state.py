@@ -423,6 +423,8 @@ class RadarState:
                 "generated_at": iso_time(now),
                 "scan_mode": self.scan_mode,
                 "awaiting_first_poll": self.awaiting_first_poll,
+                "feed_source": "adsb.lol" if self.scan_mode == "live" else ("simulated" if self.scan_mode == "demo" else "unknown"),
+                "data_is_live": self.scan_mode == "live" and not self.awaiting_first_poll,
                 "alarm_active": self._alarm.active,
                 "recent_triggers": self._alarm.recent_triggers,
                 "trigger_threshold": self._alarm.threshold,

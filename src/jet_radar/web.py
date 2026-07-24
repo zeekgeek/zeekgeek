@@ -138,6 +138,13 @@ DASHBOARD_HTML = """
     @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,.4); } 50% { box-shadow: 0 0 0 8px rgba(239,68,68,0); } }
     .baseline-chip { border: 1px solid #24314c; border-radius: 10px; padding: 6px 10px; font-size: 12px; color: var(--muted); background: var(--panel-2); }
     .baseline-chip b { color: var(--text); }
+    #feed-badge { display: inline-flex; align-items: center; gap: 8px; border-radius: 999px; padding: 6px 12px; font-size: 12px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; margin-left: 10px; vertical-align: middle; }
+    #feed-badge.live { background: rgba(34,197,94,.18); border: 1px solid var(--green); color: #86efac; box-shadow: 0 0 12px rgba(34,197,94,.25); }
+    #feed-badge.polling { background: rgba(245,158,11,.16); border: 1px solid var(--amber); color: #fde68a; }
+    #feed-badge.demo { background: rgba(239,68,68,.16); border: 1px solid var(--red); color: #fecaca; }
+    #feed-badge .dot { width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
+    #feed-badge.live .dot { animation: live-pulse 1.4s infinite; }
+    @keyframes live-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.45; transform: scale(0.85); } }
     .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
     .hideout, .move-row { border: 1px solid #24314c; border-radius: 10px; padding: 8px 10px; margin: 6px 0; background: var(--panel-2); font-size: 13px; }
     .hideout b, .move-row b { color: var(--text); }
@@ -148,7 +155,7 @@ DASHBOARD_HTML = """
 <body>
   <header>
     <div>
-      <h1>Private Jet Movement Radar</h1>
+      <h1>Private Jet Movement Radar <span id="feed-badge" class="polling"><span class="dot"></span><span id="feed-badge-text">CONNECTING</span></span></h1>
       <div class="stats">
         <span id="counts">Waiting for ADS-B data...</span>
         <span id="updated"></span>
@@ -334,6 +341,18 @@ DASHBOARD_HTML = """
 
     function render() {
       if (!snapshot) return;
+      const feedBadge = document.getElementById("feed-badge");
+      const feedBadgeText = document.getElementById("feed-badge-text");
+      if (snapshot.scan_mode === "demo") {
+        feedBadge.className = "demo";
+        feedBadgeText.textContent = "DEMO DATA";
+      } else if (snapshot.data_is_live) {
+        feedBadge.className = "live";
+        feedBadgeText.textContent = `LIVE · ${snapshot.feed_source || "adsb.lol"}`;
+      } else {
+        feedBadge.className = "polling";
+        feedBadgeText.textContent = "POLLING LIVE…";
+      }
       const statusBanner = document.getElementById("status-banner");
       if (snapshot.awaiting_first_poll) {
         statusBanner.className = "";

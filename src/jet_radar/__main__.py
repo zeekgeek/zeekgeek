@@ -47,9 +47,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--center", default=None, help="Optional 'lat,lon' to watch a region instead of the whole feed")
     parser.add_argument("--radius-nm", type=float, default=250.0, help="Region radius in nautical miles when --center is set")
     parser.add_argument(
-        "--no-auto-demo-fallback",
+        "--allow-demo-fallback",
         action="store_true",
-        help="Exit if the live ADS-B feed fails instead of switching to demo mode",
+        help="If live ADS-B fails, switch to simulated demo data (off by default — live only)",
     )
     parser.add_argument("--log-level", default="info", choices=["debug", "info", "warning", "error"])
     return parser
@@ -93,7 +93,7 @@ async def run(args: argparse.Namespace) -> None:
         _run_scanner_loop(
             state=state,
             force_demo=args.demo,
-            auto_demo_fallback=not args.no_auto_demo_fallback,
+            auto_demo_fallback=args.allow_demo_fallback,
             poll_interval=args.poll_interval,
             center=parse_center(args.center),
             radius_nm=args.radius_nm,
@@ -124,9 +124,9 @@ async def run(args: argparse.Namespace) -> None:
     if bind_host in {"0.0.0.0", "::"}:
         print(f"Listening on all interfaces (bound to {bind_host}:{chosen_port}).")
     if args.demo:
-        print("Running in demo mode: scramble, Hawaii quiet, tanker rendezvous, and surge scenario.")
+        print("Running in demo mode with simulated jet traffic.")
     else:
-        print("Polling live ADS-B data from adsb.lol with automatic demo fallback if unavailable.")
+        print("Live-only mode: polling ADS-B from adsb.lol (no demo fallback).")
 
     done, pending = await asyncio.wait(
         {server_task, stop_task},
