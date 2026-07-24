@@ -9,7 +9,7 @@ from typing import Any
 from ...db import StoreDatabase
 from ...export.bundle import export_pending_drafts
 from ...models import CreativeBrief, ListingDraft
-from ..designer.workers import expand_listing_copy
+from ..workers import expand_listing_copy
 from ..researcher.runner import run_researcher, build_scraper
 
 

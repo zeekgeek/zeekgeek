@@ -338,16 +338,17 @@ export. Nothing publishes to Etsy automatically.
 ## Architecture
 
 ```text
-etsy_ai_space/
+src/etsy_ai_space/
+├── database/
+│   └── schema.sql         # SQLite schema (listings, concepts, drafts)
+├── scraper/
+│   └── etsy_scraper.py    # Playwright niche scraper → DB
 ├── agents/
-│   ├── ultron/          # Master orchestrator (phases 1–4)
-│   ├── researcher/      # Playwright/demo scraper → SQLite
-│   ├── designer/        # Tags, SEO copy, image prompts
-│   ├── warroom/         # Future: flag losers (manual action only)
-│   └── communicator/    # Future: draft replies (manual send)
-├── tools/               # Humanized delays + QC rules
-├── obsidian_vault/      # Brief memory (Markdown)
-└── data/ + exports/     # SQLite + upload bundles (gitignored)
+│   └── workers.py         # Copywriter, design (Midjourney), SEO workers
+├── pipeline/
+│   └── orchestrator.py    # Manager agent → 5 concepts → export
+├── tools/                 # Humanized delays + QC rules
+└── obsidian_vault/        # Brief memory (Markdown)
 ```
 
 ## Quick start (demo — no Etsy network)
@@ -359,7 +360,10 @@ pip install -e .
 # Phase 1 only — scrape + SQLite
 python3 -m etsy_ai_space scrape "retro cat shirt" --demo
 
-# Full pipeline (phases 1–4) — exports JSON + CSV for manual upload
+# Full swarm — scrape, 5 concepts, worker drafts, export
+python3 -m etsy_ai_space orchestrate "retro cat shirt" --demo
+
+# Legacy single-brief pipeline
 python3 -m etsy_ai_space pipeline "retro cat shirt" --demo
 ```
 
@@ -407,8 +411,13 @@ the full export flow offline.
 
 ```text
 python3 -m etsy_ai_space scrape <query> [--demo] [--max-results 48] [--min-score 35]
+python3 -m etsy_ai_space orchestrate <niche> [--demo] [--concepts 5] [--skip-scrape]
 python3 -m etsy_ai_space pipeline <query> [--demo] [--niche "..."] [--export-dir PATH]
 python3 -m etsy_ai_space export [--export-dir PATH]
 python3 -m etsy_ai_space stats
 python3 -m etsy_ai_space top [--limit 10]
+
+# Standalone module entry points
+python3 -m etsy_ai_space.scraper.etsy_scraper "retro cat shirt" --demo
+python3 -m etsy_ai_space.pipeline.orchestrator "retro cat shirt" --demo
 ```

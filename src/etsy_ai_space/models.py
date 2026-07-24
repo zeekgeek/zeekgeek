@@ -104,6 +104,32 @@ class CreativeBrief:
 
 
 @dataclass
+class ProductConcept:
+    """Manager agent output — one unique product idea derived from trends."""
+
+    concept_name: str
+    hook: str
+    angle: str
+    trend_summary: str
+    reference_listing_ids: list[str] = field(default_factory=list)
+    created_at: datetime = field(default_factory=utc_now)
+    status: str = "draft"
+    id: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "concept_name": self.concept_name,
+            "hook": self.hook,
+            "angle": self.angle,
+            "trend_summary": self.trend_summary,
+            "reference_listing_ids": self.reference_listing_ids,
+            "created_at": iso_time(self.created_at),
+            "status": self.status,
+        }
+
+
+@dataclass
 class ListingDraft:
     """Phase 3–4 output ready for manual Etsy upload."""
 
@@ -115,6 +141,7 @@ class ListingDraft:
     image_path: str | None = None
     taxonomy_hint: str | None = None
     brief_id: int | None = None
+    concept_id: int | None = None
     created_at: datetime = field(default_factory=utc_now)
     status: str = "pending_review"
     id: int | None = None

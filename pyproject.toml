@@ -28,6 +28,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "bt_radar" = ["data/*.json"]
+"etsy_ai_space" = ["database/schema.sql"]
 
 [build-system]
 requires = ["setuptools>=68"]

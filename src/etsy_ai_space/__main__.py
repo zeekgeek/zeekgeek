@@ -12,6 +12,8 @@ from .agents.researcher.runner import build_scraper, run_researcher
 from .agents.ultron.orchestrator import UltronOrchestrator
 from .db import StoreDatabase, default_db_path
 from .export.bundle import export_pending_drafts
+from .pipeline.orchestrator import run_orchestrator
+from .scraper.etsy_scraper import scrape_niche_to_db
 
 LOGGER = logging.getLogger(__name__)
 
@@ -38,6 +40,17 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline.add_argument("--export-dir", type=Path, default=None)
     pipeline.add_argument("--max-results", type=int, default=48)
 
+    orchestrate = sub.add_parser(
+        "orchestrate",
+        help="Scrape → manager (5 concepts) → worker agents → export",
+    )
+    orchestrate.add_argument("niche", help="Niche query, e.g. 'retro cat shirt'")
+    orchestrate.add_argument("--demo", action="store_true")
+    orchestrate.add_argument("--concepts", type=int, default=5)
+    orchestrate.add_argument("--skip-scrape", action="store_true")
+    orchestrate.add_argument("--export-dir", type=Path, default=None)
+    orchestrate.add_argument("--max-results", type=int, default=48)
+
     export = sub.add_parser("export", help="Phase 4 — export pending listing drafts to JSON/CSV")
     export.add_argument("--export-dir", type=Path, default=None)
 
@@ -51,13 +64,38 @@ def build_parser() -> argparse.ArgumentParser:
 
 async def cmd_scrape(args: argparse.Namespace) -> int:
     db = StoreDatabase(args.db)
-    scraper = build_scraper(demo=args.demo, headless=args.headless)
-    result = await run_researcher(
-        args.query,
+    if args.demo:
+        scraper = build_scraper(demo=True, headless=args.headless)
+        result = await run_researcher(
+            args.query,
+            db,
+            backend=scraper,
+            max_results=args.max_results,
+            min_score=args.min_score,
+        )
+    else:
+        result = await scrape_niche_to_db(
+            args.query,
+            db,
+            demo=False,
+            max_results=args.max_results,
+            min_score=args.min_score,
+            headless=args.headless,
+        )
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+async def cmd_orchestrate(args: argparse.Namespace) -> int:
+    db = StoreDatabase(args.db)
+    result = await run_orchestrator(
+        args.niche,
         db,
-        backend=scraper,
+        demo=args.demo,
         max_results=args.max_results,
-        min_score=args.min_score,
+        concept_count=args.concepts,
+        export_dir=args.export_dir,
+        scrape_first=not args.skip_scrape,
     )
     print(json.dumps(result, indent=2))
     return 0
@@ -107,6 +145,8 @@ def main() -> None:
 
     if args.command == "scrape":
         raise SystemExit(asyncio.run(cmd_scrape(args)))
+    if args.command == "orchestrate":
+        raise SystemExit(asyncio.run(cmd_orchestrate(args)))
     if args.command == "pipeline":
         raise SystemExit(asyncio.run(cmd_pipeline(args)))
     if args.command == "export":
