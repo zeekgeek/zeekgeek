@@ -100,15 +100,17 @@ python3 -m unittest discover -s tests
 
 ---
 
-# Bluetooth Thrust Controller
+# Adorime Thrust Controller
 
-Scans for compatible BLE toys (Adorime, Galaku, and related Galaku-protocol
-devices), identifies them from advertised BLE names, and exposes a browser
-dashboard with brand-themed thrust and vibration controls.
+Live BLE scanner and thrust/vibration controller focused on **Adorime**
+products. Identifies devices from their advertised BLE names (for example
+`BGSF`, `SN80`, `AX05`) and exposes a rose-themed dashboard with live thrust
+controls.
 
-Supported profiles include Adorime masturbators, anal trainers, rabbit dildos,
-wearable eggs, and dual-motor Galaku aircraft cups. Control uses the Galaku BLE
-write format (community-documented via Buttplug/Intiface research).
+Supported Adorime profiles include masturbators, anal trainers, rabbit dildos,
+wearable eggs, cock rings, chastity cage, and related dual-motor models.
+Control uses the Adorime/Galaku-family BLE write format documented via
+Buttplug/Intiface community research.
 
 ## Quick start
 
@@ -119,22 +121,19 @@ pip install -e .
 python3 -m bt_thrust
 ```
 
-Open <http://127.0.0.1:8800>, select a scanned toy, click **Connect**, then use
-the live thrust/vibration sliders or pattern presets (Gentle Wave, Pulse, Ramp Up,
-Deep Thrust).
+Open <http://127.0.0.1:8800>, select a live Adorime toy, click **Connect**,
+then use the thrust/vibration sliders or pattern presets.
 
-Requires a powered Bluetooth adapter and a toy in advertising/pairing mode.
-Linux hosts usually need `bluetoothd` running and BLE scan permission for the
-current user/session.
+Requires a powered Bluetooth adapter and an Adorime device in
+advertising/pairing mode. Linux hosts usually need `bluetoothd` running and BLE
+scan permission for the current user/session.
 
 ## Dashboard behavior
 
-- **Scanned toys** panel lists live in-range devices with brand badges, RSSI,
-  estimated distance, and movement hints.
-- **Control panel** theme switches per brand (rose for Adorime, violet for
-  Galaku, blue for generic).
-- Dual-motor toys expose separate **Thrust** and **Vibration** sliders with
-  **live command sending** while connected.
+- **Live Adorime toys** panel lists only recognized in-range Adorime devices
+  with RSSI, estimated distance, and movement hints.
+- **Thrust controls** expose separate **Thrust** and **Vibration** sliders on
+  dual-motor models, with live command sending while connected.
 - **Pattern presets** loop thrust/vibration levels while connected.
 - **Stop all** sends a zero command and cancels any active pattern.
 - **Browser notifications** for discovered, connected, and disconnected toys.

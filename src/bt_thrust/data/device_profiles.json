@@ -1,16 +1,10 @@
 {
   "protocols": {
-    "galaku": {
+    "adorime": {
       "service_uuid": "00001000-0000-1000-8000-00805f9b34fb",
       "tx_uuid": "00001001-0000-1000-8000-00805f9b34fb",
-      "brand": "galaku",
-      "theme": "galaku"
-    },
-    "mu_se": {
-      "service_uuid": "0000aaa0-0000-1000-8000-00805f9b34fb",
-      "tx_uuid": "0000aaa1-0000-1000-8000-00805f9b34fb",
-      "brand": "generic",
-      "theme": "classic"
+      "brand": "adorime",
+      "theme": "adorime"
     }
   },
   "devices": [
@@ -19,15 +13,15 @@
       "name": "Adorime Wearable Egg Vibrator",
       "brand": "adorime",
       "theme": "adorime",
-      "protocol": "galaku",
+      "protocol": "adorime",
       "motors": [{"id": "vibrate", "label": "Vibration", "type": "vibrate"}]
     },
     {
       "identifiers": ["BGSF"],
-      "name": "Adorime AI Lover Masturbator",
+      "name": "Adorime Male Masturbator",
       "brand": "adorime",
       "theme": "adorime",
-      "protocol": "galaku",
+      "protocol": "adorime",
       "motors": [
         {"id": "thrust", "label": "Thrust", "type": "oscillate"},
         {"id": "vibrate", "label": "Vibration", "type": "vibrate"}
@@ -38,7 +32,7 @@
       "name": "Adorime Penis Vibrator",
       "brand": "adorime",
       "theme": "adorime",
-      "protocol": "galaku",
+      "protocol": "adorime",
       "motors": [{"id": "vibrate", "label": "Vibration", "type": "vibrate"}]
     },
     {
@@ -46,7 +40,7 @@
       "name": "Adorime Anal Vibrator",
       "brand": "adorime",
       "theme": "adorime",
-      "protocol": "galaku",
+      "protocol": "adorime",
       "motors": [
         {"id": "thrust", "label": "Thrust", "type": "oscillate"},
         {"id": "vibrate", "label": "Vibration", "type": "vibrate"}
@@ -57,7 +51,7 @@
       "name": "Adorime Chastity Cage",
       "brand": "adorime",
       "theme": "adorime",
-      "protocol": "galaku",
+      "protocol": "adorime",
       "motors": [{"id": "vibrate", "label": "Shock", "type": "vibrate"}]
     },
     {
@@ -65,7 +59,7 @@
       "name": "Adorime Penis Helmet Vibrator",
       "brand": "adorime",
       "theme": "adorime",
-      "protocol": "galaku",
+      "protocol": "adorime",
       "motors": [{"id": "vibrate", "label": "Vibration", "type": "vibrate"}]
     },
     {
@@ -73,7 +67,7 @@
       "name": "Adorime Pink Touch",
       "brand": "adorime",
       "theme": "adorime",
-      "protocol": "galaku",
+      "protocol": "adorime",
       "motors": [{"id": "vibrate", "label": "Vibration", "type": "vibrate"}]
     },
     {
@@ -81,7 +75,7 @@
       "name": "Adorime G-spot Rabbit Dildo",
       "brand": "adorime",
       "theme": "adorime",
-      "protocol": "galaku",
+      "protocol": "adorime",
       "motors": [
         {"id": "thrust", "label": "Thrust", "type": "oscillate"},
         {"id": "vibrate", "label": "Vibration", "type": "vibrate"}
@@ -92,7 +86,7 @@
       "name": "Adorime Backy",
       "brand": "adorime",
       "theme": "adorime",
-      "protocol": "galaku",
+      "protocol": "adorime",
       "motors": [
         {"id": "thrust", "label": "Thrust", "type": "oscillate"},
         {"id": "vibrate", "label": "Vibration", "type": "vibrate"}
@@ -103,48 +97,7 @@
       "name": "Adorime Cock Ring",
       "brand": "adorime",
       "theme": "adorime",
-      "protocol": "galaku",
-      "motors": [{"id": "vibrate", "label": "Vibration", "type": "vibrate"}]
-    },
-    {
-      "identifiers": ["G312"],
-      "name": "Galaku Mecha",
-      "brand": "galaku",
-      "theme": "galaku",
-      "protocol": "galaku",
-      "motors": [
-        {"id": "thrust", "label": "Oscillation", "type": "oscillate"},
-        {"id": "vibrate", "label": "Vibration", "type": "vibrate"}
-      ]
-    },
-    {
-      "identifiers": ["G317"],
-      "name": "Galaku Zaku Aircraft Cup",
-      "brand": "galaku",
-      "theme": "galaku",
-      "protocol": "galaku",
-      "motors": [
-        {"id": "thrust", "label": "Thrust", "type": "oscillate"},
-        {"id": "vibrate", "label": "Vibration", "type": "vibrate"}
-      ]
-    },
-    {
-      "identifiers": ["TFG1"],
-      "name": "Galaku Aurora Aircraft Cup",
-      "brand": "galaku",
-      "theme": "galaku",
-      "protocol": "galaku",
-      "motors": [
-        {"id": "thrust", "label": "Thrust", "type": "oscillate"},
-        {"id": "vibrate", "label": "Vibration", "type": "vibrate"}
-      ]
-    },
-    {
-      "identifiers": ["WB-ZDB-WST", "WB-TDD"],
-      "name": "Mu Se Dream Lover",
-      "brand": "generic",
-      "theme": "classic",
-      "protocol": "mu_se",
+      "protocol": "adorime",
       "motors": [{"id": "vibrate", "label": "Vibration", "type": "vibrate"}]
     }
   ],

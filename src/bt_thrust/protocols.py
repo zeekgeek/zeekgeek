@@ -1,4 +1,4 @@
-"""BLE protocol helpers for Galaku/Adorime and other toy families."""
+"""BLE protocol helpers for Adorime products."""
 
 from __future__ import annotations
 
@@ -43,14 +43,6 @@ def galaku_dual_motor_command(thrust: int, vibrate: int) -> bytes:
     thrust_clamped = max(0, min(100, int(thrust)))
     vibrate_clamped = max(0, min(100, int(vibrate)))
     return galaku_send_bytes([90, 0, 0, 1, 64, 3, thrust_clamped, vibrate_clamped, 0, 0])
-
-
-def mu_se_command(speed: int) -> bytes:
-    clamped = max(0, min(100, int(speed)))
-    if clamped == 0:
-        return bytes([0x00, 0x00])
-    scaled = max(1, min(15, round(clamped / 100 * 15)))
-    return bytes([scaled, 0x00])
 
 
 @dataclass(frozen=True)
@@ -101,6 +93,8 @@ def device_profiles() -> list[DeviceProfile]:
     catalog = load_catalog()
     profiles: list[DeviceProfile] = []
     for item in catalog["devices"]:
+        if item.get("brand") != "adorime":
+            continue
         motors = tuple(
             MotorProfile(id=motor["id"], label=motor["label"], motor_type=motor["type"])
             for motor in item["motors"]
@@ -129,17 +123,22 @@ def match_device_profile(name: str | None) -> DeviceProfile | None:
     return None
 
 
+def match_adorime_profile(name: str | None) -> DeviceProfile | None:
+    profile = match_device_profile(name)
+    if profile is None or profile.brand != "adorime":
+        return None
+    return profile
+
+
 def build_command(profile: DeviceProfile, levels: dict[str, int]) -> bytes:
-    if profile.protocol == "galaku":
+    if profile.protocol == "adorime":
         if profile.is_dual_motor:
             thrust = levels.get(profile.motors[0].id, 0)
             vibrate = levels.get(profile.motors[1].id, 0)
             return galaku_dual_motor_command(thrust, vibrate)
         primary = levels.get(profile.motors[0].id, 0)
         return galaku_single_motor_command(primary)
-    if profile.protocol == "mu_se":
-        return mu_se_command(levels.get(profile.motors[0].id, 0))
-    return galaku_single_motor_command(max(levels.values(), default=0))
+    raise ValueError(f"Unsupported protocol for Adorime controller: {profile.protocol}")
 
 
 def pattern_steps(pattern_id: str) -> list[dict[str, int]]:

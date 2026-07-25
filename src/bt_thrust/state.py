@@ -12,7 +12,7 @@ from bt_radar.anomaly import Finding, address_family, evaluate_device
 from bt_radar.calibration import estimate_distance_label, estimate_distance_meters
 from bt_radar.state import movement_label, smooth_rssi
 
-from .protocols import DeviceProfile, load_catalog, match_device_profile
+from .protocols import DeviceProfile, load_catalog, match_adorime_profile
 
 
 def utc_now() -> datetime:
@@ -84,7 +84,7 @@ class ToyTrack:
         self.manufacturer_id = observation.manufacturer_id if observation.manufacturer_id is not None else self.manufacturer_id
         self.tx_power = observation.tx_power if observation.tx_power is not None else self.tx_power
         self.details.update(observation.details)
-        self.profile = match_device_profile(self.name)
+        self.profile = match_adorime_profile(self.name)
         if self.profile and not self.levels:
             self.levels = {motor.id: 0 for motor in self.profile.motors}
         self._refresh_findings(stale_seconds=0)
@@ -199,7 +199,9 @@ class ControllerState:
             track = self._toys.get(observation.address)
             emitted: list[dict[str, Any]]
             if track is None:
-                profile = match_device_profile(observation.name)
+                profile = match_adorime_profile(observation.name)
+                if profile is None:
+                    return []
                 track = ToyTrack(
                     address=observation.address,
                     first_seen=observation.observed_at,

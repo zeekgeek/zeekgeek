@@ -27,7 +27,7 @@ class SelectRequest(BaseModel):
 
 
 def create_app(state: ControllerState, controller: ToyController) -> FastAPI:
-    app = FastAPI(title="Bluetooth Thrust Controller")
+    app = FastAPI(title="Adorime Thrust Controller")
 
     @app.get("/", response_class=HTMLResponse)
     async def index() -> str:
@@ -95,34 +95,20 @@ DASHBOARD_HTML = """
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Bluetooth Thrust Controller</title>
+  <title>Adorime Thrust Controller</title>
   <style>
     :root {
       color-scheme: dark;
-      --bg: #0a0d16;
-      --panel: #121827;
-      --panel-2: #182033;
-      --text: #edf2ff;
-      --muted: #93a1ba;
-      --accent: #38bdf8;
-      --accent-soft: rgba(56, 189, 248, 0.16);
-      --green: #22c55e;
-      --yellow: #eab308;
-      --red: #ef4444;
-    }
-    body.theme-adorime {
       --bg: #160812;
       --panel: #24101c;
       --panel-2: #311528;
+      --text: #edf2ff;
+      --muted: #93a1ba;
       --accent: #f472b6;
       --accent-soft: rgba(244, 114, 182, 0.18);
-    }
-    body.theme-galaku {
-      --bg: #0d0818;
-      --panel: #17102a;
-      --panel-2: #22153b;
-      --accent: #c084fc;
-      --accent-soft: rgba(192, 132, 252, 0.18);
+      --green: #22c55e;
+      --yellow: #eab308;
+      --red: #ef4444;
     }
     * { box-sizing: border-box; }
     body {
@@ -194,8 +180,6 @@ DASHBOARD_HTML = """
       text-transform: uppercase;
     }
     .brand-adorime { background: rgba(236, 72, 153, .18); color: #f9a8d4; }
-    .brand-galaku { background: rgba(168, 85, 247, .18); color: #d8b4fe; }
-    .brand-unknown { background: rgba(148, 163, 184, .15); color: var(--muted); }
     .present { background: rgba(34,197,94,.15); color: var(--green); }
     .gone { background: rgba(148,163,184,.15); color: var(--muted); }
     .connected { background: rgba(56,189,248,.15); color: #7dd3fc; }
@@ -315,17 +299,17 @@ DASHBOARD_HTML = """
     }
   </style>
 </head>
-<body class="theme-classic">
+<body>
   <header>
     <div>
-      <h1>Bluetooth Thrust Controller</h1>
+      <h1>Adorime Thrust Controller</h1>
       <div class="stats">
-        <span id="counts">Waiting for live scan...</span>
+        <span id="counts">Waiting for live Adorime scan...</span>
         <span id="updated"></span>
       </div>
     </div>
     <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-      <span class="live-badge">Live BLE</span>
+      <span class="live-badge">Live Adorime</span>
       <button id="notify">Enable notifications</button>
     </div>
   </header>
@@ -334,13 +318,13 @@ DASHBOARD_HTML = """
 
   <main>
     <section class="panel">
-      <h2>Scanned toys</h2>
-      <div id="toys" class="toy-list empty">Scanning for Adorime, Galaku, and compatible BLE toys...</div>
+      <h2>Live Adorime toys</h2>
+      <div id="toys" class="toy-list empty">Scanning for live Adorime products...</div>
     </section>
 
     <section class="stack">
       <section class="panel">
-        <div id="control-panel" class="empty">Select a recognized toy to open thrust controls.</div>
+        <div id="control-panel" class="empty">Select an Adorime toy to open thrust controls.</div>
       </section>
       <section class="panel">
         <h2>Recent events</h2>
@@ -358,13 +342,7 @@ DASHBOARD_HTML = """
     let panelSignature = null;
     const notifiedEvents = new Set();
 
-    const themes = {
-      adorime: "theme-adorime",
-      galaku: "theme-galaku",
-      classic: "theme-classic",
-      unknown: "theme-classic",
-      generic: "theme-classic",
-    };
+    const themes = { adorime: "theme-adorime" };
 
     function showError(message) {
       const banner = document.getElementById("error-banner");
@@ -385,9 +363,8 @@ DASHBOARD_HTML = """
       await Notification.requestPermission();
     };
 
-    function brandBadge(brand) {
-      const labels = { adorime: "Adorime", galaku: "Galaku", generic: "Generic", unknown: "Unknown" };
-      return `<span class="badge brand-${brand}">${labels[brand] || brand}</span>`;
+    function brandBadge() {
+      return `<span class="badge brand-adorime">Adorime</span>`;
     }
 
     function statusBadge(toy) {
@@ -482,11 +459,11 @@ DASHBOARD_HTML = """
       if (!snapshot) return null;
       const selected = snapshot.toys.find((toy) => toy.address === selectedAddress);
       if (selected) return selected;
-      return snapshot.toys.find((toy) => toy.controllable) || snapshot.toys[0] || null;
+      return snapshot.toys.find((toy) => toy.address === selectedAddress) || snapshot.toys[0] || null;
     }
 
-    function applyTheme(theme) {
-      document.body.className = themes[theme] || "theme-classic";
+    function applyTheme(_theme) {
+      document.body.className = "";
     }
 
     function panelKey(toy) {
@@ -565,19 +542,19 @@ DASHBOARD_HTML = """
       const root = document.getElementById("toys");
       if (!snapshot || snapshot.toys.length === 0) {
         root.className = "toy-list empty";
-        root.textContent = "No compatible toys observed yet. Power on your toy and keep Bluetooth advertising active.";
+        root.textContent = "No Adorime toys in range. Power on your device and keep Bluetooth advertising active.";
         return;
       }
       root.className = "toy-list";
       root.innerHTML = snapshot.toys.map((toy) => `
-        <article class="toy ${toy.address === selectedAddress ? "active" : ""} ${toy.connected ? "connected" : ""} ${toy.controllable ? "" : "unrecognized"}" data-address="${toy.address}">
+        <article class="toy ${toy.address === selectedAddress ? "active" : ""} ${toy.connected ? "connected" : ""}" data-address="${toy.address}">
           <div class="toy-title">
             <div>
               <div class="name">${toy.display_name}</div>
               <div class="addr">${toy.address}${toy.name ? " · " + toy.name : ""}</div>
             </div>
             <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:end;">
-              ${brandBadge(toy.brand)}
+              ${brandBadge()}
               ${statusBadge(toy)}
             </div>
           </div>
@@ -627,28 +604,16 @@ DASHBOARD_HTML = """
       if (!toy) {
         panelSignature = null;
         root.className = "empty";
-        root.textContent = "Select a recognized toy to open thrust controls.";
-        applyTheme("classic");
+        root.textContent = "Select an Adorime toy to open thrust controls.";
+        applyTheme("adorime");
         return;
       }
 
-      applyTheme(toy.theme || "classic");
+      applyTheme("adorime");
       ensureLocalLevels(toy);
 
       const signature = panelKey(toy);
       const needsRebuild = signature !== panelSignature || !document.getElementById("control-sliders");
-
-      if (!toy.controllable) {
-        panelSignature = signature;
-        root.className = "";
-        root.innerHTML = `
-          <div class="hero-card">
-            <div class="control-title">${toy.display_name}</div>
-            <div class="control-sub">${toy.address} · unrecognized profile</div>
-            <p class="hint">This device was seen over BLE but does not match a known Adorime/Galaku profile yet.</p>
-          </div>`;
-        return;
-      }
 
       if (needsRebuild) {
         panelSignature = signature;
@@ -675,7 +640,7 @@ DASHBOARD_HTML = """
             <div class="control-head">
               <div>
                 <div class="control-title">${toy.display_name}</div>
-                <div class="control-sub">${toy.protocol ? toy.protocol.toUpperCase() + " protocol" : "Unknown protocol"} · ${toy.address}</div>
+                <div class="control-sub">Adorime BLE · ${toy.address}</div>
                 <div class="status-line">
                   <span class="status-pill" id="status-linked">${toy.connected ? "Linked" : "Not connected"}</span>
                   <span class="status-pill">${toy.distance_label || "unknown"} range</span>
@@ -727,7 +692,7 @@ DASHBOARD_HTML = """
         selectedAddress = snapshot.selected_address;
       }
       document.getElementById("counts").innerHTML =
-        `<b>${snapshot.present_count}</b> in range · <b>${snapshot.connected_count}</b> connected · <b>${snapshot.controllable_count}</b> recognized`;
+        `<b>${snapshot.present_count}</b> in range · <b>${snapshot.connected_count}</b> connected · <b>${snapshot.toy_count}</b> Adorime`;
       document.getElementById("updated").textContent = `Updated ${snapshot.generated_at}`;
       renderToyList();
       renderControlPanel();

@@ -6,6 +6,7 @@ from bt_thrust.protocols import (
     galaku_send_bytes,
     galaku_single_motor_command,
     levels_from_pattern,
+    match_adorime_profile,
     match_device_profile,
     pattern_steps,
 )
@@ -26,6 +27,10 @@ class ProtocolTests(unittest.TestCase):
     def test_galaku_send_bytes_checksum(self) -> None:
         payload = galaku_send_bytes([90, 0, 0, 1, 49, 10, 0, 0, 0, 0])
         self.assertEqual(len(payload), 12)
+
+    def test_non_adorime_profile_is_ignored(self) -> None:
+        self.assertIsNone(match_device_profile("G312"))
+        self.assertIsNone(match_adorime_profile("G312"))
 
     def test_match_adorime_profile(self) -> None:
         profile = match_device_profile("BGSF")

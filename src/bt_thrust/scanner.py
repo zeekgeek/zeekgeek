@@ -1,4 +1,4 @@
-"""Live Bluetooth toy scanning."""
+"""Live Adorime Bluetooth scanning."""
 
 from __future__ import annotations
 
@@ -7,11 +7,10 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from .protocols import match_adorime_profile
 from .state import ControllerState, ToyObservation
 
 LOGGER = logging.getLogger(__name__)
-
-GALAKU_SERVICE = "00001000-0000-1000-8000-00805f9b34fb"
 
 
 @dataclass
@@ -25,8 +24,8 @@ class BleakScannerBackend:
             raise RuntimeError("Install the 'bleak' package to use live Bluetooth scanning.") from exc
 
         scanner = BleakScanner(detection_callback=self._on_detection)
-        LOGGER.info("Starting live Bluetooth LE toy scan")
-        await self.state.add_system_event("scanner-live", "Live Bluetooth scanner active")
+        LOGGER.info("Starting live Adorime BLE scan")
+        await self.state.add_system_event("scanner-live", "Live Adorime scanner active")
         async with scanner:
             while True:
                 await asyncio.sleep(1)
@@ -34,7 +33,7 @@ class BleakScannerBackend:
 
     def _on_detection(self, device, advertisement_data) -> None:  # type: ignore[no-untyped-def]
         observation = _observation_from_bleak(device, advertisement_data)
-        if not _looks_like_toy(observation):
+        if match_adorime_profile(observation.name) is None:
             return
         try:
             loop = asyncio.get_running_loop()
@@ -64,15 +63,3 @@ def _observation_from_bleak(device, advertisement_data) -> ToyObservation:  # ty
         details=details,
         observed_at=datetime.now(UTC),
     )
-
-
-def _looks_like_toy(observation: ToyObservation) -> bool:
-    from .protocols import match_device_profile
-
-    if match_device_profile(observation.name):
-        return True
-    if GALAKU_SERVICE in observation.service_uuids:
-        return True
-    if observation.name and len(observation.name.strip()) <= 8 and observation.name.isupper():
-        return True
-    return False

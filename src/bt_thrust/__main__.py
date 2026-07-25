@@ -20,7 +20,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Bluetooth thrust controller with live toy scanner dashboard")
+    parser = argparse.ArgumentParser(description="Live Adorime thrust controller with BLE scanner dashboard")
     parser.add_argument("--host", default="127.0.0.1", help="Dashboard host")
     parser.add_argument("--port", type=int, default=8800, help="Dashboard port")
     parser.add_argument("--stale-after", type=float, default=20.0, help="Seconds before a missing toy is marked left")
@@ -57,8 +57,8 @@ async def run(args: argparse.Namespace) -> None:
         with suppress(NotImplementedError):
             loop.add_signal_handler(sig, stop_event.set)
 
-    print(f"Bluetooth thrust controller dashboard: http://{args.host}:{chosen_port}")
-    print("Running live Bluetooth scan. Power on your toy and keep it in pairing/advertising mode.")
+    print(f"Adorime thrust controller dashboard: http://{args.host}:{chosen_port}")
+    print("Running live Adorime BLE scan. Power on your Adorime device and keep it in advertising mode.")
 
     done, pending = await asyncio.wait(
         {scanner_task, server_task, stop_task},
