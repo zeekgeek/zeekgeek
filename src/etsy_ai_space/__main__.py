@@ -146,7 +146,7 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
     import subprocess
     import sys
 
-    app_path = Path(__file__).resolve().parent / "dashboard" / "app.py"
+    app_path = Path(__file__).resolve().parent.parent / "dashboard" / "streamlit_main.py"
     env = {"ETSY_DASHBOARD_REFRESH": str(args.refresh)}
     import os
 

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 
-from ..db import StoreDatabase, default_db_path
-from ..pipeline.state_tracker import SwarmStateTracker, default_state_path
+from etsy_ai_space.db import StoreDatabase, default_db_path
+from etsy_ai_space.pipeline.state_tracker import SwarmStateTracker, default_state_path
 
 BADGE = {
     "healthy": "🟢 Active",

@@ -15,9 +15,9 @@ from pathlib import Path
 
 
 def _streamlit_target() -> Path:
-    import etsy_ai_space.dashboard.app as swarm_app
+    import dashboard.streamlit_main as entry
 
-    return Path(swarm_app.__file__).resolve()
+    return Path(entry.__file__).resolve()
 
 
 def build_parser() -> argparse.ArgumentParser:
