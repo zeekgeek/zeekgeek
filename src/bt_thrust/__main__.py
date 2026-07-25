@@ -8,11 +8,14 @@ import logging
 import os
 import signal
 import socket
+import sys
 from contextlib import suppress
 
 import uvicorn
 
+from .cli import scan_main
 from .controller import ToyController
+from .deep_scan import run_deep_scan_worker
 from .scanner import BleakScannerBackend
 from .state import ControllerState
 from .web import create_app
@@ -30,7 +33,9 @@ def default_dashboard_host() -> str:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Live Adorime thrust controller with BLE scanner dashboard")
+    parser = argparse.ArgumentParser(
+        description="Bluetooth scanner and Adorime thruster controller (GUI dashboard or: scan ...)",
+    )
     parser.add_argument(
         "--host",
         default=default_dashboard_host(),
@@ -38,21 +43,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--port", type=int, default=8800, help="Dashboard port")
     parser.add_argument("--stale-after", type=float, default=20.0, help="Seconds before a missing toy is marked left")
+    parser.add_argument("--max-throttle", type=int, default=100, help="Safety cap for throttle levels (0-100)")
     parser.add_argument("--log-level", default="info", choices=["debug", "info", "warning", "error"])
     return parser
 
 
 def main() -> None:
-    args = build_parser().parse_args()
+    if len(sys.argv) > 1 and sys.argv[1] == "scan":
+        raise SystemExit(scan_main(sys.argv[2:]))
+
+    parser = build_parser()
+    args = parser.parse_args()
     logging.basicConfig(level=getattr(logging, args.log_level.upper()))
-    asyncio.run(run(args))
+    asyncio.run(run_gui(args))
 
 
-async def run(args: argparse.Namespace) -> None:
+async def run_gui(args: argparse.Namespace) -> None:
     state = ControllerState(stale_after=args.stale_after)
-    controller = ToyController(state=state)
+    controller = ToyController(state=state, max_throttle=max(1, min(100, int(args.max_throttle))))
     app = create_app(state, controller)
     scanner_task = asyncio.create_task(_run_scanner_with_retry(state), name="toy-scanner")
+    deep_scan_task = asyncio.create_task(run_deep_scan_worker(state), name="deep-scan-worker")
 
     chosen_port = pick_available_port(args.host, args.port)
     if chosen_port != args.port:
@@ -73,7 +84,7 @@ async def run(args: argparse.Namespace) -> None:
 
     local_url = f"http://127.0.0.1:{chosen_port}"
     bind_url = f"http://{args.host}:{chosen_port}"
-    print(f"Adorime thrust controller dashboard: {local_url}")
+    print(f"Bluetooth scanner + thruster dashboard: {local_url}")
     if args.host in {"0.0.0.0", "::"}:
         print(f"Listening on all interfaces: {bind_url}")
         if os.environ.get("CURSOR_AGENT") == "1":
@@ -81,7 +92,7 @@ async def run(args: argparse.Namespace) -> None:
                 "Cursor browser: open the Ports panel, forward port "
                 f"{chosen_port}, then click Open in Browser (or use Simple Browser on the forwarded URL)."
             )
-    print("Running live Adorime BLE scan. Power on your Adorime device and keep it in advertising mode.")
+    print("Running live BLE scan. Use Deep Scan for GATT services and classic Bluetooth discovery.")
 
     done, pending = await asyncio.wait(
         {server_task, stop_task},
@@ -101,7 +112,8 @@ async def run(args: argparse.Namespace) -> None:
 
     server.should_exit = True
     scanner_task.cancel()
-    remaining: list[asyncio.Task] = [scanner_task]
+    deep_scan_task.cancel()
+    remaining: list[asyncio.Task] = [scanner_task, deep_scan_task]
     for task in pending:
         if task is server_task:
             remaining.append(task)

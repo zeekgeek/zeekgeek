@@ -6,8 +6,10 @@ import asyncio
 import contextlib
 import logging
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
+from .ai_assist import ThrusterAdvisor
 from .protocols import (
     DeviceProfile,
     build_command,
@@ -19,6 +21,8 @@ from .protocols import (
 from .state import ControllerState
 
 LOGGER = logging.getLogger(__name__)
+MAX_SAFE_THROTTLE = 100
+WATCHDOG_INTERVAL_SECONDS = 3.0
 
 
 @dataclass
@@ -31,8 +35,12 @@ class _ClientEntry:
 @dataclass
 class ToyController:
     state: ControllerState
+    advisor: ThrusterAdvisor = field(default_factory=ThrusterAdvisor)
+    max_throttle: int = MAX_SAFE_THROTTLE
     _pattern_tasks: dict[str, asyncio.Task] = field(default_factory=dict)
+    _watchdog_tasks: dict[str, asyncio.Task] = field(default_factory=dict)
     _clients: dict[str, _ClientEntry] = field(default_factory=dict)
+    _connection_logs: list[dict[str, Any]] = field(default_factory=list)
 
     async def connect(self, address: str) -> dict[str, str]:
         track = await self.state.get_track(address)
@@ -56,16 +64,20 @@ class ToyController:
             track.levels = {motor.id: 0 for motor in track.profile.motors}
         await self._connect_live(address, track.profile)
         await self.state.set_connection(address, True)
+        self._start_watchdog(address)
+        self._log_connection(address, track.name, "connected", "BLE connection established")
         return {"status": "connected", "address": address}
 
     async def disconnect(self, address: str) -> dict[str, str]:
         await self.stop_pattern(address)
+        self._stop_watchdog(address)
         track = await self.state.get_track(address)
         if track and track.profile:
             zero_levels = {motor.id: 0 for motor in track.profile.motors}
             await self._send_levels(address, track.profile, zero_levels)
         await self._disconnect_live(address)
         await self.state.set_connection(address, False)
+        self._log_connection(address, track.name if track else None, "disconnected", "BLE connection closed")
         return {"status": "disconnected", "address": address}
 
     async def set_levels(self, address: str, levels: dict[str, int]) -> dict[str, object]:
@@ -77,11 +89,126 @@ class ToyController:
 
         merged = {motor.id: track.levels.get(motor.id, 0) for motor in track.profile.motors}
         merged.update({key: int(value) for key, value in levels.items() if key in merged})
+        merged = self._apply_safety_limits(merged)
 
         await self.stop_pattern(address)
         await self.state.set_levels(address, merged, pattern=None)
         await self._send_levels(address, track.profile, merged)
+        self.advisor.record_manual_input(
+            address=address,
+            levels=merged,
+            pattern=None,
+            rssi=track.rssi,
+        )
         return {"status": "ok", "address": address, "levels": merged}
+
+    async def set_thruster(
+        self,
+        address: str,
+        *,
+        throttle: int,
+        direction: str = "forward",
+        pulse_mode: bool = False,
+    ) -> dict[str, object]:
+        track = await self.state.get_track(address)
+        if track is None or track.profile is None:
+            raise ValueError("Toy is not available for control.")
+        if not track.connected:
+            raise ValueError("Connect to the toy before sending control commands.")
+
+        clamped = max(0, min(self.max_throttle, int(throttle)))
+        if direction == "reverse":
+            levels = {
+                "thrust": max(0, self.max_throttle - clamped),
+                "vibrate": clamped if track.profile.is_dual_motor else 0,
+            }
+        else:
+            levels = {"thrust": clamped}
+            if track.profile.is_dual_motor:
+                levels["vibrate"] = track.levels.get("vibrate", 0)
+
+        if pulse_mode:
+            await self.run_pattern(address, "pulse")
+            self.advisor.record_manual_input(
+                address=address,
+                levels=levels,
+                pattern="pulse",
+                rssi=track.rssi,
+            )
+            return {"status": "ok", "address": address, "pattern": "pulse", "levels": levels}
+
+        return await self.set_levels(address, levels)
+
+    async def apply_ai_suggestion(self, address: str) -> dict[str, object]:
+        track = await self.state.get_track(address)
+        if track is None or track.profile is None:
+            raise ValueError("Toy is not available for control.")
+        suggestion = self.advisor.suggest(
+            address=address,
+            current_levels=track.levels,
+            rssi=track.rssi,
+            connected=track.connected,
+        )
+        if track.connected:
+            await self.set_levels(address, suggestion["suggested_levels"])
+            if suggestion.get("suggested_pattern"):
+                await self.run_pattern(address, suggestion["suggested_pattern"])
+        return suggestion
+
+    def connection_logs(self) -> list[dict[str, Any]]:
+        return list(self._connection_logs)
+
+    def _apply_safety_limits(self, levels: dict[str, int]) -> dict[str, int]:
+        return {key: max(0, min(self.max_throttle, int(value))) for key, value in levels.items()}
+
+    def _log_connection(
+        self,
+        address: str,
+        name: str | None,
+        event_type: str,
+        message: str,
+    ) -> None:
+        self._connection_logs.append(
+            {
+                "type": event_type,
+                "address": address,
+                "name": name,
+                "message": message,
+                "at": datetime.now(UTC).isoformat(timespec="seconds"),
+            }
+        )
+
+    def _start_watchdog(self, address: str) -> None:
+        self._stop_watchdog(address)
+        self._watchdog_tasks[address] = asyncio.create_task(
+            self._connection_watchdog(address),
+            name=f"watchdog-{address}",
+        )
+
+    def _stop_watchdog(self, address: str) -> None:
+        task = self._watchdog_tasks.pop(address, None)
+        if task is not None:
+            task.cancel()
+
+    async def _connection_watchdog(self, address: str) -> None:
+        try:
+            while True:
+                await asyncio.sleep(WATCHDOG_INTERVAL_SECONDS)
+                entry = self._clients.get(address)
+                track = await self.state.get_track(address)
+                if entry is None or track is None or not track.connected:
+                    return
+                if not entry.client.is_connected:
+                    await self.state.add_system_event(
+                        "connection-lost",
+                        f"Lost connection to {address}; marking disconnected.",
+                    )
+                    self._log_connection(address, track.name, "disconnected", "Connection watchdog detected drop")
+                    await self.state.set_connection(address, False)
+                    await self._disconnect_live(address)
+                    return
+        except asyncio.CancelledError:
+            raise
 
     async def run_pattern(self, address: str, pattern_id: str) -> dict[str, object]:
         track = await self.state.get_track(address)

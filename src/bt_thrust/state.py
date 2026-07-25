@@ -22,6 +22,7 @@ from .protocols import (
     protocol_config,
     resolve_device_profile,
 )
+from .signal_quality import device_type_label, rssi_stats
 
 
 def utc_now() -> datetime:
@@ -68,6 +69,10 @@ class ToyTrack:
     levels: dict[str, int] = field(default_factory=dict)
     active_pattern: str | None = None
     battery_percent: int | None = None
+    gatt_services: list[dict[str, Any]] = field(default_factory=list)
+    gatt_error: str | None = None
+    transport: str = "ble"
+    device_class: str | None = None
     events: deque[dict[str, Any]] = field(default_factory=lambda: deque(maxlen=40))
     findings: list[Finding] = field(default_factory=list)
 
@@ -173,6 +178,13 @@ class ToyTrack:
                 "service_uuid": config["service_uuid"],
                 "tx_uuid": config["tx_uuid"],
             }
+        signal_stats = rssi_stats(rssi_values)
+        device_type = device_type_label(
+            controllable=profile is not None,
+            adorime_match=profile is not None and profile.brand == "adorime",
+            galaku_service=has_galaku_service(self.service_uuids),
+            name=self.name,
+        )
         return {
             "address": self.address,
             "name": self.name,
@@ -184,6 +196,13 @@ class ToyTrack:
             "controllable": profile is not None,
             "adorime_match": profile is not None and profile.brand == "adorime",
             "galaku_service": has_galaku_service(self.service_uuids),
+            "device_type": device_type,
+            "transport": self.transport,
+            "device_class": self.device_class,
+            "signal_stats": signal_stats,
+            "signal_quality": signal_stats["quality"],
+            "gatt_services": list(self.gatt_services),
+            "gatt_error": self.gatt_error,
             "motors": profile.to_dict()["motors"] if profile else [],
             "address_family": address_family(self.address, self.address_type),
             "address_type": self.address_type,
@@ -229,6 +248,9 @@ class ControllerState:
         self._observation_count = 0
         self._last_observation_at: datetime | None = None
         self._deep_scan_until: datetime | None = None
+        self._deep_scan_task: asyncio.Task | None = None
+        self._min_rssi_filter: int = -127
+        self._device_type_filter: str = "all"
         self._lock = asyncio.Lock()
 
     async def is_scanner_paused(self) -> bool:
@@ -273,6 +295,78 @@ class ControllerState:
             }
             self._events.append(event)
             return event
+
+    async def set_scanner_filters(
+        self,
+        *,
+        min_rssi: int | None = None,
+        device_type: str | None = None,
+    ) -> None:
+        async with self._lock:
+            if min_rssi is not None:
+                self._min_rssi_filter = max(-127, min(-30, int(min_rssi)))
+            if device_type is not None:
+                self._device_type_filter = device_type
+
+    async def store_gatt_result(self, address: str, result: dict[str, Any]) -> dict[str, Any] | None:
+        async with self._lock:
+            track = self._toys.get(address)
+            if track is None:
+                return None
+            track.gatt_services = list(result.get("services") or [])
+            track.gatt_error = result.get("error")
+            event = {
+                "type": "gatt-deep-scan",
+                "address": address,
+                "name": track.name,
+                "message": (
+                    f"GATT deep scan complete ({len(track.gatt_services)} services)"
+                    if not track.gatt_error
+                    else f"GATT deep scan failed: {track.gatt_error}"
+                ),
+                "at": iso_time(utc_now()),
+            }
+            track.events.append(event)
+            self._events.append(event)
+            return event
+
+    async def observe_classic_device(
+        self,
+        *,
+        address: str,
+        name: str,
+        device_class: str | None = None,
+        rssi: int | None = None,
+    ) -> None:
+        async with self._lock:
+            now = utc_now()
+            track = self._toys.get(address)
+            if track is None:
+                track = ToyTrack(
+                    address=address,
+                    first_seen=now,
+                    last_seen=now,
+                    name=name,
+                    transport="classic",
+                    device_class=device_class,
+                    seen_count=1,
+                )
+                if rssi is not None:
+                    track.rssi = rssi
+                    track.rssi_history.append(rssi)
+                    track.time_history.append(iso_time(now))
+                self._toys[address] = track
+                self._events.append(track._event("new", now, "Classic Bluetooth device discovered"))
+            else:
+                track.present = True
+                track.last_seen = now
+                track.name = name or track.name
+                track.transport = "classic"
+                track.device_class = device_class or track.device_class
+                if rssi is not None:
+                    track.rssi = rssi
+                    track.rssi_history.append(rssi)
+                    track.time_history.append(iso_time(now))
 
     async def set_stale_after(self, stale_after: float) -> None:
         async with self._lock:
@@ -401,6 +495,14 @@ class ControllerState:
         async with self._lock:
             now = utc_now()
             toys = [track.snapshot(now) for track in self._toys.values()]
+            if self._min_rssi_filter > -127:
+                toys = [
+                    item
+                    for item in toys
+                    if item.get("rssi") is None or item["rssi"] >= self._min_rssi_filter
+                ]
+            if self._device_type_filter != "all":
+                toys = [item for item in toys if item.get("device_type") == self._device_type_filter]
             toys.sort(
                 key=lambda item: (
                     item["present"],
@@ -426,6 +528,8 @@ class ControllerState:
                     if self._last_observation_at
                     else None,
                     "stale_after": self.stale_after,
+                    "min_rssi_filter": self._min_rssi_filter,
+                    "device_type_filter": self._device_type_filter,
                 },
                 "device_count": len(toys),
                 "toy_count": len(toys),

@@ -7,12 +7,14 @@ import json
 from collections.abc import AsyncIterator
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from bt_radar.calibration import calibration_profile_payload
 
 from .controller import ToyController
+from .deep_scan import discover_gatt
+from .export import export_connection_logs_csv, export_devices_csv, export_snapshot_json
 from .state import ControllerState
 
 
@@ -38,6 +40,21 @@ class ScannerPausedRequest(BaseModel):
 
 class DeepScanRequest(BaseModel):
     duration_seconds: float = 20.0
+
+
+class ScannerFilterRequest(BaseModel):
+    min_rssi: int | None = None
+    device_type: str | None = None
+
+
+class ThrusterRequest(BaseModel):
+    throttle: int = Field(ge=0, le=100)
+    direction: str = "forward"
+    pulse_mode: bool = False
+
+
+class AutoTuneRequest(BaseModel):
+    enabled: bool = True
 
 
 def create_app(state: ControllerState, controller: ToyController) -> FastAPI:
@@ -108,6 +125,75 @@ def create_app(state: ControllerState, controller: ToyController) -> FastAPI:
         event = await state.trigger_deep_scan(request.duration_seconds)
         snapshot = await state.snapshot()
         return JSONResponse({"event": event, "scanner": snapshot["scanner"]})
+
+    @app.post("/api/scanner/filters")
+    async def scanner_filters(request: ScannerFilterRequest) -> JSONResponse:
+        await state.set_scanner_filters(min_rssi=request.min_rssi, device_type=request.device_type)
+        snapshot = await state.snapshot()
+        return JSONResponse(snapshot["scanner"])
+
+    @app.post("/api/toys/{address}/gatt-scan")
+    async def gatt_scan(address: str) -> JSONResponse:
+        result = await discover_gatt(address)
+        event = await state.store_gatt_result(address, result)
+        return JSONResponse({"result": result, "event": event})
+
+    @app.post("/api/toys/{address}/thruster")
+    async def thruster_control(address: str, request: ThrusterRequest) -> JSONResponse:
+        try:
+            result = await controller.set_thruster(
+                address,
+                throttle=request.throttle,
+                direction=request.direction,
+                pulse_mode=request.pulse_mode,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return JSONResponse(result)
+
+    @app.get("/api/toys/{address}/ai-suggest")
+    async def ai_suggest(address: str) -> JSONResponse:
+        track = await state.get_track(address)
+        if track is None:
+            raise HTTPException(status_code=404, detail="Device not found")
+        suggestion = controller.advisor.suggest(
+            address=address,
+            current_levels=track.levels,
+            rssi=track.rssi,
+            connected=track.connected,
+        )
+        return JSONResponse(suggestion)
+
+    @app.post("/api/toys/{address}/ai-apply")
+    async def ai_apply(address: str) -> JSONResponse:
+        try:
+            result = await controller.apply_ai_suggestion(address)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return JSONResponse(result)
+
+    @app.post("/api/ai/auto-tune")
+    async def ai_auto_tune(request: AutoTuneRequest) -> JSONResponse:
+        controller.advisor.set_auto_tune(request.enabled)
+        return JSONResponse({"auto_tune_enabled": request.enabled})
+
+    @app.get("/api/export/json")
+    async def export_json() -> PlainTextResponse:
+        snapshot = await state.snapshot()
+        snapshot["connection_logs"] = controller.connection_logs()
+        snapshot["ai"] = controller.advisor.snapshot()
+        return PlainTextResponse(export_snapshot_json(snapshot), media_type="application/json")
+
+    @app.get("/api/export/csv")
+    async def export_csv() -> PlainTextResponse:
+        snapshot = await state.snapshot()
+        return PlainTextResponse(export_devices_csv(snapshot), media_type="text/csv")
+
+    @app.get("/api/export/logs.csv")
+    async def export_logs_csv() -> PlainTextResponse:
+        snapshot = await state.snapshot()
+        logs = snapshot.get("events", []) + controller.connection_logs()
+        return PlainTextResponse(export_connection_logs_csv(logs), media_type="text/csv")
 
     @app.get("/api/events")
     async def events() -> StreamingResponse:
@@ -687,6 +773,14 @@ DASHBOARD_HTML = """
           <label>Stale after
             <input type="number" id="stale-after" min="3" max="120" step="1" value="20"> s
           </label>
+          <label>Min RSSI
+            <input type="number" id="min-rssi" min="-127" max="-30" step="1" value="-127"> dBm
+          </label>
+        </div>
+        <div class="scanner-row">
+          <button type="button" class="secondary" id="export-json">Export JSON</button>
+          <button type="button" class="secondary" id="export-csv">Export CSV</button>
+          <button type="button" class="secondary" id="export-logs">Export logs</button>
         </div>
       </div>
     </section>
@@ -916,6 +1010,35 @@ DASHBOARD_HTML = """
           }
         });
       }
+      const minRssiEl = document.getElementById("min-rssi");
+      if (minRssiEl && minRssiEl.dataset.bound !== "1") {
+        minRssiEl.dataset.bound = "1";
+        minRssiEl.addEventListener("change", async () => {
+          try {
+            await api("/api/scanner/filters", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ min_rssi: Number(minRssiEl.value) }),
+            });
+            showError("");
+          } catch (err) {
+            showError(err.message || "Failed to update RSSI filter");
+          }
+        });
+      }
+      ["export-json", "export-csv", "export-logs"].forEach((id) => {
+        const node = document.getElementById(id);
+        if (!node || node.dataset.bound === "1") return;
+        node.dataset.bound = "1";
+        const paths = {
+          "export-json": "/api/export/json",
+          "export-csv": "/api/export/csv",
+          "export-logs": "/api/export/logs.csv",
+        };
+        node.addEventListener("click", () => {
+          window.open(paths[id], "_blank");
+        });
+      });
     }
 
     function renderScannerStatus() {
@@ -989,6 +1112,22 @@ DASHBOARD_HTML = """
       return Object.entries(serviceData).map(([uuid, hex]) =>
         `${escapeHtml(uuid)} → ${escapeHtml(hex)}`
       ).join("<br>");
+    }
+
+    function renderGattServices(toy) {
+      if (toy.gatt_error) {
+        return `<span class="hint">GATT scan error: ${escapeHtml(toy.gatt_error)}</span>`;
+      }
+      const services = toy.gatt_services || [];
+      if (!services.length) {
+        return `<span class="hint">Run Deep Scan to enumerate services and characteristics.</span>`;
+      }
+      return services.map((service) => {
+        const chars = (service.characteristics || []).map((char) =>
+          `<div class="uuid-item">${escapeHtml(char.uuid)} · ${escapeHtml((char.properties || []).join(", "))}</div>`
+        ).join("");
+        return `<div style="margin-bottom:8px;"><strong>${escapeHtml(service.uuid)}</strong>${chars}</div>`;
+      }).join("");
     }
 
     function drawSignalGraph(device) {
@@ -1082,6 +1221,8 @@ DASHBOARD_HTML = """
           <dt>TX power</dt><dd>${escapeHtml(formatNullable(toy.tx_power, " dBm"))}</dd>
           <dt>Raw RSSI</dt><dd>${escapeHtml(formatNullable(toy.rssi, " dBm"))}</dd>
           <dt>Smoothed RSSI</dt><dd>${escapeHtml(formatNullable(toy.rssi_smoothed, " dBm"))}</dd>
+          <dt>Signal quality</dt><dd>${escapeHtml(toy.signal_quality || toy.signal_stats?.quality || "unknown")} · avg ${escapeHtml(formatNullable(toy.signal_stats?.average, " dBm"))} · min ${escapeHtml(formatNullable(toy.signal_stats?.min, " dBm"))} · max ${escapeHtml(formatNullable(toy.signal_stats?.max, " dBm"))}</dd>
+          <dt>Device type</dt><dd>${escapeHtml(toy.device_type || "unknown")} (${escapeHtml(toy.transport || "ble")})</dd>
           <dt>Estimated distance</dt><dd>${escapeHtml(formatDistance(toy.estimated_distance_m))} (${escapeHtml(toy.distance_label || "unknown")})</dd>
           <dt>Movement</dt><dd>${escapeHtml(toy.movement || "collecting")}</dd>
           <dt>First seen</dt><dd>${escapeHtml(toy.first_seen)}</dd>
@@ -1089,6 +1230,7 @@ DASHBOARD_HTML = """
           <dt>Seen count</dt><dd>${escapeHtml(toy.seen_count)}</dd>
           <dt>Reappearances</dt><dd>${escapeHtml(toy.reappear_count)}</dd>
           <dt>Service UUIDs</dt><dd>${renderUuidList(toy.service_uuids || [], toy)}</dd>
+          <dt>GATT services</dt><dd>${renderGattServices(toy)}</dd>
         </dl>
         <h3 style="margin:18px 0 8px 0;">Findings</h3>
         ${findings}
@@ -1568,7 +1710,7 @@ DASHBOARD_HTML = """
                   <div class="col-meta">${escapeHtml(toy.name && toy.name !== deviceTitle(toy) ? toy.name : (toy.local_name || "Unnamed"))}</div>
                 </td>
                 <td class="col-addr">${escapeHtml(toy.address)}</td>
-                <td class="col-rssi">${toy.rssi ?? "?"} dBm<br><span class="col-meta">${escapeHtml(toy.movement || "collecting")}</span></td>
+                <td class="col-rssi">${toy.rssi ?? "?"} dBm<br><span class="col-meta">${escapeHtml(toy.signal_quality || "unknown")} · ${escapeHtml(toy.movement || "collecting")}</span></td>
                 <td class="col-meta">${escapeHtml(formatDistance(toy.estimated_distance_m))}<br>${escapeHtml(toy.distance_label || "")}</td>
                 <td class="col-meta">${toy.service_uuids?.length || 0} UUID(s)${toy.galaku_service ? "<br>Galaku svc" : ""}${toy.manufacturer_hex ? `<br>${escapeHtml(toy.manufacturer_hex)}` : ""}</td>
                 <td><div class="badge-cell">${brandBadge(toy)} ${statusBadge(toy)}</div></td>
@@ -1631,6 +1773,40 @@ DASHBOARD_HTML = """
           if (!toy.connected || node.disabled) return;
           runPattern(toy.address, node.dataset.pattern);
         });
+      });
+
+      document.getElementById("ai-suggest-btn")?.addEventListener("click", async () => {
+        try {
+          const suggestion = await api(`/api/toys/${encodeURIComponent(toy.address)}/ai-suggest`);
+          showError(`AI: thrust ${suggestion.suggested_levels?.thrust ?? "?"}% · ${(suggestion.notes || []).join(" ")}`);
+        } catch (err) {
+          showError(err.message || "AI suggestion failed");
+        }
+      });
+      document.getElementById("ai-apply-btn")?.addEventListener("click", async () => {
+        try {
+          await api(`/api/toys/${encodeURIComponent(toy.address)}/ai-apply`, { method: "POST" });
+          showError("");
+        } catch (err) {
+          showError(err.message || "AI apply failed");
+        }
+      });
+      async function sendThruster(direction, pulseMode) {
+        const throttle = Number(document.getElementById("master-thrust")?.value || localLevels[toy.address]?.thrust || 0);
+        await api(`/api/toys/${encodeURIComponent(toy.address)}/thruster`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ throttle, direction, pulse_mode: pulseMode }),
+        });
+      }
+      document.getElementById("thruster-forward")?.addEventListener("click", () => {
+        if (toy.connected) sendThruster("forward", false).catch((err) => showError(err.message));
+      });
+      document.getElementById("thruster-reverse")?.addEventListener("click", () => {
+        if (toy.connected) sendThruster("reverse", false).catch((err) => showError(err.message));
+      });
+      document.getElementById("thruster-pulse")?.addEventListener("click", () => {
+        if (toy.connected) sendThruster("forward", true).catch((err) => showError(err.message));
       });
     }
 
@@ -1727,6 +1903,8 @@ DASHBOARD_HTML = """
                   ? `<button class="secondary" id="disconnect-btn">Disconnect</button>`
                   : `<button id="connect-btn">Connect</button>`}
                 <button class="danger" id="stop-btn" ${toy.connected ? "" : "disabled"}>Stop all</button>
+                <button class="secondary" id="ai-suggest-btn">AI suggest</button>
+                <button class="secondary" id="ai-apply-btn" ${toy.connected ? "" : "disabled"}>Apply AI</button>
               </div>
             </div>
             <div class="meter-grid">
@@ -1752,6 +1930,11 @@ DASHBOARD_HTML = """
                   </div>
                   <input type="range" id="master-thrust" min="0" max="100" step="1" value="${thrustLevel}" data-motor="thrust" ${toy.connected ? "" : "disabled"}>
                   <div class="quick-levels">${renderQuickLevels(toy, "thrust")}</div>
+                  <div class="focus-row" style="margin-top:10px;">
+                    <button type="button" class="secondary" id="thruster-forward" ${toy.connected ? "" : "disabled"}>Forward</button>
+                    <button type="button" class="secondary" id="thruster-reverse" ${toy.connected ? "" : "disabled"}>Reverse</button>
+                    <button type="button" class="secondary" id="thruster-pulse" ${toy.connected ? "" : "disabled"}>Pulse mode</button>
+                  </div>
                 </div>
               </section>
             ` : ""}

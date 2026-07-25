@@ -5,7 +5,7 @@
 This repo contains self-contained Python apps under `src/`:
 
 - `bt_radar` — BLE scanner + FastAPI dashboard
-- `bt_thrust` — live Adorime BLE scanner + thrust/vibration controller dashboard
+- `bt_thrust` — BLE + classic Bluetooth scanner, GATT deep scan, Adorime thruster controller dashboard + CLI
 - `wifi_radar` — WiFi motion radar + FastAPI dashboard
 - `mac_battery` — MacBook battery/charging diagnostic + FastAPI dashboard
 - `jet_radar` — private-jet ADS-B movement radar + strange-event alarm dashboard

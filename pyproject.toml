@@ -10,6 +10,9 @@ dependencies = [
     "uvicorn[standard]",
 ]
 
+[project.optional-dependencies]
+plot = ["matplotlib"]
+
 [project.scripts]
 bt-radar = "bt_radar.__main__:main"
 bt-thrust = "bt_thrust.__main__:main"
