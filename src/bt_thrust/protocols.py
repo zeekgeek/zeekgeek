@@ -9,6 +9,9 @@ from importlib import resources
 from typing import Any
 
 
+GALAKU_SERVICE_UUID = "00001000-0000-1000-8000-00805f9b34fb"
+
+
 KEY_TAB: list[list[int]] = [
     [0, 24, 152, 247, 165, 61, 13, 41, 37, 80, 68, 70],
     [0, 69, 110, 106, 111, 120, 32, 83, 45, 49, 46, 55],
@@ -112,22 +115,73 @@ def device_profiles() -> list[DeviceProfile]:
     return profiles
 
 
-def match_device_profile(name: str | None) -> DeviceProfile | None:
-    if not name:
-        return None
-    normalized = name.strip()
-    for profile in device_profiles():
-        for identifier in profile.identifiers:
-            if normalized == identifier or normalized.startswith(identifier):
-                return profile
+GENERIC_GALAKU_THRUSTER = DeviceProfile(
+    identifiers=("GALAKU",),
+    name="Adorime/Galaku Thruster",
+    brand="adorime",
+    theme="adorime",
+    protocol="adorime",
+    motors=(
+        MotorProfile(id="thrust", label="Thrust", motor_type="oscillate"),
+        MotorProfile(id="vibrate", label="Vibration", motor_type="vibrate"),
+    ),
+)
+
+
+def _normalize_uuid(value: str) -> str:
+    return value.strip().lower()
+
+
+def has_galaku_service(service_uuids: list[str] | None) -> bool:
+    if not service_uuids:
+        return False
+    target = _normalize_uuid(GALAKU_SERVICE_UUID)
+    return any(_normalize_uuid(uuid) == target for uuid in service_uuids)
+
+
+def _name_candidates(name: str | None, local_name: str | None = None) -> list[str]:
+    candidates: list[str] = []
+    for value in (name, local_name):
+        if not value:
+            continue
+        normalized = value.strip()
+        if normalized and normalized not in candidates:
+            candidates.append(normalized)
+    return candidates
+
+
+def match_device_profile(name: str | None, *, local_name: str | None = None) -> DeviceProfile | None:
+    for candidate in _name_candidates(name, local_name):
+        normalized = candidate.upper()
+        for profile in device_profiles():
+            for identifier in profile.identifiers:
+                token = identifier.upper()
+                if normalized == token or normalized.startswith(token):
+                    return profile
     return None
 
 
-def match_adorime_profile(name: str | None) -> DeviceProfile | None:
-    profile = match_device_profile(name)
-    if profile is None or profile.brand != "adorime":
-        return None
-    return profile
+def match_adorime_profile(
+    name: str | None,
+    *,
+    service_uuids: list[str] | None = None,
+    local_name: str | None = None,
+) -> DeviceProfile | None:
+    profile = match_device_profile(name, local_name=local_name)
+    if profile is not None and profile.brand == "adorime":
+        return profile
+    if has_galaku_service(service_uuids):
+        return GENERIC_GALAKU_THRUSTER
+    return None
+
+
+def resolve_device_profile(
+    name: str | None,
+    *,
+    service_uuids: list[str] | None = None,
+    local_name: str | None = None,
+) -> DeviceProfile | None:
+    return match_adorime_profile(name, service_uuids=service_uuids, local_name=local_name)
 
 
 def build_command(profile: DeviceProfile, levels: dict[str, int]) -> bytes:

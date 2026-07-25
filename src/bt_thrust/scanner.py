@@ -1,4 +1,4 @@
-"""Live Adorime Bluetooth scanning."""
+"""Live Bluetooth scanning for nearby devices."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from .protocols import match_adorime_profile
 from .state import ControllerState, ToyObservation
 
 LOGGER = logging.getLogger(__name__)
@@ -24,8 +23,9 @@ class BleakScannerBackend:
             raise RuntimeError("Install the 'bleak' package to use live Bluetooth scanning.") from exc
 
         scanner = BleakScanner(detection_callback=self._on_detection)
-        LOGGER.info("Starting live Adorime BLE scan")
-        await self.state.add_system_event("scanner-live", "Live Adorime scanner active")
+        LOGGER.info("Starting live Bluetooth LE scan")
+        await self.state.set_scanner_active(True)
+        await self.state.add_system_event("scanner-live", "Live Bluetooth scanner active")
         async with scanner:
             while True:
                 await asyncio.sleep(1)
@@ -33,8 +33,6 @@ class BleakScannerBackend:
 
     def _on_detection(self, device, advertisement_data) -> None:  # type: ignore[no-untyped-def]
         observation = _observation_from_bleak(device, advertisement_data)
-        if match_adorime_profile(observation.name) is None:
-            return
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:

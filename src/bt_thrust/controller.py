@@ -14,6 +14,7 @@ from .protocols import (
     levels_from_pattern,
     pattern_steps,
     protocol_config,
+    resolve_device_profile,
 )
 from .state import ControllerState
 
@@ -37,11 +38,22 @@ class ToyController:
         track = await self.state.get_track(address)
         if track is None:
             raise ValueError(f"Unknown toy address: {address}")
+        local_name = track.details.get("local_name")
+        track.profile = track.profile or resolve_device_profile(
+            track.name,
+            service_uuids=track.service_uuids,
+            local_name=local_name if isinstance(local_name, str) else None,
+        )
         if track.profile is None:
-            raise ValueError("Selected device is not a recognized controllable toy profile.")
+            raise ValueError(
+                "Selected device is not a recognized Adorime/Galaku thruster. "
+                "Look for an Adorime badge or Galaku service UUID in the scanner list."
+            )
         if not track.present:
             raise ValueError("Toy is not currently in range.")
 
+        if not track.levels:
+            track.levels = {motor.id: 0 for motor in track.profile.motors}
         await self._connect_live(address, track.profile)
         await self.state.set_connection(address, True)
         return {"status": "connected", "address": address}

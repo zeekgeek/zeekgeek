@@ -1,6 +1,8 @@
+import asyncio
 import unittest
 
 from bt_thrust.protocols import (
+    GALAKU_SERVICE_UUID,
     build_command,
     catalog_quick_levels,
     catalog_thrust_modes,
@@ -42,6 +44,20 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(profile.brand, "adorime")
         self.assertTrue(profile.is_dual_motor)
 
+    def test_match_adorime_profile_is_case_insensitive(self) -> None:
+        profile = match_device_profile("bgsf")
+        self.assertIsNotNone(profile)
+
+    def test_galaku_service_enables_generic_thruster_profile(self) -> None:
+        profile = match_adorime_profile(
+            None,
+            service_uuids=[GALAKU_SERVICE_UUID],
+        )
+        self.assertIsNotNone(profile)
+        assert profile is not None
+        self.assertTrue(profile.is_dual_motor)
+        self.assertIn("thrust", [motor.id for motor in profile.motors])
+
     def test_build_command_for_dual_motor(self) -> None:
         profile = match_device_profile("SN80")
         self.assertIsNotNone(profile)
@@ -80,6 +96,34 @@ class StateTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("movement", snapshot["toys"][0])
         self.assertEqual(len(snapshot["thrust_modes"]), 9)
         self.assertEqual(len(snapshot["vibrate_modes"]), 10)
+
+    async def test_observe_tracks_all_bluetooth_devices(self) -> None:
+        state = ControllerState()
+        await state.observe(
+            ToyObservation(address="AA:BB:CC:DD:EE:02", name="Keyboard", rssi=-64)
+        )
+        snapshot = await state.snapshot()
+        self.assertEqual(snapshot["device_count"], 1)
+        self.assertFalse(snapshot["toys"][0]["controllable"])
+        self.assertEqual(snapshot["adorime_count"], 0)
+
+    async def test_scanner_pause_and_clear_stale(self) -> None:
+        state = ControllerState(stale_after=1)
+        await state.observe(ToyObservation(address="AA:BB:CC:DD:EE:04", name="BGSF", rssi=-58))
+        await state.observe(ToyObservation(address="AA:BB:CC:DD:EE:05", name="Phone", rssi=-70))
+        await state.set_scanner_paused(True)
+        blocked = await state.observe(
+            ToyObservation(address="AA:BB:CC:DD:EE:06", name="Speaker", rssi=-72)
+        )
+        self.assertEqual(blocked, [])
+        snapshot = await state.snapshot()
+        self.assertTrue(snapshot["scanner"]["paused"])
+        self.assertEqual(snapshot["device_count"], 2)
+        await state.mark_stale()
+        await asyncio.sleep(1.1)
+        await state.mark_stale()
+        removed = await state.clear_stale_devices()
+        self.assertGreaterEqual(removed, 1)
 
     async def test_set_levels_merges_partial_updates(self) -> None:
         state = ControllerState()

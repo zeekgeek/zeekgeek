@@ -18,7 +18,8 @@ from .protocols import (
     catalog_quick_levels,
     catalog_thrust_modes,
     catalog_vibrate_modes,
-    match_adorime_profile,
+    has_galaku_service,
+    resolve_device_profile,
 )
 
 
@@ -91,7 +92,12 @@ class ToyTrack:
         self.manufacturer_id = observation.manufacturer_id if observation.manufacturer_id is not None else self.manufacturer_id
         self.tx_power = observation.tx_power if observation.tx_power is not None else self.tx_power
         self.details.update(observation.details)
-        self.profile = match_adorime_profile(self.name)
+        local_name = observation.details.get("local_name")
+        self.profile = resolve_device_profile(
+            self.name,
+            service_uuids=self.service_uuids,
+            local_name=local_name if isinstance(local_name, str) else None,
+        )
         if self.profile and not self.levels:
             self.levels = {motor.id: 0 for motor in self.profile.motors}
         self._refresh_findings(stale_seconds=0)
@@ -158,11 +164,13 @@ class ToyTrack:
         return {
             "address": self.address,
             "name": self.name,
-            "display_name": profile.name if profile else (self.name or "Unknown toy"),
+            "display_name": profile.name if profile else (self.name or self.address),
             "brand": profile.brand if profile else "unknown",
             "theme": profile.theme if profile else "classic",
             "protocol": profile.protocol if profile else None,
             "controllable": profile is not None,
+            "adorime_match": profile is not None and profile.brand == "adorime",
+            "galaku_service": has_galaku_service(self.service_uuids),
             "motors": profile.to_dict()["motors"] if profile else [],
             "address_family": address_family(self.address, self.address_type),
             "address_type": self.address_type,
@@ -199,16 +207,77 @@ class ControllerState:
         self._toys: dict[str, ToyTrack] = {}
         self._events: deque[dict[str, Any]] = deque(maxlen=200)
         self._selected_address: str | None = None
+        self._scanner_paused = False
+        self._scanner_active = False
+        self._scanner_error: str | None = None
+        self._observation_count = 0
+        self._last_observation_at: datetime | None = None
         self._lock = asyncio.Lock()
+
+    async def is_scanner_paused(self) -> bool:
+        async with self._lock:
+            return self._scanner_paused
+
+    async def set_scanner_active(self, active: bool, *, error: str | None = None) -> None:
+        async with self._lock:
+            self._scanner_active = active
+            self._scanner_error = error
+
+    async def set_scanner_paused(self, paused: bool) -> dict[str, Any]:
+        async with self._lock:
+            self._scanner_paused = paused
+            event = {
+                "type": "scanner-paused" if paused else "scanner-resumed",
+                "address": "system",
+                "name": "Scanner",
+                "message": "Scanner paused" if paused else "Scanner resumed",
+                "at": iso_time(utc_now()),
+            }
+            self._events.append(event)
+            return event
+
+    async def set_stale_after(self, stale_after: float) -> None:
+        async with self._lock:
+            self.stale_after = max(3.0, min(120.0, float(stale_after)))
+
+    async def clear_stale_devices(self) -> int:
+        async with self._lock:
+            removable = [
+                address
+                for address, track in self._toys.items()
+                if not track.present and not track.connected
+            ]
+            for address in removable:
+                del self._toys[address]
+            if removable:
+                event = {
+                    "type": "scanner-clear",
+                    "address": "system",
+                    "name": "Scanner",
+                    "message": f"Cleared {len(removable)} stale device(s) from the list",
+                    "at": iso_time(utc_now()),
+                }
+                self._events.append(event)
+            return len(removable)
 
     async def observe(self, observation: ToyObservation) -> list[dict[str, Any]]:
         async with self._lock:
+            if self._scanner_paused:
+                return []
+
+            self._observation_count += 1
+            self._last_observation_at = observation.observed_at
+            local_name = observation.details.get("local_name")
+            local_name_str = local_name if isinstance(local_name, str) else None
+            profile = resolve_device_profile(
+                observation.name,
+                service_uuids=observation.service_uuids,
+                local_name=local_name_str,
+            )
+
             track = self._toys.get(observation.address)
             emitted: list[dict[str, Any]]
             if track is None:
-                profile = match_adorime_profile(observation.name)
-                if profile is None:
-                    return []
                 track = ToyTrack(
                     address=observation.address,
                     first_seen=observation.observed_at,
@@ -226,7 +295,11 @@ class ControllerState:
                 )
                 track.rssi_history.append(observation.rssi)
                 track.time_history.append(iso_time(observation.observed_at))
-                emitted = [track._event("new", observation.observed_at, "Compatible toy discovered")]
+                if profile is not None:
+                    message = "Adorime-compatible device discovered"
+                else:
+                    message = "Bluetooth device discovered"
+                emitted = [track._event("new", observation.observed_at, message)]
                 track._refresh_findings(stale_seconds=0)
                 self._toys[track.address] = track
                 if self._selected_address is None and profile is not None:
@@ -300,10 +373,22 @@ class ControllerState:
             return {
                 "generated_at": iso_time(now),
                 "scanner_mode": "live",
+                "scanner": {
+                    "active": self._scanner_active,
+                    "paused": self._scanner_paused,
+                    "error": self._scanner_error,
+                    "observation_count": self._observation_count,
+                    "last_observation_at": iso_time(self._last_observation_at)
+                    if self._last_observation_at
+                    else None,
+                    "stale_after": self.stale_after,
+                },
+                "device_count": len(toys),
                 "toy_count": len(toys),
                 "present_count": sum(1 for item in toys if item["present"]),
                 "connected_count": sum(1 for item in toys if item["connected"]),
                 "controllable_count": sum(1 for item in toys if item["controllable"]),
+                "adorime_count": sum(1 for item in toys if item["adorime_match"]),
                 "selected_address": self._selected_address,
                 "patterns": catalog_patterns(),
                 "thrust_modes": catalog_thrust_modes(),

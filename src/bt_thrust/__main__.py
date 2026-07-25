@@ -94,6 +94,7 @@ async def run(args: argparse.Namespace) -> None:
 async def _run_scanner_with_retry(state: ControllerState) -> None:
     while True:
         try:
+            await state.set_scanner_active(True)
             await BleakScannerBackend(state).run()
             return
         except asyncio.CancelledError:
@@ -104,6 +105,7 @@ async def _run_scanner_with_retry(state: ControllerState) -> None:
                 f"Dashboard stays up; retrying in {int(SCANNER_RETRY_SECONDS)}s."
             )
             LOGGER.warning(message)
+            await state.set_scanner_active(False, error=str(exc))
             await state.add_system_event("scanner-error", message)
             await asyncio.sleep(SCANNER_RETRY_SECONDS)
 
