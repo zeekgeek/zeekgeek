@@ -118,11 +118,12 @@ def create_app(
     async def start_scanner() -> JSONResponse:
         if scanner_runner is None:
             raise HTTPException(status_code=503, detail="Scanner runner unavailable")
-        await scanner_runner.restart(demo=os.environ.get("CURSOR_AGENT") == "1")
+        diagnostics = await scanner_runner.restart(demo=False)
         snapshot = await state.snapshot()
         return JSONResponse(
             {
-                "started": True,
+                "started": diagnostics["probe"]["available"],
+                "diagnostics": diagnostics,
                 "scanner": snapshot["scanner"],
                 "device_count": snapshot["device_count"],
                 "present_count": snapshot["present_count"],
@@ -130,6 +131,13 @@ def create_app(
                 "toys": snapshot["toys"],
             }
         )
+
+    @app.get("/api/scanner/diagnostics")
+    async def scanner_diagnostics() -> JSONResponse:
+        if scanner_runner is None:
+            raise HTTPException(status_code=503, detail="Scanner runner unavailable")
+        diagnostics = await scanner_runner.diagnostics()
+        return JSONResponse(diagnostics)
 
     @app.post("/api/scanner/clear-stale")
     async def clear_stale_devices() -> JSONResponse:
@@ -279,6 +287,14 @@ DASHBOARD_HTML = """
     h2 { margin: 0 0 12px 0; font-size: 17px; }
     .stats { display: flex; gap: 14px; color: var(--muted); font-size: 14px; flex-wrap: wrap; margin-top: 6px; }
     .stats b { color: var(--text); }
+    .live-badge.demo {
+      background: rgba(234, 179, 8, .18);
+      color: var(--yellow);
+    }
+    .live-badge.error {
+      background: rgba(239, 68, 68, .15);
+      color: #fecaca;
+    }
     .live-badge {
       background: rgba(34,197,94,.15);
       color: var(--green);
@@ -891,7 +907,7 @@ DASHBOARD_HTML = """
       </div>
     </div>
     <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-      <span class="live-badge" id="scanner-badge">Live BLE</span>
+      <span class="live-badge" id="scanner-badge">Checking adapter…</span>
       <button id="notify">Enable notifications</button>
     </div>
   </header>
@@ -1160,10 +1176,20 @@ DASHBOARD_HTML = """
               });
             } else if (scanner.error || !scanner.active) {
               const result = await api("/api/scanner/start", { method: "POST" });
+              const diag = result.diagnostics || {};
+              const live = diag.data_source === "live" || result.scanner?.mode === "live";
               const count = result.present_count ?? 0;
-              showError(count
-                ? `Scan ON — found ${count} device(s) in range (${result.device_count ?? 0} total seen).`
-                : "Scan ON — listening for devices…");
+              if (!live) {
+                showError(
+                  diag.probe?.error
+                    ? `No live adapter: ${diag.probe.error}`
+                    : "Scan could not reach a live Bluetooth adapter."
+                );
+              } else {
+                showError(count
+                  ? `Live BLE verified — ${count} device(s) from adapter (${result.device_count ?? 0} total).`
+                  : "Live BLE adapter OK — listening for devices…");
+              }
               return;
             } else {
               await api("/api/scanner/pause", {
@@ -1255,6 +1281,9 @@ DASHBOARD_HTML = """
       const strong = present.filter((toy) => typeof toy.rssi === "number" && toy.rssi >= -85);
       const controllable = present.filter((toy) => toy.controllable);
       const mode = scanner.mode || snapshot.scanner_mode || "unknown";
+      const probe = scanner.adapter_probe;
+      const isLive = mode === "live";
+      const isDemo = mode === "demo";
 
       el.classList.remove("active");
 
@@ -1263,27 +1292,45 @@ DASHBOARD_HTML = """
         return;
       }
       if (scanner.error) {
-        el.innerHTML = `Scan failed: ${escapeHtml(scanner.error)}. Click <b>Scan ON</b> to retry.`;
+        const probeHint = probe?.error
+          ? ` Adapter check: ${escapeHtml(probe.error)}`
+          : "";
+        el.innerHTML = `Scan failed — <b>not live data</b>.${probeHint} Click <b>Scan ON</b> after connecting a BLE adapter.`;
         return;
       }
       if (!scanner.active) {
-        el.innerHTML = "Click <b>Scan ON</b> to discover nearby Bluetooth devices.";
+        el.innerHTML = "Click <b>Scan ON</b> to verify the Bluetooth adapter and discover devices.";
         return;
       }
 
       el.classList.add("active");
+      const sourceLabel = isLive
+        ? "<b>LIVE</b> data from Bluetooth adapter"
+        : isDemo
+          ? "<b>DEMO</b> simulated data (not from adapter)"
+          : `<b>${escapeHtml(mode)}</b>`;
+
       if (!present.length) {
-        el.innerHTML = `Scan <b>ON</b> (${escapeHtml(mode)}) — listening… no devices in range yet.`;
+        el.innerHTML = `Scan ON · ${sourceLabel} — listening… no devices in range yet.`;
         return;
       }
 
+      const liveCount = present.filter((toy) => toy.data_source === "live").length;
+      const demoCount = present.filter((toy) => toy.data_source === "demo").length;
+      const sourceCounts = isLive
+        ? `${liveCount} live reading(s)`
+        : isDemo
+          ? `${demoCount} simulated`
+          : "";
+
       el.innerHTML = [
-        `Scan <b>ON</b> · mode: <b>${escapeHtml(mode)}</b>`,
+        `Scan ON · ${sourceLabel}`,
+        sourceCounts,
         `<b>${present.length}</b> in range`,
         `<b>${all.length}</b> total seen`,
         `<b>${strong.length}</b> strong (≥ -85 dBm)`,
         `<b>${controllable.length}</b> controllable`,
-      ].join(" · ");
+      ].filter(Boolean).join(" · ");
     }
 
     function nearbyDevices(maxCount = 10, minRssi = -85) {
@@ -1347,7 +1394,7 @@ DASHBOARD_HTML = """
           <span class="nearby-quick-name">${escapeHtml(deviceTitle(toy))}</span>
           <span class="nearby-quick-rssi">${toy.rssi ?? "?"} dBm</span>
           <span class="nearby-quick-badge ${toy.controllable ? "adorime" : ""}">${toy.controllable ? "Controllable" : escapeHtml(toy.device_type || "ble")}</span>
-          <span class="nearby-quick-addr">${escapeHtml(toy.address)} · ${escapeHtml(toy.signal_quality || "unknown")} · ${escapeHtml(toy.movement || "present")}</span>
+          <span class="nearby-quick-addr">${escapeHtml(toy.address)} · ${escapeHtml(toy.data_source || "unknown")} · ${escapeHtml(toy.signal_quality || "unknown")}</span>
         </div>
       `).join("");
 
@@ -1359,6 +1406,7 @@ DASHBOARD_HTML = """
 
     function renderScannerStatus() {
       const scanner = snapshot?.scanner || {};
+      const probe = scanner.adapter_probe;
       const dot = document.getElementById("scanner-dot");
       const text = document.getElementById("scanner-status-text");
       const badge = document.getElementById("scanner-badge");
@@ -1368,6 +1416,22 @@ DASHBOARD_HTML = """
       if (!dot || !text || !scanToggle || !deepScanEl) return;
 
       dot.className = "scanner-dot";
+      if (badge) {
+        badge.classList.remove("demo", "error");
+        if (scanner.error || (probe && !probe.available && scanner.mode !== "demo")) {
+          badge.textContent = "No adapter";
+          badge.classList.add("error");
+        } else if (scanner.mode === "demo") {
+          badge.textContent = "Demo data";
+          badge.classList.add("demo");
+        } else if (scanner.mode === "live") {
+          badge.textContent = "Live BLE";
+        } else if (scanner.paused) {
+          badge.textContent = "Scan OFF";
+        } else {
+          badge.textContent = "Scanning";
+        }
+      }
       if (scanner.error) {
         dot.classList.add("error");
         text.textContent = "Scan OFF — click Scan ON";

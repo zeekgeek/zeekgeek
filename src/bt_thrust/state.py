@@ -45,6 +45,7 @@ class ToyObservation:
     details: dict[str, Any] = field(default_factory=dict)
     observed_at: datetime = field(default_factory=utc_now)
     ble_device: Any = None
+    source: str = "live"
 
 
 @dataclass
@@ -75,6 +76,7 @@ class ToyTrack:
     transport: str = "ble"
     device_class: str | None = None
     ble_device: Any = None
+    data_source: str = "live"
     events: deque[dict[str, Any]] = field(default_factory=lambda: deque(maxlen=40))
     findings: list[Finding] = field(default_factory=list)
 
@@ -105,6 +107,8 @@ class ToyTrack:
         self.details.update(observation.details)
         if observation.ble_device is not None:
             self.ble_device = observation.ble_device
+        if observation.source:
+            self.data_source = observation.source
         local_name = observation.details.get("local_name")
         self.profile = resolve_device_profile(
             self.name,
@@ -203,6 +207,7 @@ class ToyTrack:
             "device_type": device_type,
             "transport": self.transport,
             "device_class": self.device_class,
+            "data_source": self.data_source,
             "signal_stats": signal_stats,
             "signal_quality": signal_stats["quality"],
             "gatt_services": list(self.gatt_services),
@@ -250,6 +255,7 @@ class ControllerState:
         self._scanner_active = False
         self._scanner_error: str | None = None
         self._scanner_mode: str = "off"
+        self._adapter_probe: dict[str, Any] | None = None
         self._observation_count = 0
         self._last_observation_at: datetime | None = None
         self._deep_scan_until: datetime | None = None
@@ -261,6 +267,10 @@ class ControllerState:
     async def is_scanner_paused(self) -> bool:
         async with self._lock:
             return self._scanner_paused
+
+    async def set_adapter_probe(self, probe: dict[str, Any] | None) -> None:
+        async with self._lock:
+            self._adapter_probe = probe
 
     async def set_scanner_active(self, active: bool, *, error: str | None = None, mode: str | None = None) -> None:
         async with self._lock:
@@ -434,6 +444,7 @@ class ControllerState:
                     details=dict(observation.details),
                     profile=profile,
                     ble_device=observation.ble_device,
+                    data_source=observation.source,
                     seen_count=1,
                     levels={motor.id: 0 for motor in profile.motors} if profile else {},
                 )
@@ -536,6 +547,8 @@ class ControllerState:
                     "stale_after": self.stale_after,
                     "min_rssi_filter": self._min_rssi_filter,
                     "device_type_filter": self._device_type_filter,
+                    "adapter_probe": self._adapter_probe,
+                    "live_data": self._scanner_mode == "live",
                 },
                 "device_count": len(all_toys),
                 "toy_count": len(all_toys),

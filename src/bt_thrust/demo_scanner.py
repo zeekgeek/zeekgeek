@@ -130,6 +130,7 @@ class DemoScannerBackend:
                             ],
                         },
                         observed_at=datetime.now(UTC),
+                        source="demo",
                     )
                 )
             await self.state.mark_stale()
