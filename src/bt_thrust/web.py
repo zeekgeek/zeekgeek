@@ -1,4 +1,4 @@
-"""FastAPI dashboard for the Bluetooth thrust controller."""
+"""FastAPI dashboard for the Pump and dump Bluetooth Controller."""
 
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ class AutoTuneRequest(BaseModel):
 
 
 def create_app(state: ControllerState, controller: ToyController) -> FastAPI:
-    app = FastAPI(title="Adorime Thrust Controller")
+    app = FastAPI(title="Pump and dump Bluetooth Controller")
     calibration_json = json.dumps(calibration_profile_payload())
 
     @app.get("/", response_class=HTMLResponse)
@@ -220,7 +220,7 @@ DASHBOARD_HTML = """
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Adorime Thrust Controller</title>
+  <title>Pump and dump Bluetooth Controller</title>
   <style>
     :root {
       color-scheme: dark;
@@ -839,7 +839,7 @@ DASHBOARD_HTML = """
 <body>
   <header>
     <div>
-      <h1>Adorime Thrust Controller</h1>
+      <h1>Pump and dump Bluetooth Controller</h1>
       <div class="stats">
         <span id="counts">Waiting for live Bluetooth scan...</span>
         <span id="updated"></span>
@@ -2025,7 +2025,7 @@ DASHBOARD_HTML = """
         root.className = "";
         root.innerHTML = `
           <div class="hero-card">
-            <div class="control-title">Adorime thrust controls</div>
+            <div class="control-title">Pump and dump controls</div>
             <div class="control-sub">Select a live Adorime toy from the list to connect and drive thrust/vibration.</div>
           </div>
           <div class="control-section disabled-overlay">

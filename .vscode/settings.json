@@ -3,7 +3,7 @@
   "remote.autoForwardPortsSource": "output",
   "remote.portsAttributes": {
     "8800": {
-      "label": "Adorime Thrust Controller",
+      "label": "Pump and dump Bluetooth Controller",
       "onAutoForward": "notify"
     },
     "8801": {

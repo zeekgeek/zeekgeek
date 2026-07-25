@@ -100,10 +100,10 @@ python3 -m unittest discover -s tests
 
 ---
 
-# Adorime Thrust Controller
+# Pump and dump Bluetooth Controller
 
-Live BLE + classic Bluetooth scanner and thrust/vibration controller focused on
-**Adorime** products. Includes a terminal CLI scanner, signal analytics, GATT
+Live BLE + classic Bluetooth scanner and device controller focused on
+**Adorime**-compatible hardware. Includes a terminal CLI scanner, signal analytics, GATT
 deep scan, CSV/JSON export, and AI-assisted throttle suggestions.
 
 Identifies devices from their advertised BLE names (for example

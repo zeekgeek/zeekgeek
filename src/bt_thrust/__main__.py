@@ -1,4 +1,4 @@
-"""Command-line entry point for the Bluetooth thrust controller."""
+"""Command-line entry point for the Pump and dump Bluetooth Controller."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def default_dashboard_host() -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Bluetooth scanner and Adorime thruster controller (GUI dashboard or: scan ...)",
+        description="Pump and dump Bluetooth Controller — scanner GUI or: scan ...",
     )
     parser.add_argument(
         "--host",
@@ -90,7 +90,7 @@ async def run_gui(args: argparse.Namespace) -> None:
 
     local_url = f"http://127.0.0.1:{chosen_port}"
     bind_url = f"http://{args.host}:{chosen_port}"
-    print(f"Bluetooth scanner + thruster dashboard: {local_url}")
+    print(f"Pump and dump Bluetooth Controller: {local_url}")
     if args.host in {"0.0.0.0", "::"}:
         print(f"Listening on all interfaces: {bind_url}")
         if os.environ.get("CURSOR_AGENT") == "1":
