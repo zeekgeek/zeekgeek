@@ -64,16 +64,17 @@ class StateTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("thrust", snapshot["toys"][0]["levels"])
         self.assertIn("movement", snapshot["toys"][0])
 
-    async def test_set_connection_and_levels(self) -> None:
+    async def test_set_levels_merges_partial_updates(self) -> None:
         state = ControllerState()
-        address = "AA:BB:CC:DD:EE:02"
-        await state.observe(ToyObservation(address=address, name="QD48", rssi=-62))
+        address = "AA:BB:CC:DD:EE:03"
+        await state.observe(ToyObservation(address=address, name="BGSF", rssi=-58))
         await state.set_connection(address, True)
-        await state.set_levels(address, {"vibrate": 42})
+        await state.set_levels(address, {"thrust": 55, "vibrate": 20})
+        await state.set_levels(address, {"thrust": 70})
         snapshot = await state.snapshot()
-        toy = snapshot["toys"][0]
-        self.assertTrue(toy["connected"])
-        self.assertEqual(toy["levels"]["vibrate"], 42)
+        levels = snapshot["toys"][0]["levels"]
+        self.assertEqual(levels["thrust"], 70)
+        self.assertEqual(levels["vibrate"], 20)
 
 
 if __name__ == "__main__":

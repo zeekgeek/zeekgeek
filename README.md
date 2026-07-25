@@ -129,14 +129,15 @@ current user/session.
 
 ## Dashboard behavior
 
-- **Scanned toys** panel lists in-range devices with brand badges (Adorime,
-  Galaku, Generic) and signal strength.
+- **Scanned toys** panel lists live in-range devices with brand badges, RSSI,
+  estimated distance, and movement hints.
 - **Control panel** theme switches per brand (rose for Adorime, violet for
   Galaku, blue for generic).
-- Dual-motor toys expose separate **Thrust** and **Vibration** sliders; single-
-  motor toys show one output slider.
+- Dual-motor toys expose separate **Thrust** and **Vibration** sliders with
+  **live command sending** while connected.
 - **Pattern presets** loop thrust/vibration levels while connected.
 - **Stop all** sends a zero command and cancels any active pattern.
+- **Browser notifications** for discovered, connected, and disconnected toys.
 
 ## Command options
 

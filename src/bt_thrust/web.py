@@ -298,6 +298,17 @@ DASHBOARD_HTML = """
     .event { padding: 6px 0; border-bottom: 1px solid #1f2937; }
     .empty { color: var(--muted); text-align: center; padding: 34px 0; }
     .hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+    .error-banner {
+      display: none;
+      margin: 0 16px 0 16px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: rgba(239, 68, 68, .12);
+      border: 1px solid rgba(239, 68, 68, .35);
+      color: #fecaca;
+      font-size: 14px;
+    }
+    .error-banner.visible { display: block; }
     @media (max-width: 980px) {
       main { grid-template-columns: 1fr; }
       .toy-list { max-height: none; }
@@ -318,6 +329,8 @@ DASHBOARD_HTML = """
       <button id="notify">Enable notifications</button>
     </div>
   </header>
+
+  <div id="error-banner" class="error-banner"></div>
 
   <main>
     <section class="panel">
@@ -341,6 +354,8 @@ DASHBOARD_HTML = """
     let selectedAddress = null;
     let localLevels = {};
     let controlTimer = null;
+    let sliderDragging = false;
+    let panelSignature = null;
     const notifiedEvents = new Set();
 
     const themes = {
@@ -351,9 +366,20 @@ DASHBOARD_HTML = """
       generic: "theme-classic",
     };
 
+    function showError(message) {
+      const banner = document.getElementById("error-banner");
+      if (!message) {
+        banner.textContent = "";
+        banner.classList.remove("visible");
+        return;
+      }
+      banner.textContent = message;
+      banner.classList.add("visible");
+    }
+
     document.getElementById("notify").onclick = async () => {
       if (!("Notification" in window)) {
-        alert("This browser does not support notifications.");
+        showError("This browser does not support notifications.");
         return;
       }
       await Notification.requestPermission();
@@ -391,6 +417,7 @@ DASHBOARD_HTML = """
 
     async function selectToy(address) {
       selectedAddress = address;
+      panelSignature = null;
       await api("/api/select", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -400,32 +427,55 @@ DASHBOARD_HTML = """
     }
 
     async function connectToy(address) {
-      await api(`/api/toys/${encodeURIComponent(address)}/connect`, { method: "POST" });
+      try {
+        await api(`/api/toys/${encodeURIComponent(address)}/connect`, { method: "POST" });
+        panelSignature = null;
+        showError("");
+      } catch (err) {
+        showError(err.message || "Connection failed");
+      }
     }
 
     async function disconnectToy(address) {
-      await api(`/api/toys/${encodeURIComponent(address)}/disconnect`, { method: "POST" });
+      try {
+        await api(`/api/toys/${encodeURIComponent(address)}/disconnect`, { method: "POST" });
+        panelSignature = null;
+        showError("");
+      } catch (err) {
+        showError(err.message || "Disconnect failed");
+      }
     }
 
     async function sendLevels(address) {
-      await api(`/api/toys/${encodeURIComponent(address)}/control`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ levels: localLevels[address] || {} }),
-      });
+      try {
+        await api(`/api/toys/${encodeURIComponent(address)}/control`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ levels: localLevels[address] || {} }),
+        });
+        showError("");
+      } catch (err) {
+        showError(err.message || "Control command failed");
+      }
     }
 
     function queueLiveControl(address) {
       clearTimeout(controlTimer);
-      controlTimer = setTimeout(() => sendLevels(address).catch((err) => console.error(err)), 120);
+      controlTimer = setTimeout(() => sendLevels(address), 150);
     }
 
     async function runPattern(address, pattern) {
-      await api(`/api/toys/${encodeURIComponent(address)}/pattern`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pattern }),
-      });
+      try {
+        await api(`/api/toys/${encodeURIComponent(address)}/pattern`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pattern }),
+        });
+        panelSignature = null;
+        showError("");
+      } catch (err) {
+        showError(err.message || "Pattern command failed");
+      }
     }
 
     function selectedToy() {
@@ -437,6 +487,66 @@ DASHBOARD_HTML = """
 
     function applyTheme(theme) {
       document.body.className = themes[theme] || "theme-classic";
+    }
+
+    function panelKey(toy) {
+      if (!toy) return "none";
+      return [
+        toy.address,
+        toy.connected,
+        toy.controllable,
+        toy.active_pattern || "",
+        (toy.motors || []).map((motor) => motor.id).join(","),
+      ].join("|");
+    }
+
+    function ensureLocalLevels(toy) {
+      if (!localLevels[toy.address]) {
+        localLevels[toy.address] = Object.fromEntries((toy.motors || []).map((motor) => [motor.id, toy.levels[motor.id] ?? 0]));
+      }
+    }
+
+    function syncLevelsFromServer(toy) {
+      ensureLocalLevels(toy);
+      for (const motor of toy.motors || []) {
+        localLevels[toy.address][motor.id] = toy.levels[motor.id] ?? 0;
+      }
+    }
+
+    function updateControlReadouts(toy) {
+      if (!toy || !toy.controllable) return;
+      const linked = document.getElementById("status-linked");
+      const pattern = document.getElementById("status-pattern");
+      if (linked) linked.textContent = toy.connected ? "Linked" : "Not connected";
+      if (pattern) {
+        pattern.textContent = toy.active_pattern ? `Pattern: ${toy.active_pattern}` : "Manual control";
+        pattern.style.display = "inline-block";
+      }
+      for (const motor of toy.motors || []) {
+        const value = sliderDragging ? (localLevels[toy.address]?.[motor.id] ?? 0) : (toy.levels[motor.id] ?? 0);
+        if (!sliderDragging) {
+          localLevels[toy.address][motor.id] = value;
+        }
+        const slider = document.querySelector(`#control-panel input[data-motor="${motor.id}"]`);
+        const valueEl = document.getElementById(`value-${motor.id}`);
+        const meterEl = document.getElementById(`meter-${motor.id}`);
+        if (slider && !sliderDragging) slider.value = value;
+        if (valueEl) valueEl.textContent = `${value}%`;
+        if (meterEl) meterEl.textContent = value;
+      }
+      document.querySelectorAll("#control-panel .pattern").forEach((node) => {
+        node.classList.toggle("active", toy.active_pattern === node.dataset.pattern);
+        node.disabled = !toy.connected;
+      });
+      const connectBtn = document.getElementById("connect-btn");
+      const disconnectBtn = document.getElementById("disconnect-btn");
+      const stopBtn = document.getElementById("stop-btn");
+      if (connectBtn) connectBtn.disabled = toy.connected;
+      if (disconnectBtn) disconnectBtn.disabled = !toy.connected;
+      if (stopBtn) stopBtn.disabled = !toy.connected;
+      document.querySelectorAll("#control-panel input[type=range]").forEach((input) => {
+        input.disabled = !toy.connected;
+      });
     }
 
     function notifyEvents(events) {
@@ -483,23 +593,53 @@ DASHBOARD_HTML = """
       });
     }
 
+    function bindControlPanel(toy) {
+      document.getElementById("connect-btn")?.addEventListener("click", () => connectToy(toy.address));
+      document.getElementById("disconnect-btn")?.addEventListener("click", () => disconnectToy(toy.address));
+      document.getElementById("stop-btn")?.addEventListener("click", () => runPattern(toy.address, "stop"));
+
+      document.querySelectorAll("#control-panel input[type=range]").forEach((input) => {
+        input.addEventListener("pointerdown", () => { sliderDragging = true; });
+        input.addEventListener("pointerup", () => {
+          sliderDragging = false;
+          if (toy.connected) sendLevels(toy.address);
+        });
+        input.addEventListener("input", () => {
+          const motor = input.dataset.motor;
+          localLevels[toy.address][motor] = Number(input.value);
+          document.getElementById(`value-${motor}`).textContent = `${input.value}%`;
+          document.getElementById(`meter-${motor}`).textContent = input.value;
+          if (toy.connected) queueLiveControl(toy.address);
+        });
+      });
+
+      document.querySelectorAll("#control-panel .pattern").forEach((node) => {
+        node.addEventListener("click", () => {
+          if (!toy.connected || node.disabled) return;
+          runPattern(toy.address, node.dataset.pattern);
+        });
+      });
+    }
+
     function renderControlPanel() {
       const root = document.getElementById("control-panel");
       const toy = selectedToy();
       if (!toy) {
+        panelSignature = null;
         root.className = "empty";
         root.textContent = "Select a recognized toy to open thrust controls.";
         applyTheme("classic");
         return;
       }
+
       applyTheme(toy.theme || "classic");
-      if (!localLevels[toy.address]) {
-        localLevels[toy.address] = { ...toy.levels };
-      } else {
-        Object.assign(localLevels[toy.address], toy.levels);
-      }
+      ensureLocalLevels(toy);
+
+      const signature = panelKey(toy);
+      const needsRebuild = signature !== panelSignature || !document.getElementById("control-sliders");
 
       if (!toy.controllable) {
+        panelSignature = signature;
         root.className = "";
         root.innerHTML = `
           <div class="hero-card">
@@ -510,80 +650,67 @@ DASHBOARD_HTML = """
         return;
       }
 
-      const motors = toy.motors.length ? toy.motors : [{ id: "vibrate", label: "Vibration", type: "vibrate" }];
-      const sliders = motors.map((motor) => `
-        <div class="slider-block">
-          <div class="slider-label"><span>${motor.label}</span><span id="value-${motor.id}">${localLevels[toy.address][motor.id] ?? 0}%</span></div>
-          <input type="range" min="0" max="100" step="1" value="${localLevels[toy.address][motor.id] ?? 0}" data-motor="${motor.id}" ${toy.connected ? "" : "disabled"}>
-        </div>
-      `).join("");
+      if (needsRebuild) {
+        panelSignature = signature;
+        syncLevelsFromServer(toy);
 
-      const patterns = (snapshot.patterns || []).map((pattern) => `
-        <button type="button" class="pattern ${toy.active_pattern === pattern.id ? "active" : ""}" data-pattern="${pattern.id}" ${toy.connected ? "" : "disabled"}>
-          <div class="pattern-icon">${pattern.icon}</div>
-          <div class="pattern-label">${pattern.label}</div>
-        </button>
-      `).join("");
+        const motors = toy.motors.length ? toy.motors : [{ id: "vibrate", label: "Vibration", type: "vibrate" }];
+        const sliders = motors.map((motor) => `
+          <div class="slider-block">
+            <div class="slider-label"><span>${motor.label}</span><span id="value-${motor.id}">${localLevels[toy.address][motor.id] ?? 0}%</span></div>
+            <input type="range" min="0" max="100" step="1" value="${localLevels[toy.address][motor.id] ?? 0}" data-motor="${motor.id}" ${toy.connected ? "" : "disabled"}>
+          </div>
+        `).join("");
 
-      root.className = "";
-      root.innerHTML = `
-        <div class="hero-card">
-          <div class="control-head">
-            <div>
-              <div class="control-title">${toy.display_name}</div>
-              <div class="control-sub">${toy.protocol ? toy.protocol.toUpperCase() + " protocol" : "Unknown protocol"} · ${toy.address}</div>
-              <div class="status-line">
-                <span class="status-pill">${toy.connected ? "Linked" : "Not connected"}</span>
-                <span class="status-pill">${toy.distance_label || "unknown"} range</span>
-                <span class="status-pill">${toy.movement || "collecting"}</span>
-                ${toy.active_pattern ? `<span class="status-pill">Pattern: ${toy.active_pattern}</span>` : ""}
+        const patterns = (snapshot.patterns || []).map((pattern) => `
+          <button type="button" class="pattern ${toy.active_pattern === pattern.id ? "active" : ""}" data-pattern="${pattern.id}" ${toy.connected ? "" : "disabled"}>
+            <div class="pattern-icon">${pattern.icon}</div>
+            <div class="pattern-label">${pattern.label}</div>
+          </button>
+        `).join("");
+
+        root.className = "";
+        root.innerHTML = `
+          <div class="hero-card">
+            <div class="control-head">
+              <div>
+                <div class="control-title">${toy.display_name}</div>
+                <div class="control-sub">${toy.protocol ? toy.protocol.toUpperCase() + " protocol" : "Unknown protocol"} · ${toy.address}</div>
+                <div class="status-line">
+                  <span class="status-pill" id="status-linked">${toy.connected ? "Linked" : "Not connected"}</span>
+                  <span class="status-pill">${toy.distance_label || "unknown"} range</span>
+                  <span class="status-pill">${toy.movement || "collecting"}</span>
+                  <span class="status-pill" id="status-pattern">${toy.active_pattern ? `Pattern: ${toy.active_pattern}` : "Manual control"}</span>
+                </div>
+              </div>
+              <div class="actions">
+                ${toy.connected
+                  ? `<button class="secondary" id="disconnect-btn">Disconnect</button>`
+                  : `<button id="connect-btn">Connect</button>`}
+                <button class="danger" id="stop-btn" ${toy.connected ? "" : "disabled"}>Stop all</button>
               </div>
             </div>
-            <div class="actions">
-              ${toy.connected
-                ? `<button class="secondary" id="disconnect-btn">Disconnect</button>`
-                : `<button id="connect-btn">Connect</button>`}
-              <button class="danger" id="stop-btn" ${toy.connected ? "" : "disabled"}>Stop all</button>
+            <div class="meter-grid">
+              ${motors.map((motor) => `
+                <div class="meter">
+                  <div class="meter-value" id="meter-${motor.id}">${localLevels[toy.address][motor.id] ?? 0}</div>
+                  <div class="meter-label">${motor.label}</div>
+                </div>
+              `).join("")}
             </div>
           </div>
-          <div class="meter-grid">
-            ${motors.map((motor) => `
-              <div class="meter">
-                <div class="meter-value" id="meter-${motor.id}">${localLevels[toy.address][motor.id] ?? 0}</div>
-                <div class="meter-label">${motor.label}</div>
-              </div>
-            `).join("")}
-          </div>
-        </div>
 
-        <h2>Thrust controls</h2>
-        <p class="hint">Sliders send live commands while connected. Adjust thrust and vibration independently.</p>
-        ${sliders}
+          <h2>Thrust controls</h2>
+          <p class="hint">Sliders send live commands while connected. Release a slider to confirm the final level.</p>
+          <div id="control-sliders">${sliders}</div>
 
-        <h2 style="margin-top:22px;">Pattern presets</h2>
-        <div class="patterns">${patterns}</div>
-      `;
-
-      document.getElementById("connect-btn")?.addEventListener("click", () => connectToy(toy.address));
-      document.getElementById("disconnect-btn")?.addEventListener("click", () => disconnectToy(toy.address));
-      document.getElementById("stop-btn")?.addEventListener("click", () => runPattern(toy.address, "stop"));
-
-      root.querySelectorAll("input[type=range]").forEach((input) => {
-        input.addEventListener("input", () => {
-          const motor = input.dataset.motor;
-          localLevels[toy.address][motor] = Number(input.value);
-          document.getElementById(`value-${motor}`).textContent = `${input.value}%`;
-          document.getElementById(`meter-${motor}`).textContent = input.value;
-          if (toy.connected) queueLiveControl(toy.address);
-        });
-      });
-
-      root.querySelectorAll(".pattern").forEach((node) => {
-        node.addEventListener("click", () => {
-          if (!toy.connected || node.disabled) return;
-          runPattern(toy.address, node.dataset.pattern);
-        });
-      });
+          <h2 style="margin-top:22px;">Pattern presets</h2>
+          <div class="patterns">${patterns}</div>
+        `;
+        bindControlPanel(toy);
+      } else {
+        updateControlReadouts(toy);
+      }
     }
 
     function renderEvents() {
