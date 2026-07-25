@@ -17,6 +17,7 @@ from .state import ControllerState
 from .web import create_app
 
 LOGGER = logging.getLogger(__name__)
+SCANNER_RETRY_SECONDS = 10.0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -38,7 +39,7 @@ async def run(args: argparse.Namespace) -> None:
     state = ControllerState(stale_after=args.stale_after)
     controller = ToyController(state=state)
     app = create_app(state, controller)
-    scanner_task = asyncio.create_task(BleakScannerBackend(state).run(), name="toy-scanner")
+    scanner_task = asyncio.create_task(_run_scanner_with_retry(state), name="toy-scanner")
 
     chosen_port = pick_available_port(args.host, args.port)
     if chosen_port != args.port:
@@ -61,7 +62,7 @@ async def run(args: argparse.Namespace) -> None:
     print("Running live Adorime BLE scan. Power on your Adorime device and keep it in advertising mode.")
 
     done, pending = await asyncio.wait(
-        {scanner_task, server_task, stop_task},
+        {server_task, stop_task},
         return_when=asyncio.FIRST_COMPLETED,
     )
 
@@ -77,7 +78,8 @@ async def run(args: argparse.Namespace) -> None:
                 failure = exception
 
     server.should_exit = True
-    remaining: list[asyncio.Task] = []
+    scanner_task.cancel()
+    remaining: list[asyncio.Task] = [scanner_task]
     for task in pending:
         if task is server_task:
             remaining.append(task)
@@ -87,6 +89,23 @@ async def run(args: argparse.Namespace) -> None:
     await asyncio.gather(*remaining, return_exceptions=True)
     if failure is not None:
         raise failure
+
+
+async def _run_scanner_with_retry(state: ControllerState) -> None:
+    while True:
+        try:
+            await BleakScannerBackend(state).run()
+            return
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            message = (
+                f"Live scanner unavailable ({type(exc).__name__}: {exc}). "
+                f"Dashboard stays up; retrying in {int(SCANNER_RETRY_SECONDS)}s."
+            )
+            LOGGER.warning(message)
+            await state.add_system_event("scanner-error", message)
+            await asyncio.sleep(SCANNER_RETRY_SECONDS)
 
 
 def pick_available_port(host: str, preferred_port: int, max_tries: int = 30) -> int:
