@@ -10,6 +10,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from bt_radar.calibration import calibration_profile_payload
+
 from .controller import ToyController
 from .state import ControllerState
 
@@ -40,10 +42,11 @@ class DeepScanRequest(BaseModel):
 
 def create_app(state: ControllerState, controller: ToyController) -> FastAPI:
     app = FastAPI(title="Adorime Thrust Controller")
+    calibration_json = json.dumps(calibration_profile_payload())
 
     @app.get("/", response_class=HTMLResponse)
     async def index() -> str:
-        return DASHBOARD_HTML
+        return DASHBOARD_HTML.replace("__RSSI_CALIBRATION_JSON__", calibration_json)
 
     @app.get("/api/toys")
     async def toys() -> dict:
@@ -252,6 +255,65 @@ DASHBOARD_HTML = """
     .device-table .col-rssi { white-space: nowrap; font-weight: 700; }
     .device-table .col-meta { color: var(--muted); font-size: 12px; }
     .device-table .badge-cell { display: flex; gap: 6px; flex-wrap: wrap; }
+    .scanner-visual-grid {
+      display: grid;
+      grid-template-columns: minmax(280px, 1fr) minmax(280px, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+    .radar-wrap {
+      background: rgba(0,0,0,.18);
+      border: 1px solid #26324b;
+      border-radius: 14px;
+      padding: 10px;
+    }
+    canvas#radar-map {
+      width: 100%;
+      height: 320px;
+      background: radial-gradient(circle at center, rgba(244,114,182,.08), rgba(0,0,0,.25));
+      border-radius: 12px;
+      border: 1px solid #26324b;
+      display: block;
+    }
+    .device-cards {
+      display: grid;
+      gap: 10px;
+      max-height: 360px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+    .device-card {
+      background: var(--panel-2);
+      border: 1px solid #26324b;
+      border-radius: 12px;
+      padding: 12px;
+      cursor: pointer;
+    }
+    .device-card:hover { border-color: color-mix(in srgb, var(--accent) 35%, #26324b); }
+    .device-card.active { outline: 2px solid var(--accent); background: var(--accent-soft); }
+    .device-card.connected { box-shadow: inset 3px 0 0 var(--green); }
+    .device-card-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: start;
+      margin-bottom: 8px;
+    }
+    .device-card-name { font-weight: 800; font-size: 14px; }
+    .device-card-addr {
+      color: var(--muted);
+      font-family: ui-monospace, Menlo, monospace;
+      font-size: 11px;
+      margin-top: 4px;
+    }
+    .device-card-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 8px;
+    }
     .toy {
       border: 1px solid #26324b;
       border-radius: 14px;
@@ -571,6 +633,7 @@ DASHBOARD_HTML = """
     @media (max-width: 980px) {
       .toy-list { max-height: none; }
       dl.device-info { grid-template-columns: 1fr; }
+      .scanner-visual-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -629,6 +692,17 @@ DASHBOARD_HTML = """
     </section>
 
     <section class="panel">
+      <h2>Nearby Bluetooth radar</h2>
+      <p class="hint" style="margin-top:0;">Live graphical view of every discovered device. Dot size follows signal strength; distance rings are 1m, 3m, 8m, and 20m.</p>
+      <div class="scanner-visual-grid">
+        <div class="radar-wrap">
+          <canvas id="radar-map" width="920" height="320"></canvas>
+        </div>
+        <div id="device-cards" class="device-cards empty">Scanning for nearby devices...</div>
+      </div>
+    </section>
+
+    <section class="panel">
       <h2>Device details</h2>
       <canvas id="signal-graph" width="920" height="180"></canvas>
       <div id="device-details" class="empty">Select a scanned device to inspect UUIDs and advertisement data.</div>
@@ -668,6 +742,7 @@ DASHBOARD_HTML = """
     let deviceSort = "signal";
     let showLeftDevices = true;
     const notifiedEvents = new Set();
+    const RSSI_DISTANCE_CALIBRATION = __RSSI_CALIBRATION_JSON__;
 
     const themes = { adorime: "theme-adorime" };
 
@@ -1039,6 +1114,191 @@ DASHBOARD_HTML = """
       if (typeof meters !== "number") return "distance unknown";
       if (meters < 1) return `${Math.round(meters * 100)} cm est.`;
       return `${meters.toFixed(2)} m est.`;
+    }
+
+    function toPercent(rssi) {
+      if (typeof rssi !== "number") return 0;
+      const clamped = Math.max(-100, Math.min(-35, rssi));
+      return Math.round(((clamped + 100) / 65) * 100);
+    }
+
+    function hexToRgba(hex, alpha) {
+      const clean = hex.replace("#", "");
+      const bigint = parseInt(clean, 16);
+      const r = (bigint >> 16) & 255;
+      const g = (bigint >> 8) & 255;
+      const b = bigint & 255;
+      return `rgba(${r},${g},${b},${alpha})`;
+    }
+
+    function hashToAngle(text) {
+      let hash = 0;
+      for (let i = 0; i < text.length; i++) {
+        hash = ((hash << 5) - hash) + text.charCodeAt(i);
+        hash |= 0;
+      }
+      return (hash >>> 0) % 360 * (Math.PI / 180);
+    }
+
+    function lookupCalibratedDistance(rssi) {
+      const calibration = RSSI_DISTANCE_CALIBRATION;
+      const points = calibration.points;
+      const strongest = points[0];
+      const weakest = points[points.length - 1];
+      if (rssi >= strongest.rssi_dbm) return calibration.min_distance_m;
+      if (rssi <= weakest.rssi_dbm) return calibration.max_distance_m;
+      for (let index = 0; index < points.length - 1; index += 1) {
+        const upper = points[index];
+        const lower = points[index + 1];
+        if (rssi <= upper.rssi_dbm && rssi >= lower.rssi_dbm) {
+          if (upper.rssi_dbm === lower.rssi_dbm) return upper.distance_m;
+          const ratio = (rssi - upper.rssi_dbm) / (lower.rssi_dbm - upper.rssi_dbm);
+          const logUpper = Math.log10(upper.distance_m);
+          const logLower = Math.log10(lower.distance_m);
+          return Math.max(
+            calibration.min_distance_m,
+            Math.min(Math.pow(10, logUpper + ratio * (logLower - logUpper)), calibration.max_distance_m),
+          );
+        }
+      }
+      return calibration.max_distance_m;
+    }
+
+    function estimateDistanceFromRssi(rssi, txPower) {
+      if (typeof rssi !== "number") return RSSI_DISTANCE_CALIBRATION.max_distance_m;
+      const adjusted = typeof txPower === "number"
+        ? rssi + (RSSI_DISTANCE_CALIBRATION.reference_tx_power_dbm - txPower)
+        : rssi;
+      return lookupCalibratedDistance(adjusted);
+    }
+
+    function mapDistanceToRadius(distanceMeters, maxRadius) {
+      const maxDistance = RSSI_DISTANCE_CALIBRATION.max_distance_m;
+      const distance = Math.max(0.2, Math.min(distanceMeters || maxDistance, maxDistance));
+      const normalized = Math.log10(distance + 1) / Math.log10(maxDistance + 1);
+      return 22 + normalized * (maxRadius - 22);
+    }
+
+    function shortLabel(device) {
+      const name = (device.name || device.local_name || "").trim();
+      if (name) return name.length > 18 ? `${name.slice(0, 17)}…` : name;
+      return device.address.slice(-8);
+    }
+
+    function drawRadarMap(devices) {
+      const canvas = document.getElementById("radar-map");
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
+      const maxRadius = Math.min(canvas.width, canvas.height) * 0.43;
+      const ringDistances = [1, 3, 8, 20];
+
+      ctx.strokeStyle = "#3f2a3d";
+      ctx.lineWidth = 1;
+      for (const dist of ringDistances) {
+        const ring = mapDistanceToRadius(dist, maxRadius);
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, ring, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = "#93a1ba";
+        ctx.font = "11px sans-serif";
+        ctx.fillText(`${dist}m`, centerX + ring + 4, centerY - 2);
+      }
+
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, 6, 0, Math.PI * 2);
+      ctx.fillStyle = "#f472b6";
+      ctx.fill();
+      ctx.fillStyle = "#93a1ba";
+      ctx.font = "11px sans-serif";
+      ctx.fillText("you", centerX + 10, centerY + 4);
+
+      if (!devices.length) {
+        ctx.fillStyle = "#93a1ba";
+        ctx.font = "14px sans-serif";
+        ctx.fillText("No devices to plot yet", centerX - 72, centerY);
+        return;
+      }
+
+      const plotted = devices.filter((d) => d.present).concat(devices.filter((d) => !d.present));
+      for (const device of plotted) {
+        const estimatedDistance = typeof device.estimated_distance_m === "number"
+          ? device.estimated_distance_m
+          : estimateDistanceFromRssi(device.rssi_smoothed ?? device.rssi, device.tx_power);
+        const angle = hashToAngle(device.address);
+        const radius = mapDistanceToRadius(estimatedDistance, maxRadius);
+        const x = centerX + Math.cos(angle) * radius;
+        const y = centerY + Math.sin(angle) * radius;
+        let color = "#64748b";
+        if (device.address === selectedAddress) color = "#f472b6";
+        else if (device.controllable) color = "#22c55e";
+        else if (device.present) color = "#38bdf8";
+        const alpha = device.present ? 0.9 : 0.35;
+        const size = 4 + Math.round((toPercent(device.rssi_smoothed ?? device.rssi) / 100) * 7);
+
+        ctx.strokeStyle = `rgba(244,114,182,${alpha * 0.25})`;
+        ctx.beginPath();
+        ctx.moveTo(centerX, centerY);
+        ctx.lineTo(x, y);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(x, y, size, 0, Math.PI * 2);
+        ctx.fillStyle = hexToRgba(color, alpha);
+        ctx.fill();
+
+        ctx.fillStyle = "#edf2ff";
+        ctx.font = "11px sans-serif";
+        ctx.fillText(shortLabel(device), x + size + 3, y - 4);
+      }
+    }
+
+    function renderDeviceCards() {
+      const root = document.getElementById("device-cards");
+      if (!root) return;
+      const devices = filteredDevices();
+      drawRadarMap(devices);
+
+      if (!snapshot || !snapshot.toys.length) {
+        root.className = "device-cards empty";
+        root.textContent = "No nearby Bluetooth devices yet. Turn Scan ON and wait for advertisements.";
+        return;
+      }
+      if (!devices.length) {
+        root.className = "device-cards empty";
+        root.textContent = "No devices match the current filter.";
+        return;
+      }
+
+      root.className = "device-cards";
+      root.innerHTML = devices.map((toy) => `
+        <article class="device-card ${toy.controllable ? "controllable" : ""} ${toy.address === selectedAddress ? "active" : ""} ${toy.connected ? "connected" : ""}" data-address="${escapeHtml(toy.address)}">
+          <div class="device-card-head">
+            <div>
+              <div class="device-card-name">${escapeHtml(deviceTitle(toy))}</div>
+              <div class="device-card-addr">${escapeHtml(toy.address)}</div>
+            </div>
+            <div style="display:flex; gap:4px; flex-wrap:wrap; justify-content:end;">
+              ${brandBadge(toy)}
+            </div>
+          </div>
+          ${rssiBar(toy.rssi ?? -100)}
+          <div class="device-card-meta">
+            <span>RSSI ${toy.rssi ?? "?"} dBm · ${escapeHtml(toy.movement || "collecting")}</span>
+            <span>${escapeHtml(formatDistance(toy.estimated_distance_m))}</span>
+          </div>
+          <div class="device-card-meta">
+            <span>${toy.service_uuids?.length || 0} service UUID(s)</span>
+            ${statusBadge(toy)}
+          </div>
+        </article>
+      `).join("");
+      root.querySelectorAll(".device-card").forEach((node) => {
+        node.addEventListener("click", () => selectToy(node.dataset.address));
+      });
     }
 
     async function api(path, options) {
@@ -1555,6 +1815,7 @@ DASHBOARD_HTML = """
         `<b>${snapshot.present_count}</b> in range · <b>${snapshot.device_count ?? snapshot.toy_count}</b> seen · <b>${snapshot.adorime_count ?? snapshot.controllable_count}</b> Adorime · <b>${snapshot.connected_count}</b> connected`;
       document.getElementById("updated").textContent = `Updated ${snapshot.generated_at}`;
       renderScannerStatus();
+      renderDeviceCards();
       renderToyList();
       renderDeviceDetails();
       renderControlPanel();
