@@ -100,6 +100,78 @@ python3 -m unittest discover -s tests
 
 ---
 
+# Bluetooth Thrust Controller
+
+Scans for compatible BLE toys (Adorime, Galaku, and related Galaku-protocol
+devices), identifies them from advertised BLE names, and exposes a browser
+dashboard with brand-themed thrust and vibration controls.
+
+Supported profiles include Adorime masturbators, anal trainers, rabbit dildos,
+wearable eggs, and dual-motor Galaku aircraft cups. Control uses the Galaku BLE
+write format (community-documented via Buttplug/Intiface research).
+
+## Quick start
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .
+python3 -m bt_thrust --demo
+```
+
+Open <http://127.0.0.1:8800>, select a scanned toy, click **Connect**, then use
+the sliders or pattern presets (Gentle Wave, Pulse, Ramp Up, Deep Thrust).
+
+For live Bluetooth control (Linux/macOS with a powered adapter):
+
+```bash
+python3 -m bt_thrust
+```
+
+If live scanning is unavailable the app auto-switches to demo mode and posts a
+system event in the UI.
+
+## Dashboard behavior
+
+- **Scanned toys** panel lists in-range devices with brand badges (Adorime,
+  Galaku, Generic) and signal strength.
+- **Control panel** theme switches per brand (rose for Adorime, violet for
+  Galaku, blue for generic).
+- Dual-motor toys expose separate **Thrust** and **Vibration** sliders; single-
+  motor toys show one output slider.
+- **Pattern presets** loop thrust/vibration levels while connected.
+- **Stop all** sends a zero command and cancels any active pattern.
+
+## Command options
+
+```text
+python3 -m bt_thrust --host 127.0.0.1 --port 8800 --stale-after 20
+```
+
+- `--demo`: simulate Adorime/Galaku toys instead of scanning hardware
+- `--host`: dashboard bind address
+- `--port`: dashboard port (default `8800`)
+- `--stale-after`: seconds without sightings before a toy is marked as left
+- `--no-auto-demo-fallback`: exit instead of auto-switching to demo mode
+- `--log-level`: `debug`, `info`, `warning`, or `error`
+
+## API
+
+- `GET /api/toys`: current snapshot of scanned toys and control state
+- `POST /api/select`: body `{"address": "..."}` to select a toy in the UI
+- `POST /api/toys/{address}/connect` / `disconnect`: manage BLE connection
+- `POST /api/toys/{address}/control`: body `{"levels": {"thrust": 50, "vibrate": 30}}`
+- `POST /api/toys/{address}/pattern`: body `{"pattern": "pulse"}`
+- `GET /api/events`: Server-Sent Events stream for live UI updates
+
+## Tests
+
+```bash
+python3 -m unittest discover -s tests
+```
+
+---
+
 # WiFi Motion Radar
 
 A separate, self-contained radar for **WiFi** devices. It scans nearby WiFi
