@@ -141,38 +141,49 @@ def build_command(profile: DeviceProfile, levels: dict[str, int]) -> bytes:
     raise ValueError(f"Unsupported protocol for Adorime controller: {profile.protocol}")
 
 
+def _catalog_entries(key: str) -> list[dict[str, Any]]:
+    catalog = load_catalog()
+    return list(catalog.get(key, []))
+
+
+def catalog_patterns() -> list[dict[str, Any]]:
+    return _catalog_entries("patterns")
+
+
+def catalog_thrust_modes() -> list[dict[str, Any]]:
+    return _catalog_entries("thrust_modes")
+
+
+def catalog_vibrate_modes() -> list[dict[str, Any]]:
+    return _catalog_entries("vibrate_modes")
+
+
+def catalog_quick_levels() -> list[int]:
+    catalog = load_catalog()
+    levels = catalog.get("quick_levels", [0, 25, 50, 75, 100])
+    return [max(0, min(100, int(level))) for level in levels]
+
+
+def _steps_from_catalog(pattern_id: str) -> list[dict[str, int]] | None:
+    for entry in (
+        catalog_patterns()
+        + catalog_thrust_modes()
+        + catalog_vibrate_modes()
+    ):
+        if entry.get("id") != pattern_id:
+            continue
+        steps = entry.get("steps")
+        if isinstance(steps, list) and steps:
+            return [dict(step) for step in steps]
+    return None
+
+
 def pattern_steps(pattern_id: str) -> list[dict[str, int]]:
+    catalog_steps = _steps_from_catalog(pattern_id)
+    if catalog_steps is not None:
+        return catalog_steps
     if pattern_id == "stop":
         return [{"thrust": 0, "vibrate": 0}]
-    if pattern_id == "gentle":
-        return [
-            {"thrust": 25, "vibrate": 20},
-            {"thrust": 40, "vibrate": 35},
-            {"thrust": 25, "vibrate": 20},
-            {"thrust": 10, "vibrate": 10},
-        ]
-    if pattern_id == "pulse":
-        return [
-            {"thrust": 0, "vibrate": 0},
-            {"thrust": 55, "vibrate": 45},
-            {"thrust": 0, "vibrate": 0},
-            {"thrust": 55, "vibrate": 45},
-        ]
-    if pattern_id == "ramp":
-        return [
-            {"thrust": 10, "vibrate": 10},
-            {"thrust": 30, "vibrate": 25},
-            {"thrust": 50, "vibrate": 40},
-            {"thrust": 70, "vibrate": 55},
-            {"thrust": 85, "vibrate": 70},
-        ]
-    if pattern_id == "deep":
-        return [
-            {"thrust": 75, "vibrate": 35},
-            {"thrust": 20, "vibrate": 15},
-            {"thrust": 90, "vibrate": 45},
-            {"thrust": 15, "vibrate": 10},
-        ]
     return [{"thrust": 0, "vibrate": 0}]
 
 

@@ -249,21 +249,84 @@ DASHBOARD_HTML = """
       grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
       gap: 10px;
     }
-    .pattern {
+    .mode-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+      gap: 10px;
+    }
+    .pattern, .mode-btn, .quick-btn {
       background: var(--panel-2);
       border: 1px solid #26324b;
       border-radius: 12px;
       padding: 14px 10px;
       text-align: center;
       cursor: pointer;
+      color: var(--text);
+      font: inherit;
     }
-    .pattern:hover, .pattern.active {
+    .quick-btn {
+      padding: 10px 8px;
+      min-width: 54px;
+      font-weight: 800;
+    }
+    .pattern:hover, .pattern.active, .mode-btn:hover, .mode-btn.active, .quick-btn:hover {
       border-color: var(--accent);
       background: var(--accent-soft);
     }
-    .pattern:disabled { opacity: .45; cursor: not-allowed; }
-    .pattern-icon { font-size: 24px; margin-bottom: 6px; }
-    .pattern-label { font-size: 13px; font-weight: 700; }
+    .pattern:disabled, .mode-btn:disabled, .quick-btn:disabled {
+      opacity: .45;
+      cursor: not-allowed;
+    }
+    .pattern-icon, .mode-icon { font-size: 24px; margin-bottom: 6px; font-weight: 800; }
+    .pattern-label, .mode-label { font-size: 12px; font-weight: 700; line-height: 1.25; }
+    .control-section { margin: 18px 0; }
+    .control-section h2 { margin-bottom: 10px; }
+    .master-block {
+      background: linear-gradient(135deg, rgba(244,114,182,.12), rgba(0,0,0,.18));
+      border: 1px solid color-mix(in srgb, var(--accent) 30%, #26324b);
+      border-radius: 16px;
+      padding: 18px;
+    }
+    .master-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .master-value {
+      font-size: 48px;
+      font-weight: 900;
+      color: var(--accent);
+      line-height: 1;
+    }
+    .master-caption { color: var(--muted); font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+    .quick-levels { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+    .focus-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin: 14px 0;
+    }
+    .focus-row button.secondary.active {
+      background: var(--accent-soft);
+      border-color: var(--accent);
+      color: var(--text);
+    }
+    .link-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      margin-left: auto;
+    }
+    .link-toggle input { accent-color: var(--accent); }
+    .disabled-overlay {
+      opacity: .55;
+      pointer-events: none;
+    }
     .status-line {
       display: flex;
       gap: 10px;
@@ -324,7 +387,7 @@ DASHBOARD_HTML = """
 
     <section class="stack">
       <section class="panel">
-        <div id="control-panel" class="empty">Select an Adorime toy to open thrust controls.</div>
+        <div id="control-panel" class="empty">Loading Adorime thrust controls...</div>
       </section>
       <section class="panel">
         <h2>Recent events</h2>
@@ -340,6 +403,8 @@ DASHBOARD_HTML = """
     let controlTimer = null;
     let sliderDragging = false;
     let panelSignature = null;
+    let linkVibrate = false;
+    let controlFocus = "both";
     const notifiedEvents = new Set();
 
     const themes = { adorime: "theme-adorime" };
@@ -362,6 +427,26 @@ DASHBOARD_HTML = """
       }
       await Notification.requestPermission();
     };
+
+    function hasMotor(toy, motorId) {
+      return (toy.motors || []).some((motor) => motor.id === motorId);
+    }
+
+    function thrustMotor(toy) {
+      return (toy.motors || []).find((motor) => motor.id === "thrust" || motor.type === "oscillate") || null;
+    }
+
+    function vibrateMotor(toy) {
+      return (toy.motors || []).find((motor) => motor.id === "vibrate" || motor.type === "vibrate") || null;
+    }
+
+    function primaryMotor(toy) {
+      return thrustMotor(toy) || vibrateMotor(toy) || (toy.motors || [])[0] || null;
+    }
+
+    function clampLevel(value) {
+      return Math.max(0, Math.min(100, Number(value) || 0));
+    }
 
     function brandBadge() {
       return `<span class="badge brand-adorime">Adorime</span>`;
@@ -490,13 +575,54 @@ DASHBOARD_HTML = """
       }
     }
 
+    function setMotorLevel(toy, motorId, rawValue, options = {}) {
+      const value = clampLevel(rawValue);
+      ensureLocalLevels(toy);
+      localLevels[toy.address][motorId] = value;
+      const slider = document.querySelector(`#control-panel input[data-motor="${motorId}"]`);
+      const master = document.getElementById("master-thrust");
+      const valueEl = document.getElementById(`value-${motorId}`);
+      const meterEl = document.getElementById(`meter-${motorId}`);
+      const masterValue = document.getElementById("master-thrust-value");
+      if (slider) slider.value = value;
+      if (valueEl) valueEl.textContent = `${value}%`;
+      if (meterEl) meterEl.textContent = value;
+      if (motorId === "thrust" && master && !options.skipMaster) master.value = value;
+      if (motorId === "thrust" && masterValue) masterValue.textContent = `${value}%`;
+      if (linkVibrate && !options.skipLink && hasMotor(toy, "thrust") && hasMotor(toy, "vibrate") && motorId === "thrust") {
+        const linked = clampLevel(Math.round(value * 0.75));
+        setMotorLevel(toy, "vibrate", linked, { skipMaster: true, skipSend: true, skipLink: true });
+      }
+      if (!options.skipSend && toy.connected) queueLiveControl(toy.address);
+    }
+
+    function applyQuickLevel(toy, motorId, level) {
+      setMotorLevel(toy, motorId, level);
+      if (toy.connected) sendLevels(toy.address);
+    }
+
+    function applyFocusMode(toy, focus) {
+      controlFocus = focus;
+      document.querySelectorAll("#control-panel [data-focus]").forEach((node) => {
+        node.classList.toggle("active", node.dataset.focus === focus);
+      });
+      if (!toy.connected) return;
+      if (focus === "thrust" && hasMotor(toy, "vibrate")) {
+        setMotorLevel(toy, "vibrate", 0, { skipSend: true });
+      }
+      if (focus === "vibrate" && hasMotor(toy, "thrust")) {
+        setMotorLevel(toy, "thrust", 0, { skipSend: true });
+      }
+      sendLevels(toy.address);
+    }
+
     function updateControlReadouts(toy) {
       if (!toy || !toy.controllable) return;
       const linked = document.getElementById("status-linked");
       const pattern = document.getElementById("status-pattern");
       if (linked) linked.textContent = toy.connected ? "Linked" : "Not connected";
       if (pattern) {
-        pattern.textContent = toy.active_pattern ? `Pattern: ${toy.active_pattern}` : "Manual control";
+        pattern.textContent = toy.active_pattern ? `Active: ${toy.active_pattern}` : "Manual control";
         pattern.style.display = "inline-block";
       }
       for (const motor of toy.motors || []) {
@@ -504,15 +630,13 @@ DASHBOARD_HTML = """
         if (!sliderDragging) {
           localLevels[toy.address][motor.id] = value;
         }
-        const slider = document.querySelector(`#control-panel input[data-motor="${motor.id}"]`);
-        const valueEl = document.getElementById(`value-${motor.id}`);
-        const meterEl = document.getElementById(`meter-${motor.id}`);
-        if (slider && !sliderDragging) slider.value = value;
-        if (valueEl) valueEl.textContent = `${value}%`;
-        if (meterEl) meterEl.textContent = value;
+        setMotorLevel(toy, motor.id, value, { skipMaster: sliderDragging, skipSend: true, skipLink: true });
       }
-      document.querySelectorAll("#control-panel .pattern").forEach((node) => {
+      document.querySelectorAll("#control-panel .pattern, #control-panel .mode-btn").forEach((node) => {
         node.classList.toggle("active", toy.active_pattern === node.dataset.pattern);
+        node.disabled = !toy.connected;
+      });
+      document.querySelectorAll("#control-panel .quick-btn").forEach((node) => {
         node.disabled = !toy.connected;
       });
       const connectBtn = document.getElementById("connect-btn");
@@ -524,6 +648,29 @@ DASHBOARD_HTML = """
       document.querySelectorAll("#control-panel input[type=range]").forEach((input) => {
         input.disabled = !toy.connected;
       });
+      const linkToggle = document.getElementById("link-vibrate");
+      if (linkToggle) linkToggle.checked = linkVibrate;
+      document.querySelectorAll("#control-panel [data-focus]").forEach((node) => {
+        node.classList.toggle("active", node.dataset.focus === controlFocus);
+      });
+      const controlsBody = document.getElementById("controls-body");
+      if (controlsBody) controlsBody.classList.toggle("disabled-overlay", !toy.connected);
+    }
+
+    function renderModeButtons(modes, toy, activePattern) {
+      return (modes || []).map((mode) => `
+        <button type="button" class="mode-btn ${activePattern === mode.id ? "active" : ""}" data-pattern="${mode.id}" ${toy.connected ? "" : "disabled"}>
+          <div class="mode-icon">${mode.icon}</div>
+          <div class="mode-label">${mode.label}</div>
+        </button>
+      `).join("");
+    }
+
+    function renderQuickLevels(toy, motorId) {
+      const levels = snapshot?.quick_levels || [0, 25, 50, 75, 100];
+      return levels.map((level) => `
+        <button type="button" class="quick-btn" data-motor="${motorId}" data-level="${level}" ${toy.connected ? "" : "disabled"}>${level}%</button>
+      `).join("");
     }
 
     function notifyEvents(events) {
@@ -582,15 +729,39 @@ DASHBOARD_HTML = """
           if (toy.connected) sendLevels(toy.address);
         });
         input.addEventListener("input", () => {
-          const motor = input.dataset.motor;
-          localLevels[toy.address][motor] = Number(input.value);
-          document.getElementById(`value-${motor}`).textContent = `${input.value}%`;
-          document.getElementById(`meter-${motor}`).textContent = input.value;
-          if (toy.connected) queueLiveControl(toy.address);
+          setMotorLevel(toy, input.dataset.motor, Number(input.value), { skipSend: false });
         });
       });
 
-      document.querySelectorAll("#control-panel .pattern").forEach((node) => {
+      document.getElementById("master-thrust")?.addEventListener("pointerdown", () => { sliderDragging = true; });
+      document.getElementById("master-thrust")?.addEventListener("pointerup", () => {
+        sliderDragging = false;
+        if (toy.connected) sendLevels(toy.address);
+      });
+      document.getElementById("master-thrust")?.addEventListener("input", (event) => {
+        setMotorLevel(toy, "thrust", Number(event.target.value));
+      });
+
+      document.querySelectorAll("#control-panel .quick-btn").forEach((node) => {
+        node.addEventListener("click", () => {
+          if (!toy.connected || node.disabled) return;
+          applyQuickLevel(toy, node.dataset.motor, Number(node.dataset.level));
+        });
+      });
+
+      document.querySelectorAll("#control-panel [data-focus]").forEach((node) => {
+        node.addEventListener("click", () => applyFocusMode(toy, node.dataset.focus));
+      });
+
+      document.getElementById("link-vibrate")?.addEventListener("change", (event) => {
+        linkVibrate = event.target.checked;
+        if (linkVibrate && hasMotor(toy, "thrust")) {
+          const thrustLevel = localLevels[toy.address]?.thrust ?? 0;
+          setMotorLevel(toy, "vibrate", clampLevel(Math.round(thrustLevel * 0.75)));
+        }
+      });
+
+      document.querySelectorAll("#control-panel .pattern, #control-panel .mode-btn").forEach((node) => {
         node.addEventListener("click", () => {
           if (!toy.connected || node.disabled) return;
           runPattern(toy.address, node.dataset.pattern);
@@ -601,29 +772,51 @@ DASHBOARD_HTML = """
     function renderControlPanel() {
       const root = document.getElementById("control-panel");
       const toy = selectedToy();
+      applyTheme("adorime");
+
       if (!toy) {
         panelSignature = null;
-        root.className = "empty";
-        root.textContent = "Select an Adorime toy to open thrust controls.";
-        applyTheme("adorime");
+        root.className = "";
+        root.innerHTML = `
+          <div class="hero-card">
+            <div class="control-title">Adorime thrust controls</div>
+            <div class="control-sub">Select a live Adorime toy from the list to connect and drive thrust/vibration.</div>
+          </div>
+          <div class="control-section disabled-overlay">
+            <h2>Master thrust</h2>
+            <div class="master-block">
+              <div class="master-head">
+                <div>
+                  <div class="master-value" id="master-thrust-value">0%</div>
+                  <div class="master-caption">Waiting for device</div>
+                </div>
+              </div>
+              <input type="range" id="master-thrust" min="0" max="100" step="1" value="0" disabled>
+              <div class="quick-levels">${renderQuickLevels({ connected: false }, "thrust")}</div>
+            </div>
+          </div>
+          <p class="hint">Connect to an Adorime thruster to unlock 9 thrust modes, 10 vibration modes, manual sliders, and combo patterns.</p>
+        `;
         return;
       }
 
-      applyTheme("adorime");
       ensureLocalLevels(toy);
-
       const signature = panelKey(toy);
-      const needsRebuild = signature !== panelSignature || !document.getElementById("control-sliders");
+      const needsRebuild = signature !== panelSignature || !document.getElementById("controls-body");
+      const thrust = thrustMotor(toy);
+      const vibrate = vibrateMotor(toy);
+      const motors = toy.motors.length ? toy.motors : [{ id: "vibrate", label: "Vibration", type: "vibrate" }];
+      const thrustLevel = localLevels[toy.address][thrust?.id || "thrust"] ?? 0;
 
       if (needsRebuild) {
         panelSignature = signature;
         syncLevelsFromServer(toy);
 
-        const motors = toy.motors.length ? toy.motors : [{ id: "vibrate", label: "Vibration", type: "vibrate" }];
         const sliders = motors.map((motor) => `
           <div class="slider-block">
             <div class="slider-label"><span>${motor.label}</span><span id="value-${motor.id}">${localLevels[toy.address][motor.id] ?? 0}%</span></div>
             <input type="range" min="0" max="100" step="1" value="${localLevels[toy.address][motor.id] ?? 0}" data-motor="${motor.id}" ${toy.connected ? "" : "disabled"}>
+            <div class="quick-levels">${renderQuickLevels(toy, motor.id)}</div>
           </div>
         `).join("");
 
@@ -633,6 +826,12 @@ DASHBOARD_HTML = """
             <div class="pattern-label">${pattern.label}</div>
           </button>
         `).join("");
+
+        const thrustModes = thrust
+          ? renderModeButtons(snapshot.thrust_modes || [], toy, toy.active_pattern)
+          : `<div class="hint">This model has no separate thrust motor.</div>`;
+
+        const vibrateModes = renderModeButtons(snapshot.vibrate_modes || [], toy, toy.active_pattern);
 
         root.className = "";
         root.innerHTML = `
@@ -645,7 +844,7 @@ DASHBOARD_HTML = """
                   <span class="status-pill" id="status-linked">${toy.connected ? "Linked" : "Not connected"}</span>
                   <span class="status-pill">${toy.distance_label || "unknown"} range</span>
                   <span class="status-pill">${toy.movement || "collecting"}</span>
-                  <span class="status-pill" id="status-pattern">${toy.active_pattern ? `Pattern: ${toy.active_pattern}` : "Manual control"}</span>
+                  <span class="status-pill" id="status-pattern">${toy.active_pattern ? `Active: ${toy.active_pattern}` : "Manual control"}</span>
                 </div>
               </div>
               <div class="actions">
@@ -665,12 +864,58 @@ DASHBOARD_HTML = """
             </div>
           </div>
 
-          <h2>Thrust controls</h2>
-          <p class="hint">Sliders send live commands while connected. Release a slider to confirm the final level.</p>
-          <div id="control-sliders">${sliders}</div>
+          <div id="controls-body" class="${toy.connected ? "" : "disabled-overlay"}">
+            ${thrust ? `
+              <section class="control-section">
+                <h2>Master thrust</h2>
+                <div class="master-block">
+                  <div class="master-head">
+                    <div>
+                      <div class="master-value" id="master-thrust-value">${thrustLevel}%</div>
+                      <div class="master-caption">Live thrust power</div>
+                    </div>
+                  </div>
+                  <input type="range" id="master-thrust" min="0" max="100" step="1" value="${thrustLevel}" data-motor="thrust" ${toy.connected ? "" : "disabled"}>
+                  <div class="quick-levels">${renderQuickLevels(toy, "thrust")}</div>
+                </div>
+              </section>
+            ` : ""}
 
-          <h2 style="margin-top:22px;">Pattern presets</h2>
-          <div class="patterns">${patterns}</div>
+            <div class="focus-row">
+              ${thrust ? `<button type="button" class="secondary ${controlFocus === "thrust" ? "active" : ""}" data-focus="thrust" ${toy.connected ? "" : "disabled"}>Thrust only</button>` : ""}
+              ${thrust && vibrate ? `<button type="button" class="secondary ${controlFocus === "both" ? "active" : ""}" data-focus="both" ${toy.connected ? "" : "disabled"}>Both motors</button>` : ""}
+              ${vibrate ? `<button type="button" class="secondary ${controlFocus === "vibrate" ? "active" : ""}" data-focus="vibrate" ${toy.connected ? "" : "disabled"}>Vibrate only</button>` : ""}
+              ${thrust && vibrate ? `
+                <label class="link-toggle">
+                  <input type="checkbox" id="link-vibrate" ${linkVibrate ? "checked" : ""} ${toy.connected ? "" : "disabled"}>
+                  Link vibe to thrust
+                </label>
+              ` : ""}
+            </div>
+
+            <section class="control-section">
+              <h2>Motor sliders</h2>
+              <p class="hint">Sliders send live BLE commands while connected. Release to confirm the final level.</p>
+              <div id="control-sliders">${sliders}</div>
+            </section>
+
+            ${thrust ? `
+              <section class="control-section">
+                <h2>Thrust modes (9)</h2>
+                <div class="mode-grid" id="thrust-modes">${thrustModes}</div>
+              </section>
+            ` : ""}
+
+            <section class="control-section">
+              <h2>Vibration modes (10)</h2>
+              <div class="mode-grid" id="vibrate-modes">${vibrateModes}</div>
+            </section>
+
+            <section class="control-section">
+              <h2>Combo patterns</h2>
+              <div class="patterns">${patterns}</div>
+            </section>
+          </div>
         `;
         bindControlPanel(toy);
       } else {

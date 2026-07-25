@@ -2,6 +2,9 @@ import unittest
 
 from bt_thrust.protocols import (
     build_command,
+    catalog_quick_levels,
+    catalog_thrust_modes,
+    catalog_vibrate_modes,
     galaku_dual_motor_command,
     galaku_send_bytes,
     galaku_single_motor_command,
@@ -54,6 +57,13 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(levels["thrust"], 55)
         self.assertEqual(levels["vibrate"], 45)
 
+    def test_catalog_includes_adorime_modes(self) -> None:
+        self.assertEqual(len(catalog_thrust_modes()), 9)
+        self.assertEqual(len(catalog_vibrate_modes()), 10)
+        self.assertEqual(catalog_quick_levels(), [0, 25, 50, 75, 100])
+        self.assertEqual(len(pattern_steps("thrust-3")), 4)
+        self.assertEqual(pattern_steps("vibe-10")[0]["vibrate"], 100)
+
 
 class StateTests(unittest.IsolatedAsyncioTestCase):
     async def test_observe_and_snapshot(self) -> None:
@@ -68,6 +78,8 @@ class StateTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(snapshot["toys"][0]["controllable"])
         self.assertIn("thrust", snapshot["toys"][0]["levels"])
         self.assertIn("movement", snapshot["toys"][0])
+        self.assertEqual(len(snapshot["thrust_modes"]), 9)
+        self.assertEqual(len(snapshot["vibrate_modes"]), 10)
 
     async def test_set_levels_merges_partial_updates(self) -> None:
         state = ControllerState()

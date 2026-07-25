@@ -12,7 +12,14 @@ from bt_radar.anomaly import Finding, address_family, evaluate_device
 from bt_radar.calibration import estimate_distance_label, estimate_distance_meters
 from bt_radar.state import movement_label, smooth_rssi
 
-from .protocols import DeviceProfile, load_catalog, match_adorime_profile
+from .protocols import (
+    DeviceProfile,
+    catalog_patterns,
+    catalog_quick_levels,
+    catalog_thrust_modes,
+    catalog_vibrate_modes,
+    match_adorime_profile,
+)
 
 
 def utc_now() -> datetime:
@@ -290,7 +297,6 @@ class ControllerState:
                 ),
                 reverse=True,
             )
-            catalog = load_catalog()
             return {
                 "generated_at": iso_time(now),
                 "scanner_mode": "live",
@@ -299,7 +305,10 @@ class ControllerState:
                 "connected_count": sum(1 for item in toys if item["connected"]),
                 "controllable_count": sum(1 for item in toys if item["controllable"]),
                 "selected_address": self._selected_address,
-                "patterns": catalog["patterns"],
+                "patterns": catalog_patterns(),
+                "thrust_modes": catalog_thrust_modes(),
+                "vibrate_modes": catalog_vibrate_modes(),
+                "quick_levels": catalog_quick_levels(),
                 "toys": toys,
                 "events": list(self._events),
             }
