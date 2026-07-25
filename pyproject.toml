@@ -12,6 +12,7 @@ dependencies = [
 
 [project.scripts]
 bt-radar = "bt_radar.__main__:main"
+bt-thrust = "bt_thrust.__main__:main"
 wifi-radar = "wifi_radar.__main__:main"
 mac-battery = "mac_battery.__main__:main"
 jet-radar = "jet_radar.__main__:main"
@@ -21,6 +22,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "bt_radar" = ["data/*.json"]
+"bt_thrust" = ["data/*.json"]
 
 [build-system]
 requires = ["setuptools>=68"]
