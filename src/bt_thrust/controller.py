@@ -62,7 +62,12 @@ class ToyController:
 
         if not track.levels:
             track.levels = {motor.id: 0 for motor in track.profile.motors}
-        await self._connect_live(address, track.profile)
+        ble_device = await self.state.get_ble_device(address)
+        await self.state.set_scanner_paused(True)
+        try:
+            await self._connect_live(address, track.profile, ble_device=ble_device)
+        finally:
+            await self.state.set_scanner_paused(False)
         await self.state.set_connection(address, True)
         self._start_watchdog(address)
         self._log_connection(address, track.name, "connected", "BLE connection established")
@@ -267,14 +272,21 @@ class ToyController:
         except Exception as exc:
             raise ValueError(f"Failed to send control command: {exc}") from exc
 
-    async def _connect_live(self, address: str, profile: DeviceProfile) -> None:
+    async def _connect_live(
+        self,
+        address: str,
+        profile: DeviceProfile,
+        *,
+        ble_device: Any = None,
+    ) -> None:
         from bleak import BleakClient
 
         if address in self._clients:
             await self._disconnect_live(address)
 
         config = protocol_config(profile.protocol)
-        client = BleakClient(address, timeout=20.0)
+        target = ble_device if ble_device is not None else address
+        client = BleakClient(target, timeout=20.0)
         try:
             await client.connect()
             if not client.is_connected:
@@ -305,7 +317,8 @@ class ToyController:
     async def _write_live(self, address: str, profile: DeviceProfile, payload: bytes) -> None:
         entry = self._clients.get(address)
         if entry is None:
-            await self._connect_live(address, profile)
+            ble_device = await self.state.get_ble_device(address)
+            await self._connect_live(address, profile, ble_device=ble_device)
             entry = self._clients[address]
 
         client = entry.client

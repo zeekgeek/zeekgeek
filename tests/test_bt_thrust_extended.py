@@ -94,13 +94,24 @@ class ExtendedStateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(toy["device_type"], "adorime_thruster")
         self.assertIn("average", toy["signal_stats"])
 
-    async def test_scanner_filters_and_gatt_storage(self) -> None:
+    async def test_scanner_filters_keep_all_devices_in_snapshot(self) -> None:
         state = ControllerState()
         await state.set_scanner_filters(min_rssi=-60)
         await state.observe(ToyObservation(address="AA:BB:CC:DD:EE:01", name="BGSF", rssi=-70))
         await state.observe(ToyObservation(address="AA:BB:CC:DD:EE:02", name="Phone", rssi=-55))
         snapshot = await state.snapshot()
-        self.assertEqual(len(snapshot["toys"]), 1)
+        self.assertEqual(len(snapshot["toys"]), 2)
+        self.assertEqual(snapshot["filtered_count"], 1)
+
+    async def test_invalid_min_rssi_resets_filter(self) -> None:
+        state = ControllerState()
+        await state.set_scanner_filters(min_rssi=0)
+        snapshot = await state.snapshot()
+        self.assertEqual(snapshot["scanner"]["min_rssi_filter"], -127)
+
+    async def test_gatt_result_storage(self) -> None:
+        state = ControllerState()
+        await state.observe(ToyObservation(address="AA:BB:CC:DD:EE:02", name="BGSF", rssi=-55))
         event = await state.store_gatt_result(
             "AA:BB:CC:DD:EE:02",
             {"services": [{"uuid": "svc", "characteristics": []}], "error": None},

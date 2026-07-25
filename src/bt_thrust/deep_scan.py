@@ -9,7 +9,12 @@ from typing import Any
 LOGGER = logging.getLogger(__name__)
 
 
-async def discover_gatt(address: str, *, timeout: float = 15.0) -> dict[str, Any]:
+async def discover_gatt(
+    address: str,
+    *,
+    ble_device: Any = None,
+    timeout: float = 15.0,
+) -> dict[str, Any]:
     from bleak import BleakClient
 
     result: dict[str, Any] = {
@@ -18,7 +23,7 @@ async def discover_gatt(address: str, *, timeout: float = 15.0) -> dict[str, Any
         "services": [],
         "error": None,
     }
-    client = BleakClient(address, timeout=timeout)
+    client = BleakClient(ble_device if ble_device is not None else address, timeout=timeout)
     try:
         await client.connect()
         if not client.is_connected:
@@ -78,7 +83,8 @@ async def run_deep_scan_worker(state: Any) -> None:
                         continue
                     if address in scanned_gatt and toy.get("gatt_services"):
                         continue
-                    result = await discover_gatt(address)
+                    ble_device = await state.get_ble_device(address)
+                    result = await discover_gatt(address, ble_device=ble_device)
                     await state.store_gatt_result(address, result)
                     scanned_gatt.add(address)
             else:

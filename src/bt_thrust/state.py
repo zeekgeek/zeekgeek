@@ -44,6 +44,7 @@ class ToyObservation:
     tx_power: int | None = None
     details: dict[str, Any] = field(default_factory=dict)
     observed_at: datetime = field(default_factory=utc_now)
+    ble_device: Any = None
 
 
 @dataclass
@@ -73,6 +74,7 @@ class ToyTrack:
     gatt_error: str | None = None
     transport: str = "ble"
     device_class: str | None = None
+    ble_device: Any = None
     events: deque[dict[str, Any]] = field(default_factory=lambda: deque(maxlen=40))
     findings: list[Finding] = field(default_factory=list)
 
@@ -101,6 +103,8 @@ class ToyTrack:
             self.manufacturer_data = list(observation.details["manufacturer_data"])
         self.tx_power = observation.tx_power if observation.tx_power is not None else self.tx_power
         self.details.update(observation.details)
+        if observation.ble_device is not None:
+            self.ble_device = observation.ble_device
         local_name = observation.details.get("local_name")
         self.profile = resolve_device_profile(
             self.name,
@@ -304,7 +308,9 @@ class ControllerState:
     ) -> None:
         async with self._lock:
             if min_rssi is not None:
-                self._min_rssi_filter = max(-127, min(-30, int(min_rssi)))
+                parsed = int(min_rssi)
+                # -127 (or out-of-range values) means "show all devices"
+                self._min_rssi_filter = parsed if -100 <= parsed <= -30 else -127
             if device_type is not None:
                 self._device_type_filter = device_type
 
@@ -422,6 +428,7 @@ class ControllerState:
                     tx_power=observation.tx_power,
                     details=dict(observation.details),
                     profile=profile,
+                    ble_device=observation.ble_device,
                     seen_count=1,
                     levels={motor.id: 0 for motor in profile.motors} if profile else {},
                 )
@@ -494,15 +501,8 @@ class ControllerState:
     async def snapshot(self) -> dict[str, Any]:
         async with self._lock:
             now = utc_now()
-            toys = [track.snapshot(now) for track in self._toys.values()]
-            if self._min_rssi_filter > -127:
-                toys = [
-                    item
-                    for item in toys
-                    if item.get("rssi") is None or item["rssi"] >= self._min_rssi_filter
-                ]
-            if self._device_type_filter != "all":
-                toys = [item for item in toys if item.get("device_type") == self._device_type_filter]
+            all_toys = [track.snapshot(now) for track in self._toys.values()]
+            toys = list(all_toys)
             toys.sort(
                 key=lambda item: (
                     item["present"],
@@ -531,12 +531,19 @@ class ControllerState:
                     "min_rssi_filter": self._min_rssi_filter,
                     "device_type_filter": self._device_type_filter,
                 },
-                "device_count": len(toys),
-                "toy_count": len(toys),
-                "present_count": sum(1 for item in toys if item["present"]),
-                "connected_count": sum(1 for item in toys if item["connected"]),
-                "controllable_count": sum(1 for item in toys if item["controllable"]),
-                "adorime_count": sum(1 for item in toys if item["adorime_match"]),
+                "device_count": len(all_toys),
+                "toy_count": len(all_toys),
+                "present_count": sum(1 for item in all_toys if item["present"]),
+                "connected_count": sum(1 for item in all_toys if item["connected"]),
+                "controllable_count": sum(1 for item in all_toys if item["controllable"]),
+                "adorime_count": sum(1 for item in all_toys if item["adorime_match"]),
+                "filtered_count": len(
+                    [
+                        item
+                        for item in all_toys
+                        if self._passes_scanner_filters(item)
+                    ]
+                ),
                 "selected_address": self._selected_address,
                 "patterns": catalog_patterns(),
                 "thrust_modes": catalog_thrust_modes(),
@@ -549,6 +556,20 @@ class ControllerState:
     async def get_track(self, address: str) -> ToyTrack | None:
         async with self._lock:
             return self._toys.get(address)
+
+    async def get_ble_device(self, address: str) -> Any:
+        async with self._lock:
+            track = self._toys.get(address)
+            return track.ble_device if track is not None else None
+
+    def _passes_scanner_filters(self, toy: dict[str, Any]) -> bool:
+        if self._min_rssi_filter > -127:
+            rssi = toy.get("rssi")
+            if rssi is not None and rssi < self._min_rssi_filter:
+                return False
+        if self._device_type_filter != "all" and toy.get("device_type") != self._device_type_filter:
+            return False
+        return True
 
     async def add_system_event(self, event_type: str, message: str) -> dict[str, Any]:
         async with self._lock:

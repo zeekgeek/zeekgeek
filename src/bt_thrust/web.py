@@ -134,7 +134,8 @@ def create_app(state: ControllerState, controller: ToyController) -> FastAPI:
 
     @app.post("/api/toys/{address}/gatt-scan")
     async def gatt_scan(address: str) -> JSONResponse:
-        result = await discover_gatt(address)
+        ble_device = await state.get_ble_device(address)
+        result = await discover_gatt(address, ble_device=ble_device)
         event = await state.store_gatt_result(address, result)
         return JSONResponse({"result": result, "event": event})
 
@@ -901,6 +902,14 @@ DASHBOARD_HTML = """
     function filteredDevices() {
       if (!snapshot) return [];
       let devices = snapshot.toys.slice();
+      const minRssi = snapshot.scanner?.min_rssi_filter;
+      if (typeof minRssi === "number" && minRssi > -127) {
+        devices = devices.filter((toy) => toy.rssi == null || toy.rssi >= minRssi);
+      }
+      const typeFilter = snapshot.scanner?.device_type_filter;
+      if (typeFilter && typeFilter !== "all") {
+        devices = devices.filter((toy) => toy.device_type === typeFilter);
+      }
       if (deviceFilter === "adorime") {
         devices = devices.filter((toy) => toy.adorime_match || toy.galaku_service);
       } else if (deviceFilter === "controllable") {
@@ -1014,11 +1023,13 @@ DASHBOARD_HTML = """
       if (minRssiEl && minRssiEl.dataset.bound !== "1") {
         minRssiEl.dataset.bound = "1";
         minRssiEl.addEventListener("change", async () => {
+          const parsed = Number(minRssiEl.value);
+          const minRssi = Number.isFinite(parsed) && parsed <= -30 ? parsed : -127;
           try {
             await api("/api/scanner/filters", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ min_rssi: Number(minRssiEl.value) }),
+              body: JSON.stringify({ min_rssi: minRssi }),
             });
             showError("");
           } catch (err) {
@@ -1054,8 +1065,9 @@ DASHBOARD_HTML = """
       dot.className = "scanner-dot";
       if (scanner.error) {
         dot.classList.add("error");
-        text.textContent = "Scanner retrying";
+        text.textContent = "Scanner retrying — check Bluetooth is on";
         if (badge) badge.textContent = "Scanner error";
+        showError(`${scanner.error}. On machines without an adapter, run with --demo.`);
       } else if (scanner.deep_scan_active) {
         dot.classList.add("running");
         text.textContent = "Deep scan active";

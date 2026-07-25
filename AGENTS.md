@@ -20,8 +20,8 @@ Running the apps:
 - Cloud VMs have no Bluetooth adapter / `bluetoothd`, so live BLE scanning will not work.
  Always run bt_radar in demo mode: `python3 -m bt_radar --demo`. (Without `--demo` the app tries
  live scanning and auto-falls back to demo mode, printing a system event.)
-- BT thrust controller: `python3 -m bt_thrust` (live Adorime BLE scan + GATT control;
-  needs Bluetooth adapter + Adorime device advertising). Default dashboard port is `8800`.
+- BT thrust controller: `python3 -m bt_thrust` (live BLE scan + dashboard; port `8800`);
+  terminal scanner: `python3 -m bt_thrust scan --interval 2`. Needs Bluetooth adapter.
 - WiFi radar: `python3 -m wifi_radar --demo` (live needs `iw` / wireless hardware).
 - Mac battery: `python3 -m mac_battery --demo` on non-macOS hosts (live needs macOS `ioreg` /
  AppleSmartBattery). Default dashboard port is `8780`.
