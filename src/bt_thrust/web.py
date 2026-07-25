@@ -168,9 +168,10 @@ DASHBOARD_HTML = """
     }
     main {
       display: grid;
-      grid-template-columns: minmax(300px, 360px) 1fr;
       gap: 16px;
       padding: 16px;
+      max-width: 980px;
+      margin: 0 auto;
       align-items: start;
     }
     .panel {
@@ -421,6 +422,68 @@ DASHBOARD_HTML = """
     .event { padding: 6px 0; border-bottom: 1px solid #1f2937; }
     .empty { color: var(--muted); text-align: center; padding: 34px 0; }
     .hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+    .scan-power {
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: .03em;
+      text-transform: uppercase;
+      min-width: 118px;
+    }
+    .scan-power.on { background: var(--green); color: #052e16; }
+    .scan-power.off {
+      background: transparent;
+      color: #fecaca;
+      border: 2px solid var(--red);
+    }
+    dl.device-info {
+      display: grid;
+      grid-template-columns: 170px 1fr;
+      gap: 8px 12px;
+      margin: 12px 0 0 0;
+      font-size: 13px;
+    }
+    dl.device-info dt { color: var(--muted); margin: 0; }
+    dl.device-info dd { margin: 0; overflow-wrap: anywhere; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+    .uuid-list { display: grid; gap: 6px; margin-top: 4px; }
+    .uuid-item {
+      background: rgba(0,0,0,.18);
+      border: 1px solid #26324b;
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-family: ui-monospace, Menlo, monospace;
+      font-size: 11px;
+      overflow-wrap: anywhere;
+    }
+    .uuid-item.galaku { border-color: color-mix(in srgb, var(--accent) 45%, #26324b); }
+    .finding {
+      padding: 9px;
+      border-radius: 10px;
+      background: rgba(0,0,0,.18);
+      border: 1px solid #26324b;
+      margin: 8px 0;
+      font-size: 13px;
+    }
+    .severity-info { color: #7dd3fc; }
+    .severity-low { color: var(--yellow); }
+    .severity-medium, .severity-high { color: var(--red); }
+    canvas#signal-graph {
+      width: 100%;
+      height: 180px;
+      background: rgba(0,0,0,.18);
+      border-radius: 12px;
+      border: 1px solid #26324b;
+      display: block;
+      margin-top: 10px;
+    }
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+    .section-head h2 { margin: 0; }
     .error-banner {
       display: none;
       margin: 0 16px 0 16px;
@@ -433,8 +496,8 @@ DASHBOARD_HTML = """
     }
     .error-banner.visible { display: block; }
     @media (max-width: 980px) {
-      main { grid-template-columns: 1fr; }
       .toy-list { max-height: none; }
+      dl.device-info { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -457,11 +520,13 @@ DASHBOARD_HTML = """
 
   <main>
     <section class="panel">
-      <h2>Nearby Bluetooth devices</h2>
+      <div class="section-head">
+        <h2>Bluetooth scanner</h2>
+        <button type="button" class="scan-power on" id="scan-toggle">Scan ON</button>
+      </div>
       <div class="scanner-toolbar">
         <div class="scanner-row">
           <span class="scanner-status"><span class="scanner-dot" id="scanner-dot"></span><span id="scanner-status-text">Scanner starting</span></span>
-          <button type="button" class="secondary" id="scanner-toggle">Pause scan</button>
           <button type="button" class="secondary" id="scanner-clear">Clear left</button>
         </div>
         <div class="scanner-row scanner-controls">
@@ -485,17 +550,23 @@ DASHBOARD_HTML = """
           </label>
         </div>
       </div>
-      <div id="toys" class="toy-list empty">Scanning for nearby Bluetooth devices...</div>
+      <div id="toys" class="toy-list empty">Turn scan ON and wait for nearby Bluetooth devices...</div>
     </section>
 
-    <section class="stack">
-      <section class="panel">
-        <div id="control-panel" class="empty">Loading Adorime thrust controls...</div>
-      </section>
-      <section class="panel">
-        <h2>Recent events</h2>
-        <div id="events" class="events"></div>
-      </section>
+    <section class="panel">
+      <h2>Device details</h2>
+      <canvas id="signal-graph" width="920" height="180"></canvas>
+      <div id="device-details" class="empty">Select a scanned device to inspect UUIDs and advertisement data.</div>
+    </section>
+
+    <section class="panel">
+      <h2>Thruster controls</h2>
+      <div id="control-panel" class="empty">Select an Adorime/Galaku device above to connect and control thrust.</div>
+    </section>
+
+    <section class="panel">
+      <h2>Recent events</h2>
+      <div id="events" class="events"></div>
     </section>
   </main>
 
@@ -554,6 +625,14 @@ DASHBOARD_HTML = """
       return Math.max(0, Math.min(100, Number(value) || 0));
     }
 
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+
     function brandBadge(toy) {
       if (toy.controllable) return `<span class="badge brand-adorime">Adorime</span>`;
       if (toy.galaku_service) return `<span class="badge brand-galaku">Galaku svc</span>`;
@@ -595,7 +674,7 @@ DASHBOARD_HTML = """
       const sortEl = document.getElementById("device-sort");
       const showLeftEl = document.getElementById("show-left");
       const staleEl = document.getElementById("stale-after");
-      const toggleEl = document.getElementById("scanner-toggle");
+      const scanToggle = document.getElementById("scan-toggle");
       const clearEl = document.getElementById("scanner-clear");
 
       if (filterEl && filterEl.dataset.bound !== "1") {
@@ -634,9 +713,9 @@ DASHBOARD_HTML = """
           }
         });
       }
-      if (toggleEl && toggleEl.dataset.bound !== "1") {
-        toggleEl.dataset.bound = "1";
-        toggleEl.addEventListener("click", async () => {
+      if (scanToggle && scanToggle.dataset.bound !== "1") {
+        scanToggle.dataset.bound = "1";
+        scanToggle.addEventListener("click", async () => {
           const paused = !(snapshot?.scanner?.paused);
           try {
             await api("/api/scanner/pause", {
@@ -668,9 +747,9 @@ DASHBOARD_HTML = """
       const dot = document.getElementById("scanner-dot");
       const text = document.getElementById("scanner-status-text");
       const badge = document.getElementById("scanner-badge");
-      const toggle = document.getElementById("scanner-toggle");
+      const scanToggle = document.getElementById("scan-toggle");
       const staleEl = document.getElementById("stale-after");
-      if (!dot || !text || !toggle) return;
+      if (!dot || !text || !scanToggle) return;
 
       dot.className = "scanner-dot";
       if (scanner.error) {
@@ -679,20 +758,162 @@ DASHBOARD_HTML = """
         if (badge) badge.textContent = "Scanner error";
       } else if (scanner.paused) {
         dot.classList.add("paused");
-        text.textContent = "Scanner paused";
-        if (badge) badge.textContent = "Scan paused";
+        text.textContent = "Scan OFF";
+        if (badge) badge.textContent = "Scan OFF";
       } else if (scanner.active) {
         dot.classList.add("running");
-        text.textContent = "Scanner running";
-        if (badge) badge.textContent = "Live BLE";
+        text.textContent = "Scan ON · listening";
+        if (badge) badge.textContent = "Scan ON";
       } else {
         text.textContent = "Scanner starting";
       }
-      toggle.textContent = scanner.paused ? "Resume scan" : "Pause scan";
+
+      const scanning = !scanner.paused && !scanner.error;
+      scanToggle.textContent = scanning ? "Scan OFF" : "Scan ON";
+      scanToggle.classList.toggle("on", scanning);
+      scanToggle.classList.toggle("off", !scanning);
+
       if (staleEl && document.activeElement !== staleEl) {
         staleEl.value = scanner.stale_after ?? 20;
       }
       bindScannerControls();
+    }
+
+    function renderUuidList(uuids, toy) {
+      if (!uuids || !uuids.length) {
+        return `<div class="hint">No service UUIDs advertised.</div>`;
+      }
+      return `<div class="uuid-list">${uuids.map((uuid) => {
+        const galaku = toy.galaku_service && uuid.toLowerCase().includes("00001000");
+        return `<div class="uuid-item ${galaku ? "galaku" : ""}">${escapeHtml(uuid)}${galaku ? " · Galaku control" : ""}</div>`;
+      }).join("")}</div>`;
+    }
+
+    function renderManufacturerData(entries) {
+      if (!entries || !entries.length) {
+        return "none advertised";
+      }
+      return entries.map((entry) =>
+        `${escapeHtml(entry.company_hex)} [${entry.data_length} B]: ${escapeHtml(entry.data_hex)}`
+      ).join("<br>");
+    }
+
+    function renderServiceData(serviceData) {
+      if (!serviceData || !Object.keys(serviceData).length) {
+        return "none advertised";
+      }
+      return Object.entries(serviceData).map(([uuid, hex]) =>
+        `${escapeHtml(uuid)} → ${escapeHtml(hex)}`
+      ).join("<br>");
+    }
+
+    function drawSignalGraph(device) {
+      const canvas = document.getElementById("signal-graph");
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      ctx.strokeStyle = "#26324b";
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= 4; i++) {
+        const y = 16 + i * ((canvas.height - 32) / 4);
+        ctx.beginPath();
+        ctx.moveTo(36, y);
+        ctx.lineTo(canvas.width - 12, y);
+        ctx.stroke();
+      }
+      ctx.fillStyle = varMuted();
+      ctx.font = "11px sans-serif";
+      ctx.fillText("-30 dBm", 40, 24);
+      ctx.fillText("-100 dBm", 40, canvas.height - 8);
+
+      if (!device || !device.rssi_history || !device.rssi_history.length) {
+        ctx.fillStyle = varMuted();
+        ctx.fillText("Select a device to plot RSSI history", 44, canvas.height / 2);
+        return;
+      }
+
+      const values = device.rssi_history;
+      const step = (canvas.width - 52) / Math.max(values.length - 1, 1);
+      ctx.strokeStyle = "#f472b6";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      values.forEach((rssi, index) => {
+        const x = 36 + index * step;
+        const y = mapRssiToY(rssi, canvas.height);
+        if (index === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+
+    function varMuted() {
+      return getComputedStyle(document.documentElement).getPropertyValue("--muted").trim() || "#93a1ba";
+    }
+
+    function mapRssiToY(rssi, height) {
+      const clamped = Math.max(-100, Math.min(-30, Number(rssi) || -100));
+      const pct = (clamped + 100) / 70;
+      return height - 16 - pct * (height - 32);
+    }
+
+    function renderDeviceDetails() {
+      const root = document.getElementById("device-details");
+      const toy = selectedToy();
+      drawSignalGraph(toy);
+      if (!toy) {
+        root.className = "empty";
+        root.textContent = "Select a scanned device to inspect UUIDs and advertisement data.";
+        return;
+      }
+
+      const findings = (toy.findings || []).length
+        ? toy.findings.map((finding) =>
+            `<div class="finding"><strong class="severity-${escapeHtml(finding.severity)}">${escapeHtml(finding.title)}</strong><br>${escapeHtml(finding.detail)}</div>`
+          ).join("")
+        : `<div class="hint">No anomalies flagged from current observations.</div>`;
+
+      const controlLines = toy.control_uuids && toy.control_uuids.service_uuid
+        ? `<dt>Control service UUID</dt><dd>${escapeHtml(toy.control_uuids.service_uuid)}</dd>
+           <dt>Control TX UUID</dt><dd>${escapeHtml(toy.control_uuids.tx_uuid)}</dd>`
+        : "";
+
+      root.className = "";
+      root.innerHTML = `
+        <h3 style="margin:0 0 8px 0;">${escapeHtml(deviceTitle(toy))}</h3>
+        <dl class="device-info">
+          <dt>MAC address</dt><dd>${escapeHtml(toy.address)}</dd>
+          <dt>Advertised name</dt><dd>${escapeHtml(toy.name || "none")}</dd>
+          <dt>Local name</dt><dd>${escapeHtml(toy.local_name || "none")}</dd>
+          <dt>Address class</dt><dd>${escapeHtml(toy.address_family || "unknown")}</dd>
+          <dt>Address type</dt><dd>${escapeHtml(toy.address_type || "unknown")}</dd>
+          <dt>Connectable</dt><dd>${escapeHtml(formatNullable(toy.is_connectable))}</dd>
+          <dt>Adorime match</dt><dd>${toy.controllable ? "yes" : "no"}</dd>
+          <dt>Galaku service</dt><dd>${toy.galaku_service ? "yes" : "no"}</dd>
+          <dt>Protocol</dt><dd>${escapeHtml(toy.protocol || "none")}</dd>
+          ${controlLines}
+          <dt>Manufacturer</dt><dd>${escapeHtml(toy.manufacturer_hex || "unknown")}</dd>
+          <dt>Manufacturer data</dt><dd>${renderManufacturerData(toy.manufacturer_data)}</dd>
+          <dt>Service data</dt><dd>${renderServiceData(toy.details?.service_data)}</dd>
+          <dt>TX power</dt><dd>${escapeHtml(formatNullable(toy.tx_power, " dBm"))}</dd>
+          <dt>Raw RSSI</dt><dd>${escapeHtml(formatNullable(toy.rssi, " dBm"))}</dd>
+          <dt>Smoothed RSSI</dt><dd>${escapeHtml(formatNullable(toy.rssi_smoothed, " dBm"))}</dd>
+          <dt>Estimated distance</dt><dd>${escapeHtml(formatDistance(toy.estimated_distance_m))} (${escapeHtml(toy.distance_label || "unknown")})</dd>
+          <dt>Movement</dt><dd>${escapeHtml(toy.movement || "collecting")}</dd>
+          <dt>First seen</dt><dd>${escapeHtml(toy.first_seen)}</dd>
+          <dt>Last seen</dt><dd>${escapeHtml(toy.last_seen)} (${escapeHtml(toy.stale_seconds)}s ago)</dd>
+          <dt>Seen count</dt><dd>${escapeHtml(toy.seen_count)}</dd>
+          <dt>Reappearances</dt><dd>${escapeHtml(toy.reappear_count)}</dd>
+          <dt>Service UUIDs</dt><dd>${renderUuidList(toy.service_uuids || [], toy)}</dd>
+        </dl>
+        <h3 style="margin:18px 0 8px 0;">Findings</h3>
+        ${findings}
+      `;
+    }
+
+    function formatNullable(value, suffix = "") {
+      if (value === null || value === undefined || value === "") return "unknown";
+      return `${value}${suffix}`;
     }
 
     function statusBadge(toy) {
@@ -959,7 +1180,8 @@ DASHBOARD_HTML = """
             <span>RSSI ${toy.rssi ?? "?"} dBm · ${toy.movement || "collecting"} · ${toy.address_family || "addr ?"}</span>
             <span>${formatDistance(toy.estimated_distance_m)}</span>
           </div>
-          ${toy.manufacturer_hex ? `<div class="signal-row"><span>MFG ${toy.manufacturer_hex}</span><span>${toy.service_uuids?.length || 0} service(s)</span></div>` : ""}
+          ${toy.service_uuids?.length ? `<div class="signal-row"><span>${toy.service_uuids.length} service UUID(s)</span><span>${escapeHtml((toy.service_uuids[0] || "").slice(0, 18))}${toy.service_uuids[0]?.length > 18 ? "…" : ""}</span></div>` : ""}
+          ${toy.manufacturer_hex ? `<div class="signal-row"><span>MFG ${toy.manufacturer_hex}</span><span>${toy.manufacturer_data?.length || 0} mfg record(s)</span></div>` : ""}
           ${toy.galaku_service ? `<div class="signal-row"><span>Galaku control service detected</span><span>${toy.controllable ? "Ready to connect" : "Checking profile"}</span></div>` : ""}
           ${rssiBar(toy.rssi ?? -100)}
         </article>
@@ -1056,17 +1278,8 @@ DASHBOARD_HTML = """
         panelSignature = null;
         root.className = "";
         root.innerHTML = `
-          <div class="hero-card">
-            <div class="control-title">${deviceTitle(toy)}</div>
-            <div class="control-sub">${toy.address} · nearby Bluetooth device</div>
-            <div class="status-line">
-              <span class="status-pill">${toy.present ? "In range" : "Left"}</span>
-              <span class="status-pill">${toy.distance_label || "unknown"} range</span>
-              <span class="status-pill">${toy.service_uuids?.length || 0} advertised service(s)</span>
-            </div>
-          </div>
-          <p class="hint">This device is visible to the scanner but is not recognized as an Adorime/Galaku thruster. Select a device with an <strong>Adorime</strong> or <strong>Galaku svc</strong> badge to connect and control thrust.</p>
-          ${toy.galaku_service ? `<p class="hint">Galaku service UUID detected — if this is your thruster, try power-cycling it so the advertised name (for example BGSF or SN80) appears, then reconnect from the list.</p>` : ""}
+          <p class="hint">This scanned device is not recognized as an Adorime/Galaku thruster, so thrust controls are unavailable. Inspect UUIDs and advertisement data in <strong>Device details</strong> above.</p>
+          ${toy.galaku_service ? `<p class="hint">Galaku control service UUID detected — if this is your thruster, power-cycle it so the advertised name (for example BGSF or SN80) appears, then select it again.</p>` : ""}
         `;
         return;
       }
@@ -1212,6 +1425,7 @@ DASHBOARD_HTML = """
       document.getElementById("updated").textContent = `Updated ${snapshot.generated_at}`;
       renderScannerStatus();
       renderToyList();
+      renderDeviceDetails();
       renderControlPanel();
       renderEvents();
       notifyEvents(snapshot.events || []);

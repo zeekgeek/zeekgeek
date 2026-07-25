@@ -107,6 +107,34 @@ class StateTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(snapshot["toys"][0]["controllable"])
         self.assertEqual(snapshot["adorime_count"], 0)
 
+    async def test_observe_includes_manufacturer_and_uuid_fields(self) -> None:
+        state = ControllerState()
+        await state.observe(
+            ToyObservation(
+                address="AA:BB:CC:DD:EE:07",
+                name="BGSF",
+                rssi=-58,
+                service_uuids=["00001000-0000-1000-8000-00805f9b34fb"],
+                manufacturer_id=0x004C,
+                tx_power=-12,
+                details={
+                    "local_name": "BGSF",
+                    "manufacturer_data": [
+                        {"company_hex": "0x004c", "data_hex": "010203", "data_length": 3}
+                    ],
+                    "service_data": {"0000180f-0000-1000-8000-00805f9b34fb": "64"},
+                    "is_connectable": True,
+                },
+            )
+        )
+        snapshot = await state.snapshot()
+        toy = snapshot["toys"][0]
+        self.assertEqual(toy["local_name"], "BGSF")
+        self.assertTrue(toy["galaku_service"])
+        self.assertEqual(toy["control_uuids"]["service_uuid"], "00001000-0000-1000-8000-00805f9b34fb")
+        self.assertEqual(len(toy["manufacturer_data"]), 1)
+        self.assertEqual(toy["details"]["service_data"]["0000180f-0000-1000-8000-00805f9b34fb"], "64")
+
     async def test_scanner_pause_and_clear_stale(self) -> None:
         state = ControllerState(stale_after=1)
         await state.observe(ToyObservation(address="AA:BB:CC:DD:EE:04", name="BGSF", rssi=-58))

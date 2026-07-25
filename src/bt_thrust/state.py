@@ -19,6 +19,7 @@ from .protocols import (
     catalog_thrust_modes,
     catalog_vibrate_modes,
     has_galaku_service,
+    protocol_config,
     resolve_device_profile,
 )
 
@@ -56,6 +57,7 @@ class ToyTrack:
     time_history: deque[str] = field(default_factory=lambda: deque(maxlen=80))
     service_uuids: list[str] = field(default_factory=list)
     manufacturer_id: int | None = None
+    manufacturer_data: list[dict[str, Any]] = field(default_factory=list)
     tx_power: int | None = None
     details: dict[str, Any] = field(default_factory=dict)
     seen_count: int = 0
@@ -90,6 +92,8 @@ class ToyTrack:
         self.time_history.append(iso_time(now))
         self.service_uuids = observation.service_uuids or self.service_uuids
         self.manufacturer_id = observation.manufacturer_id if observation.manufacturer_id is not None else self.manufacturer_id
+        if observation.details.get("manufacturer_data"):
+            self.manufacturer_data = list(observation.details["manufacturer_data"])
         self.tx_power = observation.tx_power if observation.tx_power is not None else self.tx_power
         self.details.update(observation.details)
         local_name = observation.details.get("local_name")
@@ -161,9 +165,18 @@ class ToyTrack:
         stale_seconds = (now - self.last_seen).total_seconds()
         estimated_distance_m = estimate_distance_meters(smoothed_rssi, self.tx_power)
         self._refresh_findings(stale_seconds=stale_seconds)
+        local_name = self.details.get("local_name")
+        control_uuids: dict[str, str] = {}
+        if profile is not None:
+            config = protocol_config(profile.protocol)
+            control_uuids = {
+                "service_uuid": config["service_uuid"],
+                "tx_uuid": config["tx_uuid"],
+            }
         return {
             "address": self.address,
             "name": self.name,
+            "local_name": local_name if isinstance(local_name, str) else None,
             "display_name": profile.name if profile else (self.name or self.address),
             "brand": profile.brand if profile else "unknown",
             "theme": profile.theme if profile else "classic",
@@ -176,7 +189,10 @@ class ToyTrack:
             "address_type": self.address_type,
             "manufacturer_id": self.manufacturer_id,
             "manufacturer_hex": f"0x{self.manufacturer_id:04x}" if self.manufacturer_id is not None else None,
+            "manufacturer_data": list(self.manufacturer_data),
             "tx_power": self.tx_power,
+            "is_connectable": self.details.get("is_connectable"),
+            "control_uuids": control_uuids,
             "details": self.details,
             "rssi": current_rssi,
             "rssi_smoothed": smoothed_rssi,
@@ -288,11 +304,13 @@ class ControllerState:
                     service_uuids=observation.service_uuids,
                     manufacturer_id=observation.manufacturer_id,
                     tx_power=observation.tx_power,
-                    details=observation.details,
+                    details=dict(observation.details),
                     profile=profile,
                     seen_count=1,
                     levels={motor.id: 0 for motor in profile.motors} if profile else {},
                 )
+                if observation.details.get("manufacturer_data"):
+                    track.manufacturer_data = list(observation.details["manufacturer_data"])
                 track.rssi_history.append(observation.rssi)
                 track.time_history.append(iso_time(observation.observed_at))
                 if profile is not None:
