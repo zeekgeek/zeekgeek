@@ -57,9 +57,12 @@ class StateTests(unittest.IsolatedAsyncioTestCase):
             ToyObservation(address="AA:BB:CC:DD:EE:01", name="BGSF", rssi=-58)
         )
         snapshot = await state.snapshot()
+        self.assertEqual(snapshot["scanner_mode"], "live")
         self.assertEqual(snapshot["toy_count"], 1)
         self.assertEqual(snapshot["toys"][0]["brand"], "adorime")
+        self.assertTrue(snapshot["toys"][0]["controllable"])
         self.assertIn("thrust", snapshot["toys"][0]["levels"])
+        self.assertIn("movement", snapshot["toys"][0])
 
     async def test_set_connection_and_levels(self) -> None:
         state = ControllerState()

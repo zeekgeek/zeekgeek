@@ -12,7 +12,7 @@ from contextlib import suppress
 import uvicorn
 
 from .controller import ToyController
-from .scanner import BleakScannerBackend, DemoScannerBackend
+from .scanner import BleakScannerBackend
 from .state import ControllerState
 from .web import create_app
 
@@ -20,16 +20,10 @@ LOGGER = logging.getLogger(__name__)
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Bluetooth thrust controller with toy scanner dashboard")
+    parser = argparse.ArgumentParser(description="Bluetooth thrust controller with live toy scanner dashboard")
     parser.add_argument("--host", default="127.0.0.1", help="Dashboard host")
     parser.add_argument("--port", type=int, default=8800, help="Dashboard port")
     parser.add_argument("--stale-after", type=float, default=20.0, help="Seconds before a missing toy is marked left")
-    parser.add_argument("--demo", action="store_true", help="Use simulated toys instead of live Bluetooth hardware")
-    parser.add_argument(
-        "--no-auto-demo-fallback",
-        action="store_true",
-        help="Exit if live scanner fails instead of automatically switching to demo mode",
-    )
     parser.add_argument("--log-level", default="info", choices=["debug", "info", "warning", "error"])
     return parser
 
@@ -42,16 +36,9 @@ def main() -> None:
 
 async def run(args: argparse.Namespace) -> None:
     state = ControllerState(stale_after=args.stale_after)
-    controller = ToyController(state=state, demo=args.demo)
+    controller = ToyController(state=state)
     app = create_app(state, controller)
-    scanner_task = asyncio.create_task(
-        _run_scanner(
-            state=state,
-            force_demo=args.demo,
-            auto_demo_fallback=not args.no_auto_demo_fallback,
-        ),
-        name="toy-scanner",
-    )
+    scanner_task = asyncio.create_task(BleakScannerBackend(state).run(), name="toy-scanner")
 
     chosen_port = pick_available_port(args.host, args.port)
     if chosen_port != args.port:
@@ -71,10 +58,7 @@ async def run(args: argparse.Namespace) -> None:
             loop.add_signal_handler(sig, stop_event.set)
 
     print(f"Bluetooth thrust controller dashboard: http://{args.host}:{chosen_port}")
-    if args.demo:
-        print("Running in demo mode with simulated Adorime and Galaku toys.")
-    else:
-        print("Running live Bluetooth scan with automatic demo fallback if unavailable.")
+    print("Running live Bluetooth scan. Power on your toy and keep it in pairing/advertising mode.")
 
     done, pending = await asyncio.wait(
         {scanner_task, server_task, stop_task},
@@ -121,26 +105,6 @@ def _port_is_available(host: str, port: int) -> bool:
             return True
         except OSError:
             return False
-
-
-async def _run_scanner(*, state: ControllerState, force_demo: bool, auto_demo_fallback: bool) -> None:
-    if force_demo:
-        await DemoScannerBackend(state).run()
-        return
-
-    try:
-        await BleakScannerBackend(state).run()
-    except Exception as exc:
-        message = (
-            f"Live scanner unavailable ({type(exc).__name__}: {exc}). "
-            "Switching to demo scanner."
-        )
-        LOGGER.warning(message)
-        await state.add_system_event("scanner-fallback", message)
-        if not auto_demo_fallback:
-            raise
-        print(message)
-        await DemoScannerBackend(state).run()
 
 
 if __name__ == "__main__":

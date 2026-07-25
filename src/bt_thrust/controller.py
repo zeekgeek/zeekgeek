@@ -1,4 +1,4 @@
-"""Live and demo toy connection/command backends."""
+"""Live toy connection and GATT command backend."""
 
 from __future__ import annotations
 
@@ -22,7 +22,6 @@ LOGGER = logging.getLogger(__name__)
 @dataclass
 class ToyController:
     state: ControllerState
-    demo: bool = False
     _pattern_tasks: dict[str, asyncio.Task] = field(default_factory=dict)
     _clients: dict[str, tuple[object, dict[str, str]]] = field(default_factory=dict)
 
@@ -35,9 +34,7 @@ class ToyController:
         if not track.present:
             raise ValueError("Toy is not currently in range.")
 
-        if not self.demo:
-            await self._connect_live(address, track.profile)
-
+        await self._connect_live(address, track.profile)
         await self.state.set_connection(address, True)
         return {"status": "connected", "address": address}
 
@@ -46,8 +43,7 @@ class ToyController:
         track = await self.state.get_track(address)
         if track and track.profile:
             await self._send_levels(address, track.profile, {motor.id: 0 for motor in track.profile.motors})
-        if not self.demo:
-            await self._disconnect_live(address)
+        await self._disconnect_live(address)
         await self.state.set_connection(address, False)
         return {"status": "disconnected", "address": address}
 
@@ -107,9 +103,7 @@ class ToyController:
 
     async def _send_levels(self, address: str, profile: DeviceProfile, levels: dict[str, int]) -> None:
         payload = build_command(profile, levels)
-        if self.demo:
-            LOGGER.debug("Demo command for %s: %s -> %s", address, levels, payload.hex())
-            return
+        LOGGER.debug("Command for %s: %s -> %s", address, levels, payload.hex())
         await self._write_live(address, profile, payload)
 
     async def _connect_live(self, address: str, profile: DeviceProfile) -> None:

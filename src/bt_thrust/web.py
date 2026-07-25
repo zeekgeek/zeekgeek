@@ -107,8 +107,8 @@ DASHBOARD_HTML = """
       --accent: #38bdf8;
       --accent-soft: rgba(56, 189, 248, 0.16);
       --green: #22c55e;
-      --rose: #ec4899;
-      --violet: #a855f7;
+      --yellow: #eab308;
+      --red: #ef4444;
     }
     body.theme-adorime {
       --bg: #160812;
@@ -124,18 +124,11 @@ DASHBOARD_HTML = """
       --accent: #c084fc;
       --accent-soft: rgba(192, 132, 252, 0.18);
     }
-    body.theme-classic {
-      --bg: #0a0d16;
-      --panel: #121827;
-      --panel-2: #182033;
-      --accent: #38bdf8;
-      --accent-soft: rgba(56, 189, 248, 0.16);
-    }
     * { box-sizing: border-box; }
     body {
       margin: 0;
       font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
-      background: radial-gradient(circle at top, color-mix(in srgb, var(--accent) 18%, transparent), transparent 42%), var(--bg);
+      background: radial-gradient(circle at top, color-mix(in srgb, var(--accent) 16%, transparent), transparent 40%), var(--bg);
       color: var(--text);
       min-height: 100vh;
     }
@@ -152,9 +145,19 @@ DASHBOARD_HTML = """
     h2 { margin: 0 0 12px 0; font-size: 17px; }
     .stats { display: flex; gap: 14px; color: var(--muted); font-size: 14px; flex-wrap: wrap; margin-top: 6px; }
     .stats b { color: var(--text); }
+    .live-badge {
+      background: rgba(34,197,94,.15);
+      color: var(--green);
+      border-radius: 999px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
     main {
       display: grid;
-      grid-template-columns: minmax(320px, 390px) 1fr;
+      grid-template-columns: minmax(300px, 360px) 1fr;
       gap: 16px;
       padding: 16px;
       align-items: start;
@@ -167,7 +170,7 @@ DASHBOARD_HTML = """
       box-shadow: 0 18px 44px rgba(0,0,0,.28);
     }
     .stack { display: grid; gap: 16px; }
-    .toy-list { max-height: 74vh; overflow: auto; }
+    .toy-list { max-height: 78vh; overflow: auto; }
     .toy {
       border: 1px solid #26324b;
       border-radius: 14px;
@@ -175,14 +178,13 @@ DASHBOARD_HTML = """
       margin: 8px 0;
       background: var(--panel-2);
       cursor: pointer;
-      transition: transform .12s ease, border-color .12s ease;
     }
-    .toy:hover { transform: translateY(-1px); }
-    .toy.active { outline: 2px solid var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, #26324b); }
+    .toy.active { outline: 2px solid var(--accent); }
     .toy.connected { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--green) 45%, transparent); }
+    .toy.unrecognized { opacity: .72; }
     .toy-title { display: flex; justify-content: space-between; gap: 10px; align-items: start; }
     .name { font-weight: 800; }
-    .addr { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+    .addr { color: var(--muted); font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
     .badge {
       border-radius: 999px;
       padding: 4px 8px;
@@ -190,16 +192,14 @@ DASHBOARD_HTML = """
       font-weight: 700;
       white-space: nowrap;
       text-transform: uppercase;
-      letter-spacing: .04em;
     }
     .brand-adorime { background: rgba(236, 72, 153, .18); color: #f9a8d4; }
     .brand-galaku { background: rgba(168, 85, 247, .18); color: #d8b4fe; }
     .brand-unknown { background: rgba(148, 163, 184, .15); color: var(--muted); }
-    .brand-generic { background: rgba(56, 189, 248, .15); color: #7dd3fc; }
     .present { background: rgba(34,197,94,.15); color: var(--green); }
     .gone { background: rgba(148,163,184,.15); color: var(--muted); }
     .connected { background: rgba(56,189,248,.15); color: #7dd3fc; }
-    .signal-row { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--muted); margin: 8px 0 4px 0; }
+    .signal-row { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--muted); margin: 8px 0 4px 0; }
     .bar { width: 100%; height: 8px; border-radius: 999px; background: #091427; overflow: hidden; border: 1px solid #22324a; }
     .bar > div { height: 100%; background: linear-gradient(90deg, #312e81, var(--accent), #22c55e); }
     .control-head {
@@ -208,10 +208,10 @@ DASHBOARD_HTML = """
       gap: 12px;
       align-items: center;
       flex-wrap: wrap;
-      margin-bottom: 14px;
+      margin-bottom: 16px;
     }
-    .control-title { font-size: 24px; font-weight: 800; }
-    .control-sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+    .control-title { font-size: 26px; font-weight: 800; line-height: 1.15; }
+    .control-sub { color: var(--muted); font-size: 13px; margin-top: 6px; }
     .actions { display: flex; gap: 10px; flex-wrap: wrap; }
     button {
       background: var(--accent);
@@ -222,61 +222,82 @@ DASHBOARD_HTML = """
       font-weight: 700;
       cursor: pointer;
     }
+    button:disabled { opacity: .45; cursor: not-allowed; }
     button.secondary {
       background: transparent;
       color: var(--text);
       border: 1px solid color-mix(in srgb, var(--accent) 35%, #334155);
     }
-    button.danger { background: #ef4444; color: white; }
-    .slider-block { margin: 16px 0; }
-    .slider-label { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 14px; }
-    .slider-label span:last-child { color: var(--accent); font-weight: 800; }
-    input[type=range] { width: 100%; accent-color: var(--accent); }
+    button.danger { background: var(--red); color: white; }
+    .hero-card {
+      background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 20%, var(--panel-2)), var(--panel-2));
+      border-radius: 16px;
+      padding: 18px;
+      border: 1px solid color-mix(in srgb, var(--accent) 28%, #26324b);
+      margin-bottom: 18px;
+    }
+    .meter-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 12px;
+    }
+    .meter {
+      background: rgba(0,0,0,.18);
+      border-radius: 14px;
+      padding: 14px;
+      border: 1px solid #26324b;
+      text-align: center;
+    }
+    .meter-value { font-size: 34px; font-weight: 800; color: var(--accent); line-height: 1; }
+    .meter-label { color: var(--muted); font-size: 12px; margin-top: 6px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+    .slider-block {
+      background: var(--panel-2);
+      border: 1px solid #26324b;
+      border-radius: 14px;
+      padding: 16px;
+      margin: 12px 0;
+    }
+    .slider-label { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 15px; font-weight: 700; }
+    .slider-label span:last-child { color: var(--accent); font-size: 18px; }
+    input[type=range] { width: 100%; accent-color: var(--accent); height: 8px; }
     .patterns {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
       gap: 10px;
-      margin-top: 12px;
     }
     .pattern {
       background: var(--panel-2);
       border: 1px solid #26324b;
       border-radius: 12px;
-      padding: 12px;
+      padding: 14px 10px;
       text-align: center;
       cursor: pointer;
-      transition: border-color .12s ease, background .12s ease;
     }
     .pattern:hover, .pattern.active {
       border-color: var(--accent);
       background: var(--accent-soft);
     }
-    .pattern-icon { font-size: 22px; margin-bottom: 6px; }
+    .pattern:disabled { opacity: .45; cursor: not-allowed; }
+    .pattern-icon { font-size: 24px; margin-bottom: 6px; }
     .pattern-label { font-size: 13px; font-weight: 700; }
-    .meter-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-      gap: 12px;
-      margin-top: 12px;
+    .status-line {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+      font-size: 12px;
+      color: var(--muted);
     }
-    .meter {
-      background: var(--panel-2);
-      border-radius: 14px;
-      padding: 12px;
+    .status-pill {
+      background: rgba(0,0,0,.18);
       border: 1px solid #26324b;
+      border-radius: 999px;
+      padding: 4px 10px;
     }
-    .meter-value { font-size: 28px; font-weight: 800; color: var(--accent); }
-    .meter-label { color: var(--muted); font-size: 12px; margin-top: 4px; }
-    .events { max-height: 220px; overflow: auto; color: var(--muted); font-size: 13px; }
+    .events { max-height: 180px; overflow: auto; color: var(--muted); font-size: 13px; }
     .event { padding: 6px 0; border-bottom: 1px solid #1f2937; }
     .empty { color: var(--muted); text-align: center; padding: 34px 0; }
-    .hero-card {
-      background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 22%, var(--panel-2)), var(--panel-2));
-      border-radius: 16px;
-      padding: 16px;
-      border: 1px solid color-mix(in srgb, var(--accent) 28%, #26324b);
-      margin-bottom: 16px;
-    }
+    .hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
     @media (max-width: 980px) {
       main { grid-template-columns: 1fr; }
       .toy-list { max-height: none; }
@@ -288,9 +309,13 @@ DASHBOARD_HTML = """
     <div>
       <h1>Bluetooth Thrust Controller</h1>
       <div class="stats">
-        <span id="counts">Waiting for scan data...</span>
+        <span id="counts">Waiting for live scan...</span>
         <span id="updated"></span>
       </div>
+    </div>
+    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+      <span class="live-badge">Live BLE</span>
+      <button id="notify">Enable notifications</button>
     </div>
   </header>
 
@@ -304,7 +329,6 @@ DASHBOARD_HTML = """
       <section class="panel">
         <div id="control-panel" class="empty">Select a recognized toy to open thrust controls.</div>
       </section>
-
       <section class="panel">
         <h2>Recent events</h2>
         <div id="events" class="events"></div>
@@ -316,6 +340,8 @@ DASHBOARD_HTML = """
     let snapshot = null;
     let selectedAddress = null;
     let localLevels = {};
+    let controlTimer = null;
+    const notifiedEvents = new Set();
 
     const themes = {
       adorime: "theme-adorime",
@@ -323,6 +349,14 @@ DASHBOARD_HTML = """
       classic: "theme-classic",
       unknown: "theme-classic",
       generic: "theme-classic",
+    };
+
+    document.getElementById("notify").onclick = async () => {
+      if (!("Notification" in window)) {
+        alert("This browser does not support notifications.");
+        return;
+      }
+      await Notification.requestPermission();
     };
 
     function brandBadge(brand) {
@@ -338,6 +372,12 @@ DASHBOARD_HTML = """
     function rssiBar(rssi) {
       const pct = Math.max(4, Math.min(100, ((rssi + 100) / 55) * 100));
       return `<div class="bar"><div style="width:${pct}%"></div></div>`;
+    }
+
+    function formatDistance(meters) {
+      if (typeof meters !== "number") return "distance unknown";
+      if (meters < 1) return `${Math.round(meters * 100)} cm est.`;
+      return `${meters.toFixed(2)} m est.`;
     }
 
     async function api(path, options) {
@@ -375,6 +415,11 @@ DASHBOARD_HTML = """
       });
     }
 
+    function queueLiveControl(address) {
+      clearTimeout(controlTimer);
+      controlTimer = setTimeout(() => sendLevels(address).catch((err) => console.error(err)), 120);
+    }
+
     async function runPattern(address, pattern) {
       await api(`/api/toys/${encodeURIComponent(address)}/pattern`, {
         method: "POST",
@@ -385,23 +430,37 @@ DASHBOARD_HTML = """
 
     function selectedToy() {
       if (!snapshot) return null;
-      return snapshot.toys.find((toy) => toy.address === selectedAddress) || snapshot.toys[0] || null;
+      const selected = snapshot.toys.find((toy) => toy.address === selectedAddress);
+      if (selected) return selected;
+      return snapshot.toys.find((toy) => toy.controllable) || snapshot.toys[0] || null;
     }
 
     function applyTheme(theme) {
       document.body.className = themes[theme] || "theme-classic";
     }
 
+    function notifyEvents(events) {
+      if (!("Notification" in window) || Notification.permission !== "granted") return;
+      for (const event of events.slice(-8)) {
+        const key = `${event.at}:${event.type}:${event.address}`;
+        if (notifiedEvents.has(key)) continue;
+        notifiedEvents.add(key);
+        if (["new", "entered", "left", "connected", "disconnected"].includes(event.type)) {
+          new Notification(`${event.type}: ${event.name || event.address}`, { body: event.message });
+        }
+      }
+    }
+
     function renderToyList() {
       const root = document.getElementById("toys");
       if (!snapshot || snapshot.toys.length === 0) {
         root.className = "toy-list empty";
-        root.textContent = "No compatible toys observed yet.";
+        root.textContent = "No compatible toys observed yet. Power on your toy and keep Bluetooth advertising active.";
         return;
       }
       root.className = "toy-list";
       root.innerHTML = snapshot.toys.map((toy) => `
-        <article class="toy ${toy.address === selectedAddress ? "active" : ""} ${toy.connected ? "connected" : ""}" data-address="${toy.address}">
+        <article class="toy ${toy.address === selectedAddress ? "active" : ""} ${toy.connected ? "connected" : ""} ${toy.controllable ? "" : "unrecognized"}" data-address="${toy.address}">
           <div class="toy-title">
             <div>
               <div class="name">${toy.display_name}</div>
@@ -412,7 +471,10 @@ DASHBOARD_HTML = """
               ${statusBadge(toy)}
             </div>
           </div>
-          <div class="signal-row"><span>Signal</span><span>${toy.rssi ?? "—"} dBm</span></div>
+          <div class="signal-row">
+            <span>RSSI ${toy.rssi ?? "?"} dBm · ${toy.movement || "collecting"}</span>
+            <span>${formatDistance(toy.estimated_distance_m)}</span>
+          </div>
           ${rssiBar(toy.rssi ?? -100)}
         </article>
       `).join("");
@@ -437,19 +499,30 @@ DASHBOARD_HTML = """
         Object.assign(localLevels[toy.address], toy.levels);
       }
 
-      const motors = toy.motors.length ? toy.motors : [{ id: "vibrate", label: "Output", type: "vibrate" }];
+      if (!toy.controllable) {
+        root.className = "";
+        root.innerHTML = `
+          <div class="hero-card">
+            <div class="control-title">${toy.display_name}</div>
+            <div class="control-sub">${toy.address} · unrecognized profile</div>
+            <p class="hint">This device was seen over BLE but does not match a known Adorime/Galaku profile yet.</p>
+          </div>`;
+        return;
+      }
+
+      const motors = toy.motors.length ? toy.motors : [{ id: "vibrate", label: "Vibration", type: "vibrate" }];
       const sliders = motors.map((motor) => `
         <div class="slider-block">
           <div class="slider-label"><span>${motor.label}</span><span id="value-${motor.id}">${localLevels[toy.address][motor.id] ?? 0}%</span></div>
-          <input type="range" min="0" max="100" value="${localLevels[toy.address][motor.id] ?? 0}" data-motor="${motor.id}" ${toy.connected ? "" : "disabled"}>
+          <input type="range" min="0" max="100" step="1" value="${localLevels[toy.address][motor.id] ?? 0}" data-motor="${motor.id}" ${toy.connected ? "" : "disabled"}>
         </div>
       `).join("");
 
       const patterns = (snapshot.patterns || []).map((pattern) => `
-        <div class="pattern ${toy.active_pattern === pattern.id ? "active" : ""}" data-pattern="${pattern.id}">
+        <button type="button" class="pattern ${toy.active_pattern === pattern.id ? "active" : ""}" data-pattern="${pattern.id}" ${toy.connected ? "" : "disabled"}>
           <div class="pattern-icon">${pattern.icon}</div>
           <div class="pattern-label">${pattern.label}</div>
-        </div>
+        </button>
       `).join("");
 
       root.className = "";
@@ -459,11 +532,17 @@ DASHBOARD_HTML = """
             <div>
               <div class="control-title">${toy.display_name}</div>
               <div class="control-sub">${toy.protocol ? toy.protocol.toUpperCase() + " protocol" : "Unknown protocol"} · ${toy.address}</div>
+              <div class="status-line">
+                <span class="status-pill">${toy.connected ? "Linked" : "Not connected"}</span>
+                <span class="status-pill">${toy.distance_label || "unknown"} range</span>
+                <span class="status-pill">${toy.movement || "collecting"}</span>
+                ${toy.active_pattern ? `<span class="status-pill">Pattern: ${toy.active_pattern}</span>` : ""}
+              </div>
             </div>
             <div class="actions">
               ${toy.connected
                 ? `<button class="secondary" id="disconnect-btn">Disconnect</button>`
-                : `<button id="connect-btn" ${toy.brand === "unknown" ? "disabled title='Profile not recognized'" : ""}>Connect</button>`}
+                : `<button id="connect-btn">Connect</button>`}
               <button class="danger" id="stop-btn" ${toy.connected ? "" : "disabled"}>Stop all</button>
             </div>
           </div>
@@ -477,21 +556,17 @@ DASHBOARD_HTML = """
           </div>
         </div>
 
-        <h2>Manual controls</h2>
+        <h2>Thrust controls</h2>
+        <p class="hint">Sliders send live commands while connected. Adjust thrust and vibration independently.</p>
         ${sliders}
-        <div class="actions" style="margin-top:12px;">
-          <button id="apply-btn" ${toy.connected ? "" : "disabled"}>Apply levels</button>
-        </div>
 
         <h2 style="margin-top:22px;">Pattern presets</h2>
         <div class="patterns">${patterns}</div>
       `;
 
-      const connectBtn = document.getElementById("connect-btn");
-      if (connectBtn) connectBtn.addEventListener("click", () => connectToy(toy.address));
+      document.getElementById("connect-btn")?.addEventListener("click", () => connectToy(toy.address));
       document.getElementById("disconnect-btn")?.addEventListener("click", () => disconnectToy(toy.address));
       document.getElementById("stop-btn")?.addEventListener("click", () => runPattern(toy.address, "stop"));
-      document.getElementById("apply-btn")?.addEventListener("click", () => sendLevels(toy.address));
 
       root.querySelectorAll("input[type=range]").forEach((input) => {
         input.addEventListener("input", () => {
@@ -499,12 +574,13 @@ DASHBOARD_HTML = """
           localLevels[toy.address][motor] = Number(input.value);
           document.getElementById(`value-${motor}`).textContent = `${input.value}%`;
           document.getElementById(`meter-${motor}`).textContent = input.value;
+          if (toy.connected) queueLiveControl(toy.address);
         });
       });
 
       root.querySelectorAll(".pattern").forEach((node) => {
         node.addEventListener("click", () => {
-          if (!toy.connected) return;
+          if (!toy.connected || node.disabled) return;
           runPattern(toy.address, node.dataset.pattern);
         });
       });
@@ -524,11 +600,12 @@ DASHBOARD_HTML = """
         selectedAddress = snapshot.selected_address;
       }
       document.getElementById("counts").innerHTML =
-        `<b>${snapshot.present_count}</b> in range · <b>${snapshot.connected_count}</b> connected · <b>${snapshot.toy_count}</b> total`;
+        `<b>${snapshot.present_count}</b> in range · <b>${snapshot.connected_count}</b> connected · <b>${snapshot.controllable_count}</b> recognized`;
       document.getElementById("updated").textContent = `Updated ${snapshot.generated_at}`;
       renderToyList();
       renderControlPanel();
       renderEvents();
+      notifyEvents(snapshot.events || []);
     }
 
     const source = new EventSource("/api/events");

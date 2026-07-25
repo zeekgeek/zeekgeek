@@ -116,20 +116,16 @@ write format (community-documented via Buttplug/Intiface research).
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .
-python3 -m bt_thrust --demo
-```
-
-Open <http://127.0.0.1:8800>, select a scanned toy, click **Connect**, then use
-the sliders or pattern presets (Gentle Wave, Pulse, Ramp Up, Deep Thrust).
-
-For live Bluetooth control (Linux/macOS with a powered adapter):
-
-```bash
 python3 -m bt_thrust
 ```
 
-If live scanning is unavailable the app auto-switches to demo mode and posts a
-system event in the UI.
+Open <http://127.0.0.1:8800>, select a scanned toy, click **Connect**, then use
+the live thrust/vibration sliders or pattern presets (Gentle Wave, Pulse, Ramp Up,
+Deep Thrust).
+
+Requires a powered Bluetooth adapter and a toy in advertising/pairing mode.
+Linux hosts usually need `bluetoothd` running and BLE scan permission for the
+current user/session.
 
 ## Dashboard behavior
 
@@ -148,11 +144,9 @@ system event in the UI.
 python3 -m bt_thrust --host 127.0.0.1 --port 8800 --stale-after 20
 ```
 
-- `--demo`: simulate Adorime/Galaku toys instead of scanning hardware
 - `--host`: dashboard bind address
 - `--port`: dashboard port (default `8800`)
 - `--stale-after`: seconds without sightings before a toy is marked as left
-- `--no-auto-demo-fallback`: exit instead of auto-switching to demo mode
 - `--log-level`: `debug`, `info`, `warning`, or `error`
 
 ## API
