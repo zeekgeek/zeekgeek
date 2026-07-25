@@ -193,6 +193,65 @@ DASHBOARD_HTML = """
     }
     .stack { display: grid; gap: 16px; }
     .toy-list { max-height: 78vh; overflow: auto; }
+    .found-devices-panel { margin-bottom: 0; }
+    .found-devices-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    .found-devices-summary {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .found-devices-summary b { color: var(--text); }
+    .device-table-wrap {
+      overflow: auto;
+      border: 1px solid #26324b;
+      border-radius: 12px;
+      background: rgba(0,0,0,.12);
+    }
+    .device-table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 640px;
+    }
+    .device-table thead th {
+      position: sticky;
+      top: 0;
+      background: var(--panel-2);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid #26324b;
+    }
+    .device-table tbody tr {
+      cursor: pointer;
+      border-bottom: 1px solid #1f2937;
+    }
+    .device-table tbody tr:hover { background: rgba(244,114,182,.06); }
+    .device-table tbody tr.active { background: var(--accent-soft); }
+    .device-table tbody tr.connected { box-shadow: inset 3px 0 0 var(--green); }
+    .device-table td {
+      padding: 12px;
+      font-size: 13px;
+      vertical-align: top;
+    }
+    .device-table .col-name { font-weight: 800; min-width: 140px; }
+    .device-table .col-addr {
+      font-family: ui-monospace, Menlo, monospace;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .device-table .col-rssi { white-space: nowrap; font-weight: 700; }
+    .device-table .col-meta { color: var(--muted); font-size: 12px; }
+    .device-table .badge-cell { display: flex; gap: 6px; flex-wrap: wrap; }
     .toy {
       border: 1px solid #26324b;
       border-radius: 14px;
@@ -567,7 +626,6 @@ DASHBOARD_HTML = """
           </label>
         </div>
       </div>
-      <div id="toys" class="toy-list empty">Turn scan ON and wait for nearby Bluetooth devices...</div>
     </section>
 
     <section class="panel">
@@ -576,9 +634,19 @@ DASHBOARD_HTML = """
       <div id="device-details" class="empty">Select a scanned device to inspect UUIDs and advertisement data.</div>
     </section>
 
+    <section class="panel found-devices-panel">
+      <div class="found-devices-head">
+        <h2 style="margin:0;">Found Bluetooth devices</h2>
+        <div class="found-devices-summary" id="found-devices-summary">Waiting for scan results...</div>
+      </div>
+      <div class="device-table-wrap">
+        <div id="found-devices" class="empty" style="padding:24px;">Turn scan ON to populate the device list.</div>
+      </div>
+    </section>
+
     <section class="panel">
       <h2>Thruster controls</h2>
-      <div id="control-panel" class="empty">Select an Adorime/Galaku device above to connect and control thrust.</div>
+      <div id="control-panel" class="empty">Select an Adorime/Galaku device from the list above to connect and control thrust.</div>
     </section>
 
     <section class="panel">
@@ -1192,43 +1260,65 @@ DASHBOARD_HTML = """
     }
 
     function renderToyList() {
-      const root = document.getElementById("toys");
+      const root = document.getElementById("found-devices");
+      const summary = document.getElementById("found-devices-summary");
       const devices = filteredDevices();
-      if (!snapshot || snapshot.toys.length === 0) {
-        root.className = "toy-list empty";
-        root.textContent = "No Bluetooth devices observed yet. Make sure Bluetooth is enabled and devices are advertising nearby.";
+      const total = snapshot?.toys?.length || 0;
+      const present = snapshot?.present_count || 0;
+      const adorime = snapshot?.adorime_count || 0;
+
+      if (summary) {
+        summary.innerHTML = total
+          ? `<b>${devices.length}</b> shown · <b>${total}</b> found · <b>${present}</b> in range · <b>${adorime}</b> Adorime`
+          : "No devices found yet";
+      }
+
+      if (!snapshot || total === 0) {
+        root.className = "empty";
+        root.style.padding = "24px";
+        root.textContent = "No Bluetooth devices observed yet. Click Scan ON or Deep Scan and keep devices advertising nearby.";
         return;
       }
       if (devices.length === 0) {
-        root.className = "toy-list empty";
-        root.textContent = "No devices match the current scanner filter.";
+        root.className = "empty";
+        root.style.padding = "24px";
+        root.textContent = "No devices match the current filter. Try setting Filter to All devices.";
         return;
       }
-      root.className = "toy-list";
-      root.innerHTML = devices.map((toy) => `
-        <article class="toy ${toy.controllable ? "controllable" : "other"} ${toy.address === selectedAddress ? "active" : ""} ${toy.connected ? "connected" : ""}" data-address="${toy.address}">
-          <div class="toy-title">
-            <div>
-              <div class="name">${deviceTitle(toy)}</div>
-              <div class="addr">${toy.address}${toy.name && toy.name !== deviceTitle(toy) ? " · " + toy.name : ""}</div>
-            </div>
-            <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:end;">
-              ${brandBadge(toy)}
-              ${statusBadge(toy)}
-            </div>
-          </div>
-          <div class="signal-row">
-            <span>RSSI ${toy.rssi ?? "?"} dBm · ${toy.movement || "collecting"} · ${toy.address_family || "addr ?"}</span>
-            <span>${formatDistance(toy.estimated_distance_m)}</span>
-          </div>
-          ${toy.service_uuids?.length ? `<div class="signal-row"><span>${toy.service_uuids.length} service UUID(s)</span><span>${escapeHtml((toy.service_uuids[0] || "").slice(0, 18))}${toy.service_uuids[0]?.length > 18 ? "…" : ""}</span></div>` : ""}
-          ${toy.manufacturer_hex ? `<div class="signal-row"><span>MFG ${toy.manufacturer_hex}</span><span>${toy.manufacturer_data?.length || 0} mfg record(s)</span></div>` : ""}
-          ${toy.galaku_service ? `<div class="signal-row"><span>Galaku control service detected</span><span>${toy.controllable ? "Ready to connect" : "Checking profile"}</span></div>` : ""}
-          ${rssiBar(toy.rssi ?? -100)}
-        </article>
-      `).join("");
-      root.querySelectorAll(".toy").forEach((node) => {
-        node.addEventListener("click", () => selectToy(node.dataset.address));
+
+      root.className = "";
+      root.style.padding = "0";
+      root.innerHTML = `
+        <table class="device-table">
+          <thead>
+            <tr>
+              <th>Device</th>
+              <th>Address</th>
+              <th>Signal</th>
+              <th>Distance</th>
+              <th>Services</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${devices.map((toy) => `
+              <tr class="${toy.controllable ? "controllable" : "other"} ${toy.address === selectedAddress ? "active" : ""} ${toy.connected ? "connected" : ""}" data-address="${escapeHtml(toy.address)}">
+                <td class="col-name">
+                  ${escapeHtml(deviceTitle(toy))}
+                  <div class="col-meta">${escapeHtml(toy.name && toy.name !== deviceTitle(toy) ? toy.name : (toy.local_name || "Unnamed"))}</div>
+                </td>
+                <td class="col-addr">${escapeHtml(toy.address)}</td>
+                <td class="col-rssi">${toy.rssi ?? "?"} dBm<br><span class="col-meta">${escapeHtml(toy.movement || "collecting")}</span></td>
+                <td class="col-meta">${escapeHtml(formatDistance(toy.estimated_distance_m))}<br>${escapeHtml(toy.distance_label || "")}</td>
+                <td class="col-meta">${toy.service_uuids?.length || 0} UUID(s)${toy.galaku_service ? "<br>Galaku svc" : ""}${toy.manufacturer_hex ? `<br>${escapeHtml(toy.manufacturer_hex)}` : ""}</td>
+                <td><div class="badge-cell">${brandBadge(toy)} ${statusBadge(toy)}</div></td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      `;
+      root.querySelectorAll("tbody tr").forEach((row) => {
+        row.addEventListener("click", () => selectToy(row.dataset.address));
       });
     }
 
