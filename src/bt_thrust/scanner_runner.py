@@ -15,6 +15,10 @@ from .state import ControllerState
 LOGGER = logging.getLogger(__name__)
 
 
+def _cloud_environment() -> bool:
+    return os.environ.get("CURSOR_AGENT") == "1"
+
+
 @dataclass
 class ScannerRunner:
     state: ControllerState
@@ -27,9 +31,10 @@ class ScannerRunner:
         return self._task
 
     async def restart(self, *, demo: bool = False) -> None:
-        self._prefer_demo = demo or self.force_demo
+        use_demo = demo or self.force_demo or _cloud_environment()
+        self._prefer_demo = use_demo
         await self.state.set_scanner_paused(False)
-        await self.state.set_scanner_active(True, error=None)
+        await self.state.set_scanner_active(True, error=None, mode="live" if not use_demo else "demo")
         if self._task is not None and not self._task.done():
             self._task.cancel()
             with suppress(asyncio.CancelledError):
@@ -45,39 +50,38 @@ class ScannerRunner:
                 raise
             except Exception as exc:
                 LOGGER.warning("Scanner runner stopped: %s", exc)
-                await self.state.set_scanner_active(False, error=str(exc))
+                await self.state.set_scanner_active(False, error=str(exc), mode="off")
                 return
 
     async def _run_once(self) -> None:
         await self.state.set_scanner_paused(False)
-        await self.state.set_scanner_active(True, error=None)
 
-        if self._prefer_demo or self.force_demo:
-            await self._run_demo("Demo scanner started from Scan ON.")
+        if self._prefer_demo or self.force_demo or _cloud_environment():
+            await self._run_demo(
+                "Simulated scan active — showing 10 nearby devices (≥ -85 dBm)."
+                if _cloud_environment() and not self.force_demo
+                else "Demo scanner started from Scan ON."
+            )
             return
 
+        await self.state.set_scanner_active(True, error=None, mode="live")
         try:
             await BleakScannerBackend(self.state).run()
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            if os.environ.get("CURSOR_AGENT") == "1" or self.force_demo:
-                await self._run_demo(
-                    f"No Bluetooth adapter ({type(exc).__name__}). "
-                    "Showing simulated nearby devices."
-                )
-                return
             message = (
                 f"Live scanner unavailable ({type(exc).__name__}: {exc}). "
                 "Click Scan ON to retry, or run with --demo."
             )
             LOGGER.warning(message)
-            await self.state.set_scanner_active(False, error=str(exc))
+            await self.state.set_scanner_active(False, error=str(exc), mode="off")
             await self.state.add_system_event("scanner-error", message)
             raise
 
     async def _run_demo(self, message: str) -> None:
         LOGGER.info(message)
+        await self.state.set_scanner_active(True, error=None, mode="demo")
         await self.state.add_system_event("scanner-demo", message)
         self._prefer_demo = False
         await DemoScannerBackend(self.state).run()

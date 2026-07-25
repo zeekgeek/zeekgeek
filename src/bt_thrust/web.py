@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from collections.abc import AsyncIterator
 
 from fastapi import FastAPI, HTTPException
@@ -117,9 +118,18 @@ def create_app(
     async def start_scanner() -> JSONResponse:
         if scanner_runner is None:
             raise HTTPException(status_code=503, detail="Scanner runner unavailable")
-        await scanner_runner.restart(demo=False)
+        await scanner_runner.restart(demo=os.environ.get("CURSOR_AGENT") == "1")
         snapshot = await state.snapshot()
-        return JSONResponse({"started": True, "scanner": snapshot["scanner"]})
+        return JSONResponse(
+            {
+                "started": True,
+                "scanner": snapshot["scanner"],
+                "device_count": snapshot["device_count"],
+                "present_count": snapshot["present_count"],
+                "controllable_count": snapshot["controllable_count"],
+                "toys": snapshot["toys"],
+            }
+        )
 
     @app.post("/api/scanner/clear-stale")
     async def clear_stale_devices() -> JSONResponse:
@@ -473,7 +483,7 @@ DASHBOARD_HTML = """
     .nearby-quick-item {
       display: grid;
       grid-template-columns: 1fr auto auto;
-      gap: 8px;
+      gap: 4px 8px;
       align-items: center;
       padding: 7px 10px;
       border-radius: 10px;
@@ -517,6 +527,28 @@ DASHBOARD_HTML = """
       font-size: 12px;
       padding: 10px 4px;
       text-align: center;
+    }
+    .scan-found-summary {
+      font-size: 13px;
+      line-height: 1.45;
+      color: var(--muted);
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: rgba(0,0,0,.14);
+      border: 1px solid #26324b;
+      margin-bottom: 4px;
+    }
+    .scan-found-summary.active {
+      color: var(--text);
+      border-color: color-mix(in srgb, var(--green) 35%, #26324b);
+      background: rgba(34,197,94,.08);
+    }
+    .scan-found-summary b { color: var(--text); }
+    .nearby-quick-item .nearby-quick-addr {
+      grid-column: 1 / -1;
+      font-size: 10px;
+      color: var(--muted);
+      font-family: ui-monospace, Menlo, monospace;
     }
     .scanner-thruster {
       margin-top: 14px;
@@ -880,6 +912,7 @@ DASHBOARD_HTML = """
           <span class="scanner-status"><span class="scanner-dot" id="scanner-dot"></span><span id="scanner-status-text">Scanner starting</span></span>
           <button type="button" class="secondary" id="scanner-clear">Clear left</button>
         </div>
+        <div id="scan-found-summary" class="scan-found-summary">Click <strong>Scan ON</strong> to discover nearby Bluetooth devices.</div>
         <div class="scanner-row scanner-controls">
           <label>Filter
             <select id="device-filter">
@@ -911,8 +944,8 @@ DASHBOARD_HTML = """
       </div>
       <div class="nearby-quick">
         <div class="nearby-quick-head">
-          <strong>Nearby devices</strong>
-          <span class="hint" id="nearby-quick-summary">≥ -85 dBm · showing up to 10</span>
+          <strong>Devices found</strong>
+          <span class="hint" id="nearby-quick-summary">Scan ON to list everything nearby</span>
         </div>
         <div id="nearby-quick-list" class="nearby-quick-list">
           <div class="nearby-quick-empty">Scanning for nearby devices…</div>
@@ -1126,7 +1159,12 @@ DASHBOARD_HTML = """
                 body: JSON.stringify({ paused: true }),
               });
             } else if (scanner.error || !scanner.active) {
-              await api("/api/scanner/start", { method: "POST" });
+              const result = await api("/api/scanner/start", { method: "POST" });
+              const count = result.present_count ?? 0;
+              showError(count
+                ? `Scan ON — found ${count} device(s) in range (${result.device_count ?? 0} total seen).`
+                : "Scan ON — listening for devices…");
+              return;
             } else {
               await api("/api/scanner/pause", {
                 method: "POST",
@@ -1199,6 +1237,55 @@ DASHBOARD_HTML = """
       });
     }
 
+    function foundDevicesForScan(maxCount = 10) {
+      if (!snapshot) return [];
+      return snapshot.toys
+        .filter((toy) => toy.present)
+        .sort((a, b) => (b.rssi ?? -999) - (a.rssi ?? -999))
+        .slice(0, maxCount);
+    }
+
+    function renderScanFoundSummary() {
+      const el = document.getElementById("scan-found-summary");
+      if (!el || !snapshot) return;
+
+      const scanner = snapshot.scanner || {};
+      const all = snapshot.toys || [];
+      const present = all.filter((toy) => toy.present);
+      const strong = present.filter((toy) => typeof toy.rssi === "number" && toy.rssi >= -85);
+      const controllable = present.filter((toy) => toy.controllable);
+      const mode = scanner.mode || snapshot.scanner_mode || "unknown";
+
+      el.classList.remove("active");
+
+      if (scanner.paused) {
+        el.innerHTML = "Scan is <b>OFF</b>. Click <b>Scan ON</b> to discover nearby Bluetooth devices.";
+        return;
+      }
+      if (scanner.error) {
+        el.innerHTML = `Scan failed: ${escapeHtml(scanner.error)}. Click <b>Scan ON</b> to retry.`;
+        return;
+      }
+      if (!scanner.active) {
+        el.innerHTML = "Click <b>Scan ON</b> to discover nearby Bluetooth devices.";
+        return;
+      }
+
+      el.classList.add("active");
+      if (!present.length) {
+        el.innerHTML = `Scan <b>ON</b> (${escapeHtml(mode)}) — listening… no devices in range yet.`;
+        return;
+      }
+
+      el.innerHTML = [
+        `Scan <b>ON</b> · mode: <b>${escapeHtml(mode)}</b>`,
+        `<b>${present.length}</b> in range`,
+        `<b>${all.length}</b> total seen`,
+        `<b>${strong.length}</b> strong (≥ -85 dBm)`,
+        `<b>${controllable.length}</b> controllable`,
+      ].join(" · ");
+    }
+
     function nearbyDevices(maxCount = 10, minRssi = -85) {
       if (!snapshot) return [];
       return snapshot.toys
@@ -1209,7 +1296,7 @@ DASHBOARD_HTML = """
 
     function autoSelectControllable() {
       if (selectedAddress) return;
-      const nearby = nearbyDevices(10, -85);
+      const nearby = foundDevicesForScan(10);
       const pick = nearby.find((toy) => toy.controllable)
         || (snapshot?.toys || []).find((toy) => toy.controllable && toy.present);
       if (pick) {
@@ -1235,29 +1322,32 @@ DASHBOARD_HTML = """
       const summary = document.getElementById("nearby-quick-summary");
       if (!root) return;
 
-      const devices = nearbyDevices(10, -85);
+      const scanner = snapshot?.scanner || {};
+      const scanning = scanner.active && !scanner.paused && !scanner.error;
+      const devices = scanning ? foundDevicesForScan(10) : [];
+
       if (summary) {
-        summary.textContent = devices.length
-          ? `≥ -85 dBm · ${devices.length} nearby`
-          : "≥ -85 dBm · none in range yet";
+        summary.textContent = scanning
+          ? (devices.length ? `${devices.length} shown · strongest first` : "listening…")
+          : "Scan ON to list everything nearby";
+      }
+
+      if (!scanning) {
+        root.innerHTML = `<div class="nearby-quick-empty">Click <b>Scan ON</b> above to scan and list every nearby device here.</div>`;
+        return;
       }
 
       if (!devices.length) {
-        const scanner = snapshot?.scanner || {};
-        const waiting = scanner.error
-          ? "No devices yet — scanner is retrying. Live Bluetooth required, or restart with --demo."
-          : scanner.paused
-            ? "Scan is paused. Click Scan ON to listen for nearby devices."
-            : "Listening… devices stronger than -85 dBm will appear here.";
-        root.innerHTML = `<div class="nearby-quick-empty">${escapeHtml(waiting)}</div>`;
+        root.innerHTML = `<div class="nearby-quick-empty">Scan ON — listening for Bluetooth advertisements…</div>`;
         return;
       }
 
       root.innerHTML = devices.map((toy) => `
         <div class="nearby-quick-item ${toy.address === selectedAddress ? "active" : ""}" data-address="${escapeHtml(toy.address)}">
           <span class="nearby-quick-name">${escapeHtml(deviceTitle(toy))}</span>
-          <span class="nearby-quick-rssi">${toy.rssi} dBm</span>
-          <span class="nearby-quick-badge ${toy.controllable ? "adorime" : ""}">${toy.controllable ? "Adorime" : escapeHtml(toy.signal_quality || "ble")}</span>
+          <span class="nearby-quick-rssi">${toy.rssi ?? "?"} dBm</span>
+          <span class="nearby-quick-badge ${toy.controllable ? "adorime" : ""}">${toy.controllable ? "Controllable" : escapeHtml(toy.device_type || "ble")}</span>
+          <span class="nearby-quick-addr">${escapeHtml(toy.address)} · ${escapeHtml(toy.signal_quality || "unknown")} · ${escapeHtml(toy.movement || "present")}</span>
         </div>
       `).join("");
 
@@ -1280,7 +1370,7 @@ DASHBOARD_HTML = """
       dot.className = "scanner-dot";
       if (scanner.error) {
         dot.classList.add("error");
-        text.textContent = "Scan OFF — click Scan ON to find devices";
+        text.textContent = "Scan OFF — click Scan ON";
         if (badge) badge.textContent = "Scan OFF";
       } else if (scanner.deep_scan_active) {
         dot.classList.add("running");
@@ -1292,7 +1382,10 @@ DASHBOARD_HTML = """
         if (badge) badge.textContent = "Scan OFF";
       } else if (scanner.active) {
         dot.classList.add("running");
-        text.textContent = "Scan ON · listening";
+        const count = snapshot?.present_count ?? 0;
+        text.textContent = count
+          ? `Scan ON · ${count} device(s) found`
+          : "Scan ON · listening";
         if (badge) badge.textContent = "Scan ON";
       } else {
         text.textContent = "Scanner starting";
@@ -2227,6 +2320,7 @@ DASHBOARD_HTML = """
         `<b>${snapshot.present_count}</b> in range · <b>${snapshot.device_count ?? snapshot.toy_count}</b> seen · <b>${snapshot.adorime_count ?? snapshot.controllable_count}</b> Adorime · <b>${snapshot.connected_count}</b> connected`;
       document.getElementById("updated").textContent = `Updated ${snapshot.generated_at}`;
       renderScannerStatus();
+      renderScanFoundSummary();
       renderNearbyQuickList();
       renderDeviceCards();
       renderToyList();

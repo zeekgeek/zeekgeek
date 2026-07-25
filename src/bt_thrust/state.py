@@ -249,6 +249,7 @@ class ControllerState:
         self._scanner_paused = False
         self._scanner_active = False
         self._scanner_error: str | None = None
+        self._scanner_mode: str = "off"
         self._observation_count = 0
         self._last_observation_at: datetime | None = None
         self._deep_scan_until: datetime | None = None
@@ -261,10 +262,14 @@ class ControllerState:
         async with self._lock:
             return self._scanner_paused
 
-    async def set_scanner_active(self, active: bool, *, error: str | None = None) -> None:
+    async def set_scanner_active(self, active: bool, *, error: str | None = None, mode: str | None = None) -> None:
         async with self._lock:
             self._scanner_active = active
             self._scanner_error = error
+            if mode is not None:
+                self._scanner_mode = mode
+            elif not active and error:
+                self._scanner_mode = "off"
 
     def _deep_scan_active(self, now: datetime) -> bool:
         return self._deep_scan_until is not None and now < self._deep_scan_until
@@ -514,11 +519,12 @@ class ControllerState:
             )
             return {
                 "generated_at": iso_time(now),
-                "scanner_mode": "live",
+                "scanner_mode": self._scanner_mode,
                 "scanner": {
                     "active": self._scanner_active,
                     "paused": self._scanner_paused,
                     "error": self._scanner_error,
+                    "mode": self._scanner_mode,
                     "deep_scan_active": self._deep_scan_active(now),
                     "deep_scan_until": iso_time(self._deep_scan_until)
                     if self._deep_scan_until

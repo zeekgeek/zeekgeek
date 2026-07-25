@@ -25,7 +25,7 @@ class BleakScannerBackend:
 
         scanner = BleakScanner(scanning_mode="active")
         LOGGER.info("Starting live Bluetooth LE scan")
-        await self.state.set_scanner_active(True, error=None)
+        await self.state.set_scanner_active(True, error=None, mode="live")
         await self.state.add_system_event("scanner-live", "Live Bluetooth scanner active")
 
         await scanner.start()
