@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import signal
 import socket
 from contextlib import suppress
@@ -18,11 +19,23 @@ from .web import create_app
 
 LOGGER = logging.getLogger(__name__)
 SCANNER_RETRY_SECONDS = 10.0
+DEFAULT_LOCAL_HOST = "127.0.0.1"
+DEFAULT_CURSOR_HOST = "0.0.0.0"
+
+
+def default_dashboard_host() -> str:
+    if os.environ.get("CURSOR_AGENT") == "1":
+        return DEFAULT_CURSOR_HOST
+    return DEFAULT_LOCAL_HOST
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Live Adorime thrust controller with BLE scanner dashboard")
-    parser.add_argument("--host", default="127.0.0.1", help="Dashboard host")
+    parser.add_argument(
+        "--host",
+        default=default_dashboard_host(),
+        help="Dashboard host (defaults to 0.0.0.0 in Cursor so the Ports panel can forward it)",
+    )
     parser.add_argument("--port", type=int, default=8800, help="Dashboard port")
     parser.add_argument("--stale-after", type=float, default=20.0, help="Seconds before a missing toy is marked left")
     parser.add_argument("--log-level", default="info", choices=["debug", "info", "warning", "error"])
@@ -58,7 +71,16 @@ async def run(args: argparse.Namespace) -> None:
         with suppress(NotImplementedError):
             loop.add_signal_handler(sig, stop_event.set)
 
-    print(f"Adorime thrust controller dashboard: http://{args.host}:{chosen_port}")
+    local_url = f"http://127.0.0.1:{chosen_port}"
+    bind_url = f"http://{args.host}:{chosen_port}"
+    print(f"Adorime thrust controller dashboard: {local_url}")
+    if args.host in {"0.0.0.0", "::"}:
+        print(f"Listening on all interfaces: {bind_url}")
+        if os.environ.get("CURSOR_AGENT") == "1":
+            print(
+                "Cursor browser: open the Ports panel, forward port "
+                f"{chosen_port}, then click Open in Browser (or use Simple Browser on the forwarded URL)."
+            )
     print("Running live Adorime BLE scan. Power on your Adorime device and keep it in advertising mode.")
 
     done, pending = await asyncio.wait(
