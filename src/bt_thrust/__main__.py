@@ -16,13 +16,11 @@ import uvicorn
 from .cli import scan_main
 from .controller import ToyController
 from .deep_scan import run_deep_scan_worker
-from .demo_scanner import DemoScannerBackend
-from .scanner import BleakScannerBackend
+from .scanner_runner import ScannerRunner
 from .state import ControllerState
 from .web import create_app
 
 LOGGER = logging.getLogger(__name__)
-SCANNER_RETRY_SECONDS = 10.0
 DEFAULT_LOCAL_HOST = "127.0.0.1"
 DEFAULT_CURSOR_HOST = "0.0.0.0"
 
@@ -67,8 +65,9 @@ def main() -> None:
 async def run_gui(args: argparse.Namespace) -> None:
     state = ControllerState(stale_after=args.stale_after)
     controller = ToyController(state=state, max_throttle=max(1, min(100, int(args.max_throttle))))
-    app = create_app(state, controller)
-    scanner_task = asyncio.create_task(_run_scanner_with_retry(state, demo=args.demo), name="toy-scanner")
+    scanner_runner = ScannerRunner(state=state, force_demo=args.demo)
+    app = create_app(state, controller, scanner_runner)
+    scanner_task = scanner_runner.start()
     deep_scan_task = asyncio.create_task(run_deep_scan_worker(state), name="deep-scan-worker")
 
     chosen_port = pick_available_port(args.host, args.port)
@@ -129,44 +128,6 @@ async def run_gui(args: argparse.Namespace) -> None:
     await asyncio.gather(*remaining, return_exceptions=True)
     if failure is not None:
         raise failure
-
-
-async def _run_scanner_with_retry(state: ControllerState, *, demo: bool = False) -> None:
-    if demo:
-        await DemoScannerBackend(state).run()
-        return
-
-    auto_demo = os.environ.get("CURSOR_AGENT") == "1"
-    failures = 0
-
-    while True:
-        try:
-            await state.set_scanner_active(True, error=None)
-            await BleakScannerBackend(state).run()
-            return
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            failures += 1
-            if auto_demo and failures >= 1:
-                message = (
-                    f"No Bluetooth adapter ({type(exc).__name__}). "
-                    "Switching to demo scanner with simulated nearby devices."
-                )
-                LOGGER.warning(message)
-                await state.add_system_event("scanner-demo-fallback", message)
-                await DemoScannerBackend(state).run()
-                return
-
-            message = (
-                f"Live scanner unavailable ({type(exc).__name__}: {exc}). "
-                f"Ensure Bluetooth is on and your user can access the adapter. "
-                f"Retrying in {int(SCANNER_RETRY_SECONDS)}s."
-            )
-            LOGGER.warning(message)
-            await state.set_scanner_active(False, error=str(exc))
-            await state.add_system_event("scanner-error", message)
-            await asyncio.sleep(SCANNER_RETRY_SECONDS)
 
 
 def pick_available_port(host: str, preferred_port: int, max_tries: int = 30) -> int:

@@ -15,6 +15,7 @@ from bt_radar.calibration import calibration_profile_payload
 from .controller import ToyController
 from .deep_scan import discover_gatt
 from .export import export_connection_logs_csv, export_devices_csv, export_snapshot_json
+from .scanner_runner import ScannerRunner
 from .state import ControllerState
 
 
@@ -57,7 +58,11 @@ class AutoTuneRequest(BaseModel):
     enabled: bool = True
 
 
-def create_app(state: ControllerState, controller: ToyController) -> FastAPI:
+def create_app(
+    state: ControllerState,
+    controller: ToyController,
+    scanner_runner: ScannerRunner | None = None,
+) -> FastAPI:
     app = FastAPI(title="Pump and dump Bluetooth Controller")
     calibration_json = json.dumps(calibration_profile_payload())
 
@@ -107,6 +112,14 @@ def create_app(state: ControllerState, controller: ToyController) -> FastAPI:
     async def pause_scanner(request: ScannerPausedRequest) -> JSONResponse:
         event = await state.set_scanner_paused(request.paused)
         return JSONResponse({"paused": request.paused, "event": event})
+
+    @app.post("/api/scanner/start")
+    async def start_scanner() -> JSONResponse:
+        if scanner_runner is None:
+            raise HTTPException(status_code=503, detail="Scanner runner unavailable")
+        await scanner_runner.restart(demo=False)
+        snapshot = await state.snapshot()
+        return JSONResponse({"started": True, "scanner": snapshot["scanner"]})
 
     @app.post("/api/scanner/clear-stale")
     async def clear_stale_devices() -> JSONResponse:
@@ -1103,13 +1116,24 @@ DASHBOARD_HTML = """
       if (scanToggle && scanToggle.dataset.bound !== "1") {
         scanToggle.dataset.bound = "1";
         scanToggle.addEventListener("click", async () => {
-          const paused = !(snapshot?.scanner?.paused);
+          const scanner = snapshot?.scanner || {};
+          const running = !scanner.paused && !scanner.error && scanner.active;
           try {
-            await api("/api/scanner/pause", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ paused }),
-            });
+            if (running) {
+              await api("/api/scanner/pause", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ paused: true }),
+              });
+            } else if (scanner.error || !scanner.active) {
+              await api("/api/scanner/start", { method: "POST" });
+            } else {
+              await api("/api/scanner/pause", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ paused: false }),
+              });
+            }
             showError("");
           } catch (err) {
             showError(err.message || "Failed to update scanner state");
@@ -1256,9 +1280,8 @@ DASHBOARD_HTML = """
       dot.className = "scanner-dot";
       if (scanner.error) {
         dot.classList.add("error");
-        text.textContent = "Scanner retrying — check Bluetooth is on";
-        if (badge) badge.textContent = "Scanner error";
-        showError(`${scanner.error}. On machines without an adapter, run with --demo.`);
+        text.textContent = "Scan OFF — click Scan ON to find devices";
+        if (badge) badge.textContent = "Scan OFF";
       } else if (scanner.deep_scan_active) {
         dot.classList.add("running");
         text.textContent = "Deep scan active";
@@ -1275,7 +1298,7 @@ DASHBOARD_HTML = """
         text.textContent = "Scanner starting";
       }
 
-      const scanning = !scanner.paused && !scanner.error;
+      const scanning = !scanner.paused && !scanner.error && scanner.active;
       scanToggle.textContent = scanning ? "Scan OFF" : "Scan ON";
       scanToggle.classList.toggle("on", scanning);
       scanToggle.classList.toggle("off", !scanning);
