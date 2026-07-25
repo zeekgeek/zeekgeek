@@ -422,7 +422,8 @@ python3 -m etsy_ai_space top [--limit 10]
 
 # Live Streamlit dashboard (auto-refreshes from pipeline/state.json)
 pip install -e ".[etsy]"
-python3 -m etsy_ai_space dashboard --port 8501
+python -m dashboard.app --port 8501
+# or: python3 -m etsy_ai_space dashboard --port 8501
 
 # Standalone module entry points
 python3 -m etsy_ai_space.scraper.etsy_scraper "retro cat shirt" --demo
