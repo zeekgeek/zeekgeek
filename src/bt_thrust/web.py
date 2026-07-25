@@ -439,6 +439,118 @@ DASHBOARD_HTML = """
       flex-wrap: wrap;
       align-items: center;
     }
+    .nearby-quick {
+      margin-top: 4px;
+    }
+    .nearby-quick-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 8px;
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+    .nearby-quick-head strong { font-size: 14px; }
+    .nearby-quick-list {
+      display: grid;
+      gap: 4px;
+      max-height: 220px;
+      overflow: auto;
+    }
+    .nearby-quick-item {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 8px;
+      align-items: center;
+      padding: 7px 10px;
+      border-radius: 10px;
+      background: rgba(0,0,0,.16);
+      border: 1px solid #26324b;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .nearby-quick-item:hover { border-color: color-mix(in srgb, var(--accent) 40%, #26324b); }
+    .nearby-quick-item.active {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+    }
+    .nearby-quick-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 600;
+    }
+    .nearby-quick-rssi {
+      font-family: ui-monospace, Menlo, monospace;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .nearby-quick-badge {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      padding: 2px 6px;
+      border-radius: 999px;
+      background: rgba(34,197,94,.14);
+      color: var(--green);
+    }
+    .nearby-quick-badge.adorime {
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+    .nearby-quick-empty {
+      color: var(--muted);
+      font-size: 12px;
+      padding: 10px 4px;
+      text-align: center;
+    }
+    .scanner-thruster {
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid #26324b;
+    }
+    .scanner-thruster .hero-card {
+      margin-bottom: 12px;
+      padding: 12px;
+    }
+    .scanner-thruster .control-title { font-size: 16px; }
+    .scanner-thruster .control-sub { font-size: 12px; }
+    .scanner-thruster .control-head {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 10px;
+    }
+    .scanner-thruster .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .scanner-thruster .actions button { padding: 8px 10px; font-size: 13px; }
+    .scanner-thruster .meter-grid {
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .scanner-thruster .meter-value { font-size: 26px; }
+    .scanner-thruster .control-section h2 { font-size: 15px; margin-bottom: 8px; }
+    .scanner-thruster .slider-block { padding: 12px; margin: 8px 0; }
+    .scanner-thruster .slider-label { font-size: 13px; margin-bottom: 8px; }
+    .scanner-thruster .slider-label span:last-child { font-size: 16px; }
+    .scanner-thruster .mode-grid,
+    .scanner-thruster .patterns {
+      grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+      gap: 6px;
+    }
+    .scanner-thruster .pattern,
+    .scanner-thruster .mode-btn,
+    .scanner-thruster .quick-btn {
+      padding: 10px 6px;
+      font-size: 11px;
+    }
+    .scanner-thruster .pattern-icon,
+    .scanner-thruster .mode-icon { font-size: 16px; }
+    .scanner-thruster .focus-row { gap: 6px; }
+    .scanner-thruster .focus-row button { font-size: 12px; padding: 8px 10px; }
     .scanner-status {
       display: inline-flex;
       align-items: center;
@@ -784,6 +896,22 @@ DASHBOARD_HTML = """
           <button type="button" class="secondary" id="export-logs">Export logs</button>
         </div>
       </div>
+      <div class="nearby-quick">
+        <div class="nearby-quick-head">
+          <strong>Nearby devices</strong>
+          <span class="hint" id="nearby-quick-summary">≥ -85 dBm · showing up to 10</span>
+        </div>
+        <div id="nearby-quick-list" class="nearby-quick-list">
+          <div class="nearby-quick-empty">Scanning for nearby devices…</div>
+        </div>
+      </div>
+      <div class="scanner-thruster">
+        <div class="nearby-quick-head">
+          <strong>Thruster controls</strong>
+          <span class="hint" id="thruster-target-label">Select an Adorime device above</span>
+        </div>
+        <div id="control-panel" class="empty">Select an Adorime/Galaku device from the nearby list to connect and control thrust.</div>
+      </div>
     </section>
 
     <section class="panel">
@@ -811,11 +939,6 @@ DASHBOARD_HTML = """
       <div class="device-table-wrap">
         <div id="found-devices" class="empty" style="padding:24px;">Turn scan ON to populate the device list.</div>
       </div>
-    </section>
-
-    <section class="panel">
-      <h2>Thruster controls</h2>
-      <div id="control-panel" class="empty">Select an Adorime/Galaku device from the list above to connect and control thrust.</div>
     </section>
 
     <section class="panel">
@@ -1050,6 +1173,74 @@ DASHBOARD_HTML = """
           window.open(paths[id], "_blank");
         });
       });
+    }
+
+    function nearbyDevices(maxCount = 10, minRssi = -85) {
+      if (!snapshot) return [];
+      return snapshot.toys
+        .filter((toy) => toy.present && typeof toy.rssi === "number" && toy.rssi >= minRssi)
+        .sort((a, b) => (b.rssi ?? -999) - (a.rssi ?? -999))
+        .slice(0, maxCount);
+    }
+
+    function autoSelectControllable() {
+      if (selectedAddress) return;
+      const nearby = nearbyDevices(10, -85);
+      const pick = nearby.find((toy) => toy.controllable)
+        || (snapshot?.toys || []).find((toy) => toy.controllable && toy.present);
+      if (pick) {
+        selectedAddress = pick.address;
+      }
+    }
+
+    function updateThrusterTargetLabel() {
+      const label = document.getElementById("thruster-target-label");
+      if (!label) return;
+      const toy = selectedToy();
+      if (!toy) {
+        label.textContent = "Select an Adorime device above";
+        return;
+      }
+      label.textContent = toy.connected
+        ? `${deviceTitle(toy)} · connected`
+        : `${deviceTitle(toy)} · tap Connect`;
+    }
+
+    function renderNearbyQuickList() {
+      const root = document.getElementById("nearby-quick-list");
+      const summary = document.getElementById("nearby-quick-summary");
+      if (!root) return;
+
+      const devices = nearbyDevices(10, -85);
+      if (summary) {
+        summary.textContent = devices.length
+          ? `≥ -85 dBm · ${devices.length} nearby`
+          : "≥ -85 dBm · none in range yet";
+      }
+
+      if (!devices.length) {
+        const scanner = snapshot?.scanner || {};
+        const waiting = scanner.error
+          ? "No devices yet — scanner is retrying. Live Bluetooth required, or restart with --demo."
+          : scanner.paused
+            ? "Scan is paused. Click Scan ON to listen for nearby devices."
+            : "Listening… devices stronger than -85 dBm will appear here.";
+        root.innerHTML = `<div class="nearby-quick-empty">${escapeHtml(waiting)}</div>`;
+        return;
+      }
+
+      root.innerHTML = devices.map((toy) => `
+        <div class="nearby-quick-item ${toy.address === selectedAddress ? "active" : ""}" data-address="${escapeHtml(toy.address)}">
+          <span class="nearby-quick-name">${escapeHtml(deviceTitle(toy))}</span>
+          <span class="nearby-quick-rssi">${toy.rssi} dBm</span>
+          <span class="nearby-quick-badge ${toy.controllable ? "adorime" : ""}">${toy.controllable ? "Adorime" : escapeHtml(toy.signal_quality || "ble")}</span>
+        </div>
+      `).join("");
+
+      root.querySelectorAll(".nearby-quick-item").forEach((row) => {
+        row.addEventListener("click", () => selectToy(row.dataset.address));
+      });
+      updateThrusterTargetLabel();
     }
 
     function renderScannerStatus() {
@@ -1824,8 +2015,10 @@ DASHBOARD_HTML = """
 
     function renderControlPanel() {
       const root = document.getElementById("control-panel");
+      if (!root) return;
       const toy = selectedToy();
       applyTheme("adorime");
+      updateThrusterTargetLabel();
 
       if (!toy) {
         panelSignature = null;
@@ -2006,10 +2199,12 @@ DASHBOARD_HTML = """
       if (!selectedAddress && snapshot.selected_address) {
         selectedAddress = snapshot.selected_address;
       }
+      autoSelectControllable();
       document.getElementById("counts").innerHTML =
         `<b>${snapshot.present_count}</b> in range · <b>${snapshot.device_count ?? snapshot.toy_count}</b> seen · <b>${snapshot.adorime_count ?? snapshot.controllable_count}</b> Adorime · <b>${snapshot.connected_count}</b> connected`;
       document.getElementById("updated").textContent = `Updated ${snapshot.generated_at}`;
       renderScannerStatus();
+      renderNearbyQuickList();
       renderDeviceCards();
       renderToyList();
       renderDeviceDetails();

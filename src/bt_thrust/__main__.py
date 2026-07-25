@@ -136,6 +136,9 @@ async def _run_scanner_with_retry(state: ControllerState, *, demo: bool = False)
         await DemoScannerBackend(state).run()
         return
 
+    auto_demo = os.environ.get("CURSOR_AGENT") == "1"
+    failures = 0
+
     while True:
         try:
             await state.set_scanner_active(True, error=None)
@@ -144,6 +147,17 @@ async def _run_scanner_with_retry(state: ControllerState, *, demo: bool = False)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            failures += 1
+            if auto_demo and failures >= 1:
+                message = (
+                    f"No Bluetooth adapter ({type(exc).__name__}). "
+                    "Switching to demo scanner with simulated nearby devices."
+                )
+                LOGGER.warning(message)
+                await state.add_system_event("scanner-demo-fallback", message)
+                await DemoScannerBackend(state).run()
+                return
+
             message = (
                 f"Live scanner unavailable ({type(exc).__name__}: {exc}). "
                 f"Ensure Bluetooth is on and your user can access the adapter. "
