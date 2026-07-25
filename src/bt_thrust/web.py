@@ -34,6 +34,10 @@ class ScannerPausedRequest(BaseModel):
     paused: bool = True
 
 
+class DeepScanRequest(BaseModel):
+    duration_seconds: float = 20.0
+
+
 def create_app(state: ControllerState, controller: ToyController) -> FastAPI:
     app = FastAPI(title="Adorime Thrust Controller")
 
@@ -95,6 +99,12 @@ def create_app(state: ControllerState, controller: ToyController) -> FastAPI:
             await state.set_stale_after(request.stale_after)
         snapshot = await state.snapshot()
         return JSONResponse(snapshot["scanner"])
+
+    @app.post("/api/scanner/deep-scan")
+    async def deep_scan(request: DeepScanRequest) -> JSONResponse:
+        event = await state.trigger_deep_scan(request.duration_seconds)
+        snapshot = await state.snapshot()
+        return JSONResponse({"event": event, "scanner": snapshot["scanner"]})
 
     @app.get("/api/events")
     async def events() -> StreamingResponse:
@@ -435,6 +445,10 @@ DASHBOARD_HTML = """
       color: #fecaca;
       border: 2px solid var(--red);
     }
+    .scan-power.deep {
+      background: linear-gradient(135deg, var(--accent), #c084fc);
+      color: #1f1024;
+    }
     dl.device-info {
       display: grid;
       grid-template-columns: 170px 1fr;
@@ -522,7 +536,10 @@ DASHBOARD_HTML = """
     <section class="panel">
       <div class="section-head">
         <h2>Bluetooth scanner</h2>
-        <button type="button" class="scan-power on" id="scan-toggle">Scan ON</button>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button type="button" class="scan-power on" id="scan-toggle">Scan ON</button>
+          <button type="button" class="secondary" id="deep-scan">Deep Scan</button>
+        </div>
       </div>
       <div class="scanner-toolbar">
         <div class="scanner-row">
@@ -676,6 +693,7 @@ DASHBOARD_HTML = """
       const staleEl = document.getElementById("stale-after");
       const scanToggle = document.getElementById("scan-toggle");
       const clearEl = document.getElementById("scanner-clear");
+      const deepScanEl = document.getElementById("deep-scan");
 
       if (filterEl && filterEl.dataset.bound !== "1") {
         filterEl.dataset.bound = "1";
@@ -729,6 +747,21 @@ DASHBOARD_HTML = """
           }
         });
       }
+      if (deepScanEl && deepScanEl.dataset.bound !== "1") {
+        deepScanEl.dataset.bound = "1";
+        deepScanEl.addEventListener("click", async () => {
+          try {
+            await api("/api/scanner/deep-scan", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ duration_seconds: 20 }),
+            });
+            showError("");
+          } catch (err) {
+            showError(err.message || "Failed to start deep scan");
+          }
+        });
+      }
       if (clearEl && clearEl.dataset.bound !== "1") {
         clearEl.dataset.bound = "1";
         clearEl.addEventListener("click", async () => {
@@ -749,13 +782,18 @@ DASHBOARD_HTML = """
       const badge = document.getElementById("scanner-badge");
       const scanToggle = document.getElementById("scan-toggle");
       const staleEl = document.getElementById("stale-after");
-      if (!dot || !text || !scanToggle) return;
+      const deepScanEl = document.getElementById("deep-scan");
+      if (!dot || !text || !scanToggle || !deepScanEl) return;
 
       dot.className = "scanner-dot";
       if (scanner.error) {
         dot.classList.add("error");
         text.textContent = "Scanner retrying";
         if (badge) badge.textContent = "Scanner error";
+      } else if (scanner.deep_scan_active) {
+        dot.classList.add("running");
+        text.textContent = "Deep scan active";
+        if (badge) badge.textContent = "Deep Scan";
       } else if (scanner.paused) {
         dot.classList.add("paused");
         text.textContent = "Scan OFF";
@@ -772,6 +810,9 @@ DASHBOARD_HTML = """
       scanToggle.textContent = scanning ? "Scan OFF" : "Scan ON";
       scanToggle.classList.toggle("on", scanning);
       scanToggle.classList.toggle("off", !scanning);
+      scanToggle.classList.toggle("deep", Boolean(scanner.deep_scan_active));
+      deepScanEl.classList.toggle("active", Boolean(scanner.deep_scan_active));
+      deepScanEl.textContent = scanner.deep_scan_active ? "Deep Scan Active" : "Deep Scan";
 
       if (staleEl && document.activeElement !== staleEl) {
         staleEl.value = scanner.stale_after ?? 20;

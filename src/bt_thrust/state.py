@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from bt_radar.anomaly import Finding, address_family, evaluate_device
@@ -228,6 +228,7 @@ class ControllerState:
         self._scanner_error: str | None = None
         self._observation_count = 0
         self._last_observation_at: datetime | None = None
+        self._deep_scan_until: datetime | None = None
         self._lock = asyncio.Lock()
 
     async def is_scanner_paused(self) -> bool:
@@ -239,15 +240,36 @@ class ControllerState:
             self._scanner_active = active
             self._scanner_error = error
 
+    def _deep_scan_active(self, now: datetime) -> bool:
+        return self._deep_scan_until is not None and now < self._deep_scan_until
+
     async def set_scanner_paused(self, paused: bool) -> dict[str, Any]:
         async with self._lock:
             self._scanner_paused = paused
+            if paused:
+                self._deep_scan_until = None
             event = {
                 "type": "scanner-paused" if paused else "scanner-resumed",
                 "address": "system",
                 "name": "Scanner",
                 "message": "Scanner paused" if paused else "Scanner resumed",
                 "at": iso_time(utc_now()),
+            }
+            self._events.append(event)
+            return event
+
+    async def trigger_deep_scan(self, duration_seconds: float = 20.0) -> dict[str, Any]:
+        async with self._lock:
+            duration = max(5.0, min(120.0, float(duration_seconds)))
+            now = utc_now()
+            self._scanner_paused = False
+            self._deep_scan_until = now + timedelta(seconds=duration)
+            event = {
+                "type": "scanner-deep-scan",
+                "address": "system",
+                "name": "Scanner",
+                "message": f"Deep scan enabled for {int(duration)}s",
+                "at": iso_time(now),
             }
             self._events.append(event)
             return event
@@ -395,6 +417,10 @@ class ControllerState:
                     "active": self._scanner_active,
                     "paused": self._scanner_paused,
                     "error": self._scanner_error,
+                    "deep_scan_active": self._deep_scan_active(now),
+                    "deep_scan_until": iso_time(self._deep_scan_until)
+                    if self._deep_scan_until
+                    else None,
                     "observation_count": self._observation_count,
                     "last_observation_at": iso_time(self._last_observation_at)
                     if self._last_observation_at

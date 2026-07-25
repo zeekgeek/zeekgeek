@@ -153,6 +153,16 @@ class StateTests(unittest.IsolatedAsyncioTestCase):
         removed = await state.clear_stale_devices()
         self.assertGreaterEqual(removed, 1)
 
+    async def test_deep_scan_sets_scanner_state(self) -> None:
+        state = ControllerState()
+        await state.set_scanner_paused(True)
+        event = await state.trigger_deep_scan(15)
+        snapshot = await state.snapshot()
+        self.assertEqual(event["type"], "scanner-deep-scan")
+        self.assertFalse(snapshot["scanner"]["paused"])
+        self.assertTrue(snapshot["scanner"]["deep_scan_active"])
+        self.assertIsNotNone(snapshot["scanner"]["deep_scan_until"])
+
     async def test_set_levels_merges_partial_updates(self) -> None:
         state = ControllerState()
         address = "AA:BB:CC:DD:EE:03"
