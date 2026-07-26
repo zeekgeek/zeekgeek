@@ -88,7 +88,7 @@ class StateTests(unittest.IsolatedAsyncioTestCase):
             ToyObservation(address="AA:BB:CC:DD:EE:01", name="BGSF", rssi=-58)
         )
         snapshot = await state.snapshot()
-        self.assertEqual(snapshot["scanner_mode"], "live")
+        self.assertEqual(snapshot["scanner_mode"], "off")
         self.assertEqual(snapshot["toy_count"], 1)
         self.assertEqual(snapshot["toys"][0]["brand"], "adorime")
         self.assertTrue(snapshot["toys"][0]["controllable"])

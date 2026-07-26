@@ -1,16 +1,22 @@
-"""FastAPI dashboard for the Bluetooth thrust controller."""
+"""FastAPI dashboard for the Pump and dump Bluetooth Controller."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 from collections.abc import AsyncIterator
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from bt_radar.calibration import calibration_profile_payload
+
 from .controller import ToyController
+from .deep_scan import discover_gatt
+from .export import export_connection_logs_csv, export_devices_csv, export_snapshot_json
+from .scanner_runner import ScannerRunner
 from .state import ControllerState
 
 
@@ -38,12 +44,32 @@ class DeepScanRequest(BaseModel):
     duration_seconds: float = 20.0
 
 
-def create_app(state: ControllerState, controller: ToyController) -> FastAPI:
-    app = FastAPI(title="Adorime Thrust Controller")
+class ScannerFilterRequest(BaseModel):
+    min_rssi: int | None = None
+    device_type: str | None = None
+
+
+class ThrusterRequest(BaseModel):
+    throttle: int = Field(ge=0, le=100)
+    direction: str = "forward"
+    pulse_mode: bool = False
+
+
+class AutoTuneRequest(BaseModel):
+    enabled: bool = True
+
+
+def create_app(
+    state: ControllerState,
+    controller: ToyController,
+    scanner_runner: ScannerRunner | None = None,
+) -> FastAPI:
+    app = FastAPI(title="Pump and dump Bluetooth Controller")
+    calibration_json = json.dumps(calibration_profile_payload())
 
     @app.get("/", response_class=HTMLResponse)
     async def index() -> str:
-        return DASHBOARD_HTML
+        return DASHBOARD_HTML.replace("__RSSI_CALIBRATION_JSON__", calibration_json)
 
     @app.get("/api/toys")
     async def toys() -> dict:
@@ -88,6 +114,31 @@ def create_app(state: ControllerState, controller: ToyController) -> FastAPI:
         event = await state.set_scanner_paused(request.paused)
         return JSONResponse({"paused": request.paused, "event": event})
 
+    @app.post("/api/scanner/start")
+    async def start_scanner() -> JSONResponse:
+        if scanner_runner is None:
+            raise HTTPException(status_code=503, detail="Scanner runner unavailable")
+        diagnostics = await scanner_runner.restart(demo=False)
+        snapshot = await state.snapshot()
+        return JSONResponse(
+            {
+                "started": diagnostics["probe"]["available"],
+                "diagnostics": diagnostics,
+                "scanner": snapshot["scanner"],
+                "device_count": snapshot["device_count"],
+                "present_count": snapshot["present_count"],
+                "controllable_count": snapshot["controllable_count"],
+                "toys": snapshot["toys"],
+            }
+        )
+
+    @app.get("/api/scanner/diagnostics")
+    async def scanner_diagnostics() -> JSONResponse:
+        if scanner_runner is None:
+            raise HTTPException(status_code=503, detail="Scanner runner unavailable")
+        diagnostics = await scanner_runner.diagnostics()
+        return JSONResponse(diagnostics)
+
     @app.post("/api/scanner/clear-stale")
     async def clear_stale_devices() -> JSONResponse:
         removed = await state.clear_stale_devices()
@@ -105,6 +156,76 @@ def create_app(state: ControllerState, controller: ToyController) -> FastAPI:
         event = await state.trigger_deep_scan(request.duration_seconds)
         snapshot = await state.snapshot()
         return JSONResponse({"event": event, "scanner": snapshot["scanner"]})
+
+    @app.post("/api/scanner/filters")
+    async def scanner_filters(request: ScannerFilterRequest) -> JSONResponse:
+        await state.set_scanner_filters(min_rssi=request.min_rssi, device_type=request.device_type)
+        snapshot = await state.snapshot()
+        return JSONResponse(snapshot["scanner"])
+
+    @app.post("/api/toys/{address}/gatt-scan")
+    async def gatt_scan(address: str) -> JSONResponse:
+        ble_device = await state.get_ble_device(address)
+        result = await discover_gatt(address, ble_device=ble_device)
+        event = await state.store_gatt_result(address, result)
+        return JSONResponse({"result": result, "event": event})
+
+    @app.post("/api/toys/{address}/thruster")
+    async def thruster_control(address: str, request: ThrusterRequest) -> JSONResponse:
+        try:
+            result = await controller.set_thruster(
+                address,
+                throttle=request.throttle,
+                direction=request.direction,
+                pulse_mode=request.pulse_mode,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return JSONResponse(result)
+
+    @app.get("/api/toys/{address}/ai-suggest")
+    async def ai_suggest(address: str) -> JSONResponse:
+        track = await state.get_track(address)
+        if track is None:
+            raise HTTPException(status_code=404, detail="Device not found")
+        suggestion = controller.advisor.suggest(
+            address=address,
+            current_levels=track.levels,
+            rssi=track.rssi,
+            connected=track.connected,
+        )
+        return JSONResponse(suggestion)
+
+    @app.post("/api/toys/{address}/ai-apply")
+    async def ai_apply(address: str) -> JSONResponse:
+        try:
+            result = await controller.apply_ai_suggestion(address)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return JSONResponse(result)
+
+    @app.post("/api/ai/auto-tune")
+    async def ai_auto_tune(request: AutoTuneRequest) -> JSONResponse:
+        controller.advisor.set_auto_tune(request.enabled)
+        return JSONResponse({"auto_tune_enabled": request.enabled})
+
+    @app.get("/api/export/json")
+    async def export_json() -> PlainTextResponse:
+        snapshot = await state.snapshot()
+        snapshot["connection_logs"] = controller.connection_logs()
+        snapshot["ai"] = controller.advisor.snapshot()
+        return PlainTextResponse(export_snapshot_json(snapshot), media_type="application/json")
+
+    @app.get("/api/export/csv")
+    async def export_csv() -> PlainTextResponse:
+        snapshot = await state.snapshot()
+        return PlainTextResponse(export_devices_csv(snapshot), media_type="text/csv")
+
+    @app.get("/api/export/logs.csv")
+    async def export_logs_csv() -> PlainTextResponse:
+        snapshot = await state.snapshot()
+        logs = snapshot.get("events", []) + controller.connection_logs()
+        return PlainTextResponse(export_connection_logs_csv(logs), media_type="text/csv")
 
     @app.get("/api/events")
     async def events() -> StreamingResponse:
@@ -130,7 +251,7 @@ DASHBOARD_HTML = """
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Adorime Thrust Controller</title>
+  <title>Pump and dump Bluetooth Controller</title>
   <style>
     :root {
       color-scheme: dark;
@@ -166,6 +287,14 @@ DASHBOARD_HTML = """
     h2 { margin: 0 0 12px 0; font-size: 17px; }
     .stats { display: flex; gap: 14px; color: var(--muted); font-size: 14px; flex-wrap: wrap; margin-top: 6px; }
     .stats b { color: var(--text); }
+    .live-badge.demo {
+      background: rgba(234, 179, 8, .18);
+      color: var(--yellow);
+    }
+    .live-badge.error {
+      background: rgba(239, 68, 68, .15);
+      color: #fecaca;
+    }
     .live-badge {
       background: rgba(34,197,94,.15);
       color: var(--green);
@@ -252,6 +381,65 @@ DASHBOARD_HTML = """
     .device-table .col-rssi { white-space: nowrap; font-weight: 700; }
     .device-table .col-meta { color: var(--muted); font-size: 12px; }
     .device-table .badge-cell { display: flex; gap: 6px; flex-wrap: wrap; }
+    .scanner-visual-grid {
+      display: grid;
+      grid-template-columns: minmax(280px, 1fr) minmax(280px, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+    .radar-wrap {
+      background: rgba(0,0,0,.18);
+      border: 1px solid #26324b;
+      border-radius: 14px;
+      padding: 10px;
+    }
+    canvas#radar-map {
+      width: 100%;
+      height: 320px;
+      background: radial-gradient(circle at center, rgba(244,114,182,.08), rgba(0,0,0,.25));
+      border-radius: 12px;
+      border: 1px solid #26324b;
+      display: block;
+    }
+    .device-cards {
+      display: grid;
+      gap: 10px;
+      max-height: 360px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+    .device-card {
+      background: var(--panel-2);
+      border: 1px solid #26324b;
+      border-radius: 12px;
+      padding: 12px;
+      cursor: pointer;
+    }
+    .device-card:hover { border-color: color-mix(in srgb, var(--accent) 35%, #26324b); }
+    .device-card.active { outline: 2px solid var(--accent); background: var(--accent-soft); }
+    .device-card.connected { box-shadow: inset 3px 0 0 var(--green); }
+    .device-card-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: start;
+      margin-bottom: 8px;
+    }
+    .device-card-name { font-weight: 800; font-size: 14px; }
+    .device-card-addr {
+      color: var(--muted);
+      font-family: ui-monospace, Menlo, monospace;
+      font-size: 11px;
+      margin-top: 4px;
+    }
+    .device-card-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 8px;
+    }
     .toy {
       border: 1px solid #26324b;
       border-radius: 14px;
@@ -290,6 +478,140 @@ DASHBOARD_HTML = """
       flex-wrap: wrap;
       align-items: center;
     }
+    .nearby-quick {
+      margin-top: 4px;
+    }
+    .nearby-quick-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 8px;
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+    .nearby-quick-head strong { font-size: 14px; }
+    .nearby-quick-list {
+      display: grid;
+      gap: 4px;
+      max-height: 220px;
+      overflow: auto;
+    }
+    .nearby-quick-item {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 4px 8px;
+      align-items: center;
+      padding: 7px 10px;
+      border-radius: 10px;
+      background: rgba(0,0,0,.16);
+      border: 1px solid #26324b;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .nearby-quick-item:hover { border-color: color-mix(in srgb, var(--accent) 40%, #26324b); }
+    .nearby-quick-item.active {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+    }
+    .nearby-quick-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 600;
+    }
+    .nearby-quick-rssi {
+      font-family: ui-monospace, Menlo, monospace;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .nearby-quick-badge {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      padding: 2px 6px;
+      border-radius: 999px;
+      background: rgba(34,197,94,.14);
+      color: var(--green);
+    }
+    .nearby-quick-badge.adorime {
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+    .nearby-quick-empty {
+      color: var(--muted);
+      font-size: 12px;
+      padding: 10px 4px;
+      text-align: center;
+    }
+    .scan-found-summary {
+      font-size: 13px;
+      line-height: 1.45;
+      color: var(--muted);
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: rgba(0,0,0,.14);
+      border: 1px solid #26324b;
+      margin-bottom: 4px;
+    }
+    .scan-found-summary.active {
+      color: var(--text);
+      border-color: color-mix(in srgb, var(--green) 35%, #26324b);
+      background: rgba(34,197,94,.08);
+    }
+    .scan-found-summary b { color: var(--text); }
+    .nearby-quick-item .nearby-quick-addr {
+      grid-column: 1 / -1;
+      font-size: 10px;
+      color: var(--muted);
+      font-family: ui-monospace, Menlo, monospace;
+    }
+    .scanner-thruster {
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid #26324b;
+    }
+    .scanner-thruster .hero-card {
+      margin-bottom: 12px;
+      padding: 12px;
+    }
+    .scanner-thruster .control-title { font-size: 16px; }
+    .scanner-thruster .control-sub { font-size: 12px; }
+    .scanner-thruster .control-head {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 10px;
+    }
+    .scanner-thruster .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .scanner-thruster .actions button { padding: 8px 10px; font-size: 13px; }
+    .scanner-thruster .meter-grid {
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .scanner-thruster .meter-value { font-size: 26px; }
+    .scanner-thruster .control-section h2 { font-size: 15px; margin-bottom: 8px; }
+    .scanner-thruster .slider-block { padding: 12px; margin: 8px 0; }
+    .scanner-thruster .slider-label { font-size: 13px; margin-bottom: 8px; }
+    .scanner-thruster .slider-label span:last-child { font-size: 16px; }
+    .scanner-thruster .mode-grid,
+    .scanner-thruster .patterns {
+      grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+      gap: 6px;
+    }
+    .scanner-thruster .pattern,
+    .scanner-thruster .mode-btn,
+    .scanner-thruster .quick-btn {
+      padding: 10px 6px;
+      font-size: 11px;
+    }
+    .scanner-thruster .pattern-icon,
+    .scanner-thruster .mode-icon { font-size: 16px; }
+    .scanner-thruster .focus-row { gap: 6px; }
+    .scanner-thruster .focus-row button { font-size: 12px; padding: 8px 10px; }
     .scanner-status {
       display: inline-flex;
       align-items: center;
@@ -571,20 +893,21 @@ DASHBOARD_HTML = """
     @media (max-width: 980px) {
       .toy-list { max-height: none; }
       dl.device-info { grid-template-columns: 1fr; }
+      .scanner-visual-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
 <body>
   <header>
     <div>
-      <h1>Adorime Thrust Controller</h1>
+      <h1>Pump and dump Bluetooth Controller</h1>
       <div class="stats">
         <span id="counts">Waiting for live Bluetooth scan...</span>
         <span id="updated"></span>
       </div>
     </div>
     <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-      <span class="live-badge" id="scanner-badge">Live BLE</span>
+      <span class="live-badge" id="scanner-badge">Checking adapter…</span>
       <button id="notify">Enable notifications</button>
     </div>
   </header>
@@ -605,6 +928,7 @@ DASHBOARD_HTML = """
           <span class="scanner-status"><span class="scanner-dot" id="scanner-dot"></span><span id="scanner-status-text">Scanner starting</span></span>
           <button type="button" class="secondary" id="scanner-clear">Clear left</button>
         </div>
+        <div id="scan-found-summary" class="scan-found-summary">Click <strong>Scan ON</strong> to discover nearby Bluetooth devices.</div>
         <div class="scanner-row scanner-controls">
           <label>Filter
             <select id="device-filter">
@@ -624,7 +948,42 @@ DASHBOARD_HTML = """
           <label>Stale after
             <input type="number" id="stale-after" min="3" max="120" step="1" value="20"> s
           </label>
+          <label>Min RSSI
+            <input type="number" id="min-rssi" min="-127" max="-30" step="1" value="-127"> dBm
+          </label>
         </div>
+        <div class="scanner-row">
+          <button type="button" class="secondary" id="export-json">Export JSON</button>
+          <button type="button" class="secondary" id="export-csv">Export CSV</button>
+          <button type="button" class="secondary" id="export-logs">Export logs</button>
+        </div>
+      </div>
+      <div class="nearby-quick">
+        <div class="nearby-quick-head">
+          <strong>Devices found</strong>
+          <span class="hint" id="nearby-quick-summary">Scan ON to list everything nearby</span>
+        </div>
+        <div id="nearby-quick-list" class="nearby-quick-list">
+          <div class="nearby-quick-empty">Scanning for nearby devices…</div>
+        </div>
+      </div>
+      <div class="scanner-thruster">
+        <div class="nearby-quick-head">
+          <strong>Thruster controls</strong>
+          <span class="hint" id="thruster-target-label">Select an Adorime device above</span>
+        </div>
+        <div id="control-panel" class="empty">Select an Adorime/Galaku device from the nearby list to connect and control thrust.</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Nearby Bluetooth radar</h2>
+      <p class="hint" style="margin-top:0;">Live graphical view of every discovered device. Dot size follows signal strength; distance rings are 1m, 3m, 8m, and 20m.</p>
+      <div class="scanner-visual-grid">
+        <div class="radar-wrap">
+          <canvas id="radar-map" width="920" height="320"></canvas>
+        </div>
+        <div id="device-cards" class="device-cards empty">Scanning for nearby devices...</div>
       </div>
     </section>
 
@@ -642,11 +1001,6 @@ DASHBOARD_HTML = """
       <div class="device-table-wrap">
         <div id="found-devices" class="empty" style="padding:24px;">Turn scan ON to populate the device list.</div>
       </div>
-    </section>
-
-    <section class="panel">
-      <h2>Thruster controls</h2>
-      <div id="control-panel" class="empty">Select an Adorime/Galaku device from the list above to connect and control thrust.</div>
     </section>
 
     <section class="panel">
@@ -668,6 +1022,7 @@ DASHBOARD_HTML = """
     let deviceSort = "signal";
     let showLeftDevices = true;
     const notifiedEvents = new Set();
+    const RSSI_DISTANCE_CALIBRATION = __RSSI_CALIBRATION_JSON__;
 
     const themes = { adorime: "theme-adorime" };
 
@@ -732,6 +1087,14 @@ DASHBOARD_HTML = """
     function filteredDevices() {
       if (!snapshot) return [];
       let devices = snapshot.toys.slice();
+      const minRssi = snapshot.scanner?.min_rssi_filter;
+      if (typeof minRssi === "number" && minRssi > -127) {
+        devices = devices.filter((toy) => toy.rssi == null || toy.rssi >= minRssi);
+      }
+      const typeFilter = snapshot.scanner?.device_type_filter;
+      if (typeFilter && typeFilter !== "all") {
+        devices = devices.filter((toy) => toy.device_type === typeFilter);
+      }
       if (deviceFilter === "adorime") {
         devices = devices.filter((toy) => toy.adorime_match || toy.galaku_service);
       } else if (deviceFilter === "controllable") {
@@ -802,13 +1165,39 @@ DASHBOARD_HTML = """
       if (scanToggle && scanToggle.dataset.bound !== "1") {
         scanToggle.dataset.bound = "1";
         scanToggle.addEventListener("click", async () => {
-          const paused = !(snapshot?.scanner?.paused);
+          const scanner = snapshot?.scanner || {};
+          const running = !scanner.paused && !scanner.error && scanner.active;
           try {
-            await api("/api/scanner/pause", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ paused }),
-            });
+            if (running) {
+              await api("/api/scanner/pause", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ paused: true }),
+              });
+            } else if (scanner.error || !scanner.active) {
+              const result = await api("/api/scanner/start", { method: "POST" });
+              const diag = result.diagnostics || {};
+              const live = diag.data_source === "live" || result.scanner?.mode === "live";
+              const count = result.present_count ?? 0;
+              if (!live) {
+                showError(
+                  diag.probe?.error
+                    ? `No live adapter: ${diag.probe.error}`
+                    : "Scan could not reach a live Bluetooth adapter."
+                );
+              } else {
+                showError(count
+                  ? `Live BLE verified — ${count} device(s) from adapter (${result.device_count ?? 0} total).`
+                  : "Live BLE adapter OK — listening for devices…");
+              }
+              return;
+            } else {
+              await api("/api/scanner/pause", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ paused: false }),
+              });
+            }
             showError("");
           } catch (err) {
             showError(err.message || "Failed to update scanner state");
@@ -841,10 +1230,183 @@ DASHBOARD_HTML = """
           }
         });
       }
+      const minRssiEl = document.getElementById("min-rssi");
+      if (minRssiEl && minRssiEl.dataset.bound !== "1") {
+        minRssiEl.dataset.bound = "1";
+        minRssiEl.addEventListener("change", async () => {
+          const parsed = Number(minRssiEl.value);
+          const minRssi = Number.isFinite(parsed) && parsed <= -30 ? parsed : -127;
+          try {
+            await api("/api/scanner/filters", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ min_rssi: minRssi }),
+            });
+            showError("");
+          } catch (err) {
+            showError(err.message || "Failed to update RSSI filter");
+          }
+        });
+      }
+      ["export-json", "export-csv", "export-logs"].forEach((id) => {
+        const node = document.getElementById(id);
+        if (!node || node.dataset.bound === "1") return;
+        node.dataset.bound = "1";
+        const paths = {
+          "export-json": "/api/export/json",
+          "export-csv": "/api/export/csv",
+          "export-logs": "/api/export/logs.csv",
+        };
+        node.addEventListener("click", () => {
+          window.open(paths[id], "_blank");
+        });
+      });
+    }
+
+    function foundDevicesForScan(maxCount = 10) {
+      if (!snapshot) return [];
+      return snapshot.toys
+        .filter((toy) => toy.present)
+        .sort((a, b) => (b.rssi ?? -999) - (a.rssi ?? -999))
+        .slice(0, maxCount);
+    }
+
+    function renderScanFoundSummary() {
+      const el = document.getElementById("scan-found-summary");
+      if (!el || !snapshot) return;
+
+      const scanner = snapshot.scanner || {};
+      const all = snapshot.toys || [];
+      const present = all.filter((toy) => toy.present);
+      const strong = present.filter((toy) => typeof toy.rssi === "number" && toy.rssi >= -85);
+      const controllable = present.filter((toy) => toy.controllable);
+      const mode = scanner.mode || snapshot.scanner_mode || "unknown";
+      const probe = scanner.adapter_probe;
+      const isLive = mode === "live";
+      const isDemo = mode === "demo";
+
+      el.classList.remove("active");
+
+      if (scanner.paused) {
+        el.innerHTML = "Scan is <b>OFF</b>. Click <b>Scan ON</b> to discover nearby Bluetooth devices.";
+        return;
+      }
+      if (scanner.error) {
+        const probeHint = probe?.error
+          ? ` Adapter check: ${escapeHtml(probe.error)}`
+          : "";
+        el.innerHTML = `Scan failed — <b>not live data</b>.${probeHint} Click <b>Scan ON</b> after connecting a BLE adapter.`;
+        return;
+      }
+      if (!scanner.active) {
+        el.innerHTML = "Click <b>Scan ON</b> to verify the Bluetooth adapter and discover devices.";
+        return;
+      }
+
+      el.classList.add("active");
+      const sourceLabel = isLive
+        ? "<b>LIVE</b> data from Bluetooth adapter"
+        : isDemo
+          ? "<b>DEMO</b> simulated data (not from adapter)"
+          : `<b>${escapeHtml(mode)}</b>`;
+
+      if (!present.length) {
+        el.innerHTML = `Scan ON · ${sourceLabel} — listening… no devices in range yet.`;
+        return;
+      }
+
+      const liveCount = present.filter((toy) => toy.data_source === "live").length;
+      const demoCount = present.filter((toy) => toy.data_source === "demo").length;
+      const sourceCounts = isLive
+        ? `${liveCount} live reading(s)`
+        : isDemo
+          ? `${demoCount} simulated`
+          : "";
+
+      el.innerHTML = [
+        `Scan ON · ${sourceLabel}`,
+        sourceCounts,
+        `<b>${present.length}</b> in range`,
+        `<b>${all.length}</b> total seen`,
+        `<b>${strong.length}</b> strong (≥ -85 dBm)`,
+        `<b>${controllable.length}</b> controllable`,
+      ].filter(Boolean).join(" · ");
+    }
+
+    function nearbyDevices(maxCount = 10, minRssi = -85) {
+      if (!snapshot) return [];
+      return snapshot.toys
+        .filter((toy) => toy.present && typeof toy.rssi === "number" && toy.rssi >= minRssi)
+        .sort((a, b) => (b.rssi ?? -999) - (a.rssi ?? -999))
+        .slice(0, maxCount);
+    }
+
+    function autoSelectControllable() {
+      if (selectedAddress) return;
+      const nearby = foundDevicesForScan(10);
+      const pick = nearby.find((toy) => toy.controllable)
+        || (snapshot?.toys || []).find((toy) => toy.controllable && toy.present);
+      if (pick) {
+        selectedAddress = pick.address;
+      }
+    }
+
+    function updateThrusterTargetLabel() {
+      const label = document.getElementById("thruster-target-label");
+      if (!label) return;
+      const toy = selectedToy();
+      if (!toy) {
+        label.textContent = "Select an Adorime device above";
+        return;
+      }
+      label.textContent = toy.connected
+        ? `${deviceTitle(toy)} · connected`
+        : `${deviceTitle(toy)} · tap Connect`;
+    }
+
+    function renderNearbyQuickList() {
+      const root = document.getElementById("nearby-quick-list");
+      const summary = document.getElementById("nearby-quick-summary");
+      if (!root) return;
+
+      const scanner = snapshot?.scanner || {};
+      const scanning = scanner.active && !scanner.paused && !scanner.error;
+      const devices = scanning ? foundDevicesForScan(10) : [];
+
+      if (summary) {
+        summary.textContent = scanning
+          ? (devices.length ? `${devices.length} shown · strongest first` : "listening…")
+          : "Scan ON to list everything nearby";
+      }
+
+      if (!scanning) {
+        root.innerHTML = `<div class="nearby-quick-empty">Click <b>Scan ON</b> above to scan and list every nearby device here.</div>`;
+        return;
+      }
+
+      if (!devices.length) {
+        root.innerHTML = `<div class="nearby-quick-empty">Scan ON — listening for Bluetooth advertisements…</div>`;
+        return;
+      }
+
+      root.innerHTML = devices.map((toy) => `
+        <div class="nearby-quick-item ${toy.address === selectedAddress ? "active" : ""}" data-address="${escapeHtml(toy.address)}">
+          <span class="nearby-quick-name">${escapeHtml(deviceTitle(toy))}</span>
+          <span class="nearby-quick-rssi">${toy.rssi ?? "?"} dBm</span>
+          <span class="nearby-quick-badge ${toy.controllable ? "adorime" : ""}">${toy.controllable ? "Controllable" : escapeHtml(toy.device_type || "ble")}</span>
+          <span class="nearby-quick-addr">${escapeHtml(toy.address)} · ${escapeHtml(toy.data_source || "unknown")} · ${escapeHtml(toy.signal_quality || "unknown")}</span>
+        </div>
+      `).join("");
+
+      root.querySelectorAll(".nearby-quick-item").forEach((row) => {
+        row.addEventListener("click", () => selectToy(row.dataset.address));
+      });
+      updateThrusterTargetLabel();
     }
 
     function renderScannerStatus() {
       const scanner = snapshot?.scanner || {};
+      const probe = scanner.adapter_probe;
       const dot = document.getElementById("scanner-dot");
       const text = document.getElementById("scanner-status-text");
       const badge = document.getElementById("scanner-badge");
@@ -854,10 +1416,26 @@ DASHBOARD_HTML = """
       if (!dot || !text || !scanToggle || !deepScanEl) return;
 
       dot.className = "scanner-dot";
+      if (badge) {
+        badge.classList.remove("demo", "error");
+        if (scanner.error || (probe && !probe.available && scanner.mode !== "demo")) {
+          badge.textContent = "No adapter";
+          badge.classList.add("error");
+        } else if (scanner.mode === "demo") {
+          badge.textContent = "Demo data";
+          badge.classList.add("demo");
+        } else if (scanner.mode === "live") {
+          badge.textContent = "Live BLE";
+        } else if (scanner.paused) {
+          badge.textContent = "Scan OFF";
+        } else {
+          badge.textContent = "Scanning";
+        }
+      }
       if (scanner.error) {
         dot.classList.add("error");
-        text.textContent = "Scanner retrying";
-        if (badge) badge.textContent = "Scanner error";
+        text.textContent = "Scan OFF — click Scan ON";
+        if (badge) badge.textContent = "Scan OFF";
       } else if (scanner.deep_scan_active) {
         dot.classList.add("running");
         text.textContent = "Deep scan active";
@@ -868,13 +1446,16 @@ DASHBOARD_HTML = """
         if (badge) badge.textContent = "Scan OFF";
       } else if (scanner.active) {
         dot.classList.add("running");
-        text.textContent = "Scan ON · listening";
+        const count = snapshot?.present_count ?? 0;
+        text.textContent = count
+          ? `Scan ON · ${count} device(s) found`
+          : "Scan ON · listening";
         if (badge) badge.textContent = "Scan ON";
       } else {
         text.textContent = "Scanner starting";
       }
 
-      const scanning = !scanner.paused && !scanner.error;
+      const scanning = !scanner.paused && !scanner.error && scanner.active;
       scanToggle.textContent = scanning ? "Scan OFF" : "Scan ON";
       scanToggle.classList.toggle("on", scanning);
       scanToggle.classList.toggle("off", !scanning);
@@ -914,6 +1495,22 @@ DASHBOARD_HTML = """
       return Object.entries(serviceData).map(([uuid, hex]) =>
         `${escapeHtml(uuid)} → ${escapeHtml(hex)}`
       ).join("<br>");
+    }
+
+    function renderGattServices(toy) {
+      if (toy.gatt_error) {
+        return `<span class="hint">GATT scan error: ${escapeHtml(toy.gatt_error)}</span>`;
+      }
+      const services = toy.gatt_services || [];
+      if (!services.length) {
+        return `<span class="hint">Run Deep Scan to enumerate services and characteristics.</span>`;
+      }
+      return services.map((service) => {
+        const chars = (service.characteristics || []).map((char) =>
+          `<div class="uuid-item">${escapeHtml(char.uuid)} · ${escapeHtml((char.properties || []).join(", "))}</div>`
+        ).join("");
+        return `<div style="margin-bottom:8px;"><strong>${escapeHtml(service.uuid)}</strong>${chars}</div>`;
+      }).join("");
     }
 
     function drawSignalGraph(device) {
@@ -1007,6 +1604,8 @@ DASHBOARD_HTML = """
           <dt>TX power</dt><dd>${escapeHtml(formatNullable(toy.tx_power, " dBm"))}</dd>
           <dt>Raw RSSI</dt><dd>${escapeHtml(formatNullable(toy.rssi, " dBm"))}</dd>
           <dt>Smoothed RSSI</dt><dd>${escapeHtml(formatNullable(toy.rssi_smoothed, " dBm"))}</dd>
+          <dt>Signal quality</dt><dd>${escapeHtml(toy.signal_quality || toy.signal_stats?.quality || "unknown")} · avg ${escapeHtml(formatNullable(toy.signal_stats?.average, " dBm"))} · min ${escapeHtml(formatNullable(toy.signal_stats?.min, " dBm"))} · max ${escapeHtml(formatNullable(toy.signal_stats?.max, " dBm"))}</dd>
+          <dt>Device type</dt><dd>${escapeHtml(toy.device_type || "unknown")} (${escapeHtml(toy.transport || "ble")})</dd>
           <dt>Estimated distance</dt><dd>${escapeHtml(formatDistance(toy.estimated_distance_m))} (${escapeHtml(toy.distance_label || "unknown")})</dd>
           <dt>Movement</dt><dd>${escapeHtml(toy.movement || "collecting")}</dd>
           <dt>First seen</dt><dd>${escapeHtml(toy.first_seen)}</dd>
@@ -1014,6 +1613,7 @@ DASHBOARD_HTML = """
           <dt>Seen count</dt><dd>${escapeHtml(toy.seen_count)}</dd>
           <dt>Reappearances</dt><dd>${escapeHtml(toy.reappear_count)}</dd>
           <dt>Service UUIDs</dt><dd>${renderUuidList(toy.service_uuids || [], toy)}</dd>
+          <dt>GATT services</dt><dd>${renderGattServices(toy)}</dd>
         </dl>
         <h3 style="margin:18px 0 8px 0;">Findings</h3>
         ${findings}
@@ -1039,6 +1639,191 @@ DASHBOARD_HTML = """
       if (typeof meters !== "number") return "distance unknown";
       if (meters < 1) return `${Math.round(meters * 100)} cm est.`;
       return `${meters.toFixed(2)} m est.`;
+    }
+
+    function toPercent(rssi) {
+      if (typeof rssi !== "number") return 0;
+      const clamped = Math.max(-100, Math.min(-35, rssi));
+      return Math.round(((clamped + 100) / 65) * 100);
+    }
+
+    function hexToRgba(hex, alpha) {
+      const clean = hex.replace("#", "");
+      const bigint = parseInt(clean, 16);
+      const r = (bigint >> 16) & 255;
+      const g = (bigint >> 8) & 255;
+      const b = bigint & 255;
+      return `rgba(${r},${g},${b},${alpha})`;
+    }
+
+    function hashToAngle(text) {
+      let hash = 0;
+      for (let i = 0; i < text.length; i++) {
+        hash = ((hash << 5) - hash) + text.charCodeAt(i);
+        hash |= 0;
+      }
+      return (hash >>> 0) % 360 * (Math.PI / 180);
+    }
+
+    function lookupCalibratedDistance(rssi) {
+      const calibration = RSSI_DISTANCE_CALIBRATION;
+      const points = calibration.points;
+      const strongest = points[0];
+      const weakest = points[points.length - 1];
+      if (rssi >= strongest.rssi_dbm) return calibration.min_distance_m;
+      if (rssi <= weakest.rssi_dbm) return calibration.max_distance_m;
+      for (let index = 0; index < points.length - 1; index += 1) {
+        const upper = points[index];
+        const lower = points[index + 1];
+        if (rssi <= upper.rssi_dbm && rssi >= lower.rssi_dbm) {
+          if (upper.rssi_dbm === lower.rssi_dbm) return upper.distance_m;
+          const ratio = (rssi - upper.rssi_dbm) / (lower.rssi_dbm - upper.rssi_dbm);
+          const logUpper = Math.log10(upper.distance_m);
+          const logLower = Math.log10(lower.distance_m);
+          return Math.max(
+            calibration.min_distance_m,
+            Math.min(Math.pow(10, logUpper + ratio * (logLower - logUpper)), calibration.max_distance_m),
+          );
+        }
+      }
+      return calibration.max_distance_m;
+    }
+
+    function estimateDistanceFromRssi(rssi, txPower) {
+      if (typeof rssi !== "number") return RSSI_DISTANCE_CALIBRATION.max_distance_m;
+      const adjusted = typeof txPower === "number"
+        ? rssi + (RSSI_DISTANCE_CALIBRATION.reference_tx_power_dbm - txPower)
+        : rssi;
+      return lookupCalibratedDistance(adjusted);
+    }
+
+    function mapDistanceToRadius(distanceMeters, maxRadius) {
+      const maxDistance = RSSI_DISTANCE_CALIBRATION.max_distance_m;
+      const distance = Math.max(0.2, Math.min(distanceMeters || maxDistance, maxDistance));
+      const normalized = Math.log10(distance + 1) / Math.log10(maxDistance + 1);
+      return 22 + normalized * (maxRadius - 22);
+    }
+
+    function shortLabel(device) {
+      const name = (device.name || device.local_name || "").trim();
+      if (name) return name.length > 18 ? `${name.slice(0, 17)}…` : name;
+      return device.address.slice(-8);
+    }
+
+    function drawRadarMap(devices) {
+      const canvas = document.getElementById("radar-map");
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
+      const maxRadius = Math.min(canvas.width, canvas.height) * 0.43;
+      const ringDistances = [1, 3, 8, 20];
+
+      ctx.strokeStyle = "#3f2a3d";
+      ctx.lineWidth = 1;
+      for (const dist of ringDistances) {
+        const ring = mapDistanceToRadius(dist, maxRadius);
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, ring, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = "#93a1ba";
+        ctx.font = "11px sans-serif";
+        ctx.fillText(`${dist}m`, centerX + ring + 4, centerY - 2);
+      }
+
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, 6, 0, Math.PI * 2);
+      ctx.fillStyle = "#f472b6";
+      ctx.fill();
+      ctx.fillStyle = "#93a1ba";
+      ctx.font = "11px sans-serif";
+      ctx.fillText("you", centerX + 10, centerY + 4);
+
+      if (!devices.length) {
+        ctx.fillStyle = "#93a1ba";
+        ctx.font = "14px sans-serif";
+        ctx.fillText("No devices to plot yet", centerX - 72, centerY);
+        return;
+      }
+
+      const plotted = devices.filter((d) => d.present).concat(devices.filter((d) => !d.present));
+      for (const device of plotted) {
+        const estimatedDistance = typeof device.estimated_distance_m === "number"
+          ? device.estimated_distance_m
+          : estimateDistanceFromRssi(device.rssi_smoothed ?? device.rssi, device.tx_power);
+        const angle = hashToAngle(device.address);
+        const radius = mapDistanceToRadius(estimatedDistance, maxRadius);
+        const x = centerX + Math.cos(angle) * radius;
+        const y = centerY + Math.sin(angle) * radius;
+        let color = "#64748b";
+        if (device.address === selectedAddress) color = "#f472b6";
+        else if (device.controllable) color = "#22c55e";
+        else if (device.present) color = "#38bdf8";
+        const alpha = device.present ? 0.9 : 0.35;
+        const size = 4 + Math.round((toPercent(device.rssi_smoothed ?? device.rssi) / 100) * 7);
+
+        ctx.strokeStyle = `rgba(244,114,182,${alpha * 0.25})`;
+        ctx.beginPath();
+        ctx.moveTo(centerX, centerY);
+        ctx.lineTo(x, y);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(x, y, size, 0, Math.PI * 2);
+        ctx.fillStyle = hexToRgba(color, alpha);
+        ctx.fill();
+
+        ctx.fillStyle = "#edf2ff";
+        ctx.font = "11px sans-serif";
+        ctx.fillText(shortLabel(device), x + size + 3, y - 4);
+      }
+    }
+
+    function renderDeviceCards() {
+      const root = document.getElementById("device-cards");
+      if (!root) return;
+      const devices = filteredDevices();
+      drawRadarMap(devices);
+
+      if (!snapshot || !snapshot.toys.length) {
+        root.className = "device-cards empty";
+        root.textContent = "No nearby Bluetooth devices yet. Turn Scan ON and wait for advertisements.";
+        return;
+      }
+      if (!devices.length) {
+        root.className = "device-cards empty";
+        root.textContent = "No devices match the current filter.";
+        return;
+      }
+
+      root.className = "device-cards";
+      root.innerHTML = devices.map((toy) => `
+        <article class="device-card ${toy.controllable ? "controllable" : ""} ${toy.address === selectedAddress ? "active" : ""} ${toy.connected ? "connected" : ""}" data-address="${escapeHtml(toy.address)}">
+          <div class="device-card-head">
+            <div>
+              <div class="device-card-name">${escapeHtml(deviceTitle(toy))}</div>
+              <div class="device-card-addr">${escapeHtml(toy.address)}</div>
+            </div>
+            <div style="display:flex; gap:4px; flex-wrap:wrap; justify-content:end;">
+              ${brandBadge(toy)}
+            </div>
+          </div>
+          ${rssiBar(toy.rssi ?? -100)}
+          <div class="device-card-meta">
+            <span>RSSI ${toy.rssi ?? "?"} dBm · ${escapeHtml(toy.movement || "collecting")}</span>
+            <span>${escapeHtml(formatDistance(toy.estimated_distance_m))}</span>
+          </div>
+          <div class="device-card-meta">
+            <span>${toy.service_uuids?.length || 0} service UUID(s)</span>
+            ${statusBadge(toy)}
+          </div>
+        </article>
+      `).join("");
+      root.querySelectorAll(".device-card").forEach((node) => {
+        node.addEventListener("click", () => selectToy(node.dataset.address));
+      });
     }
 
     async function api(path, options) {
@@ -1308,7 +2093,7 @@ DASHBOARD_HTML = """
                   <div class="col-meta">${escapeHtml(toy.name && toy.name !== deviceTitle(toy) ? toy.name : (toy.local_name || "Unnamed"))}</div>
                 </td>
                 <td class="col-addr">${escapeHtml(toy.address)}</td>
-                <td class="col-rssi">${toy.rssi ?? "?"} dBm<br><span class="col-meta">${escapeHtml(toy.movement || "collecting")}</span></td>
+                <td class="col-rssi">${toy.rssi ?? "?"} dBm<br><span class="col-meta">${escapeHtml(toy.signal_quality || "unknown")} · ${escapeHtml(toy.movement || "collecting")}</span></td>
                 <td class="col-meta">${escapeHtml(formatDistance(toy.estimated_distance_m))}<br>${escapeHtml(toy.distance_label || "")}</td>
                 <td class="col-meta">${toy.service_uuids?.length || 0} UUID(s)${toy.galaku_service ? "<br>Galaku svc" : ""}${toy.manufacturer_hex ? `<br>${escapeHtml(toy.manufacturer_hex)}` : ""}</td>
                 <td><div class="badge-cell">${brandBadge(toy)} ${statusBadge(toy)}</div></td>
@@ -1372,19 +2157,55 @@ DASHBOARD_HTML = """
           runPattern(toy.address, node.dataset.pattern);
         });
       });
+
+      document.getElementById("ai-suggest-btn")?.addEventListener("click", async () => {
+        try {
+          const suggestion = await api(`/api/toys/${encodeURIComponent(toy.address)}/ai-suggest`);
+          showError(`AI: thrust ${suggestion.suggested_levels?.thrust ?? "?"}% · ${(suggestion.notes || []).join(" ")}`);
+        } catch (err) {
+          showError(err.message || "AI suggestion failed");
+        }
+      });
+      document.getElementById("ai-apply-btn")?.addEventListener("click", async () => {
+        try {
+          await api(`/api/toys/${encodeURIComponent(toy.address)}/ai-apply`, { method: "POST" });
+          showError("");
+        } catch (err) {
+          showError(err.message || "AI apply failed");
+        }
+      });
+      async function sendThruster(direction, pulseMode) {
+        const throttle = Number(document.getElementById("master-thrust")?.value || localLevels[toy.address]?.thrust || 0);
+        await api(`/api/toys/${encodeURIComponent(toy.address)}/thruster`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ throttle, direction, pulse_mode: pulseMode }),
+        });
+      }
+      document.getElementById("thruster-forward")?.addEventListener("click", () => {
+        if (toy.connected) sendThruster("forward", false).catch((err) => showError(err.message));
+      });
+      document.getElementById("thruster-reverse")?.addEventListener("click", () => {
+        if (toy.connected) sendThruster("reverse", false).catch((err) => showError(err.message));
+      });
+      document.getElementById("thruster-pulse")?.addEventListener("click", () => {
+        if (toy.connected) sendThruster("forward", true).catch((err) => showError(err.message));
+      });
     }
 
     function renderControlPanel() {
       const root = document.getElementById("control-panel");
+      if (!root) return;
       const toy = selectedToy();
       applyTheme("adorime");
+      updateThrusterTargetLabel();
 
       if (!toy) {
         panelSignature = null;
         root.className = "";
         root.innerHTML = `
           <div class="hero-card">
-            <div class="control-title">Adorime thrust controls</div>
+            <div class="control-title">Pump and dump controls</div>
             <div class="control-sub">Select a live Adorime toy from the list to connect and drive thrust/vibration.</div>
           </div>
           <div class="control-section disabled-overlay">
@@ -1467,6 +2288,8 @@ DASHBOARD_HTML = """
                   ? `<button class="secondary" id="disconnect-btn">Disconnect</button>`
                   : `<button id="connect-btn">Connect</button>`}
                 <button class="danger" id="stop-btn" ${toy.connected ? "" : "disabled"}>Stop all</button>
+                <button class="secondary" id="ai-suggest-btn">AI suggest</button>
+                <button class="secondary" id="ai-apply-btn" ${toy.connected ? "" : "disabled"}>Apply AI</button>
               </div>
             </div>
             <div class="meter-grid">
@@ -1492,6 +2315,11 @@ DASHBOARD_HTML = """
                   </div>
                   <input type="range" id="master-thrust" min="0" max="100" step="1" value="${thrustLevel}" data-motor="thrust" ${toy.connected ? "" : "disabled"}>
                   <div class="quick-levels">${renderQuickLevels(toy, "thrust")}</div>
+                  <div class="focus-row" style="margin-top:10px;">
+                    <button type="button" class="secondary" id="thruster-forward" ${toy.connected ? "" : "disabled"}>Forward</button>
+                    <button type="button" class="secondary" id="thruster-reverse" ${toy.connected ? "" : "disabled"}>Reverse</button>
+                    <button type="button" class="secondary" id="thruster-pulse" ${toy.connected ? "" : "disabled"}>Pulse mode</button>
+                  </div>
                 </div>
               </section>
             ` : ""}
@@ -1551,10 +2379,14 @@ DASHBOARD_HTML = """
       if (!selectedAddress && snapshot.selected_address) {
         selectedAddress = snapshot.selected_address;
       }
+      autoSelectControllable();
       document.getElementById("counts").innerHTML =
         `<b>${snapshot.present_count}</b> in range · <b>${snapshot.device_count ?? snapshot.toy_count}</b> seen · <b>${snapshot.adorime_count ?? snapshot.controllable_count}</b> Adorime · <b>${snapshot.connected_count}</b> connected`;
       document.getElementById("updated").textContent = `Updated ${snapshot.generated_at}`;
       renderScannerStatus();
+      renderScanFoundSummary();
+      renderNearbyQuickList();
+      renderDeviceCards();
       renderToyList();
       renderDeviceDetails();
       renderControlPanel();

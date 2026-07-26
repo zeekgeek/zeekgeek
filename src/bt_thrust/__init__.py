@@ -1,4 +1,4 @@
-"""Bluetooth thrust controller with toy scanner and brand-themed dashboard."""
+"""Pump and dump Bluetooth Controller — BLE scanner and device dashboard."""
 
 __all__ = ["__version__"]
 

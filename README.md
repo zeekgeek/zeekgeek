@@ -100,10 +100,13 @@ python3 -m unittest discover -s tests
 
 ---
 
-# Adorime Thrust Controller
+# Pump and dump Bluetooth Controller
 
-Live BLE scanner and thrust/vibration controller focused on **Adorime**
-products. Identifies devices from their advertised BLE names (for example
+Live BLE + classic Bluetooth scanner and device controller focused on
+**Adorime**-compatible hardware. Includes a terminal CLI scanner, signal analytics, GATT
+deep scan, CSV/JSON export, and AI-assisted throttle suggestions.
+
+Identifies devices from their advertised BLE names (for example
 `BGSF`, `SN80`, `AX05`) and exposes a rose-themed dashboard with live thrust
 controls.
 
@@ -112,7 +115,7 @@ wearable eggs, cock rings, chastity cage, and related dual-motor models.
 Control uses the Adorime/Galaku-family BLE write format documented via
 Buttplug/Intiface community research.
 
-## Quick start
+## Quick start (GUI dashboard)
 
 ```bash
 python -m venv .venv
@@ -124,38 +127,56 @@ python3 -m bt_thrust
 Open <http://127.0.0.1:8800>, select a live Adorime toy, click **Connect**,
 then use the thrust/vibration sliders or pattern presets.
 
-Requires a powered Bluetooth adapter and an Adorime device in
-advertising/pairing mode. Linux hosts usually need `bluetoothd` running and BLE
-scan permission for the current user/session.
+## Terminal scanner (CLI)
+
+```bash
+python3 -m bt_thrust scan --interval 2 --min-rssi -75 --export scan.json
+python3 -m bt_thrust scan --classic --export-csv devices.csv
+python3 -m bt_thrust scan --plot rssi.png   # requires: pip install -e ".[plot]"
+```
+
+Requires a powered Bluetooth adapter and devices in advertising/pairing mode.
+Linux hosts usually need `bluetoothd` running and BLE scan permission for the
+current user/session. Classic Bluetooth discovery uses `bluetoothctl` when
+available.
 
 ## Dashboard behavior
 
-- **Live Adorime toys** panel lists only recognized in-range Adorime devices
-  with RSSI, estimated distance, and movement hints.
-- **Thrust controls** expose separate **Thrust** and **Vibration** sliders on
-  dual-motor models, with live command sending while connected.
-- **Pattern presets** loop thrust/vibration levels while connected.
+- **Bluetooth scanner** with Scan ON/OFF, Deep Scan (GATT + classic), RSSI filters,
+  and CSV/JSON export.
+- **Nearby radar map** and device cards for all observed BLE devices.
+- **Device details** with signal quality (excellent/good/fair/poor), rolling
+  RSSI stats, advertised UUIDs, and enumerated GATT services/characteristics.
+- **Thruster controls** with master thrust, direction (forward/reverse), pulse
+  mode, motor sliders, pattern presets, and AI suggest/apply.
 - **Stop all** sends a zero command and cancels any active pattern.
 - **Browser notifications** for discovered, connected, and disconnected toys.
 
 ## Command options
 
 ```text
-python3 -m bt_thrust --host 127.0.0.1 --port 8800 --stale-after 20
+python3 -m bt_thrust --host 127.0.0.1 --port 8800 --stale-after 20 --max-throttle 100
+python3 -m bt_thrust scan --interval 2 --duration 30 --device-type adorime_thruster
 ```
 
 - `--host`: dashboard bind address
 - `--port`: dashboard port (default `8800`)
 - `--stale-after`: seconds without sightings before a toy is marked as left
+- `--max-throttle`: safety cap for control levels (0–100)
 - `--log-level`: `debug`, `info`, `warning`, or `error`
 
 ## API
 
-- `GET /api/toys`: current snapshot of scanned toys and control state
-- `POST /api/select`: body `{"address": "..."}` to select a toy in the UI
+- `GET /api/toys`: current snapshot of scanned devices and control state
+- `POST /api/select`: body `{"address": "..."}` to select a device in the UI
 - `POST /api/toys/{address}/connect` / `disconnect`: manage BLE connection
 - `POST /api/toys/{address}/control`: body `{"levels": {"thrust": 50, "vibrate": 30}}`
+- `POST /api/toys/{address}/thruster`: body `{"throttle": 50, "direction": "forward", "pulse_mode": false}`
 - `POST /api/toys/{address}/pattern`: body `{"pattern": "pulse"}`
+- `POST /api/scanner/deep-scan`: enable extended GATT/classic discovery window
+- `POST /api/scanner/filters`: body `{"min_rssi": -70, "device_type": "adorime_thruster"}`
+- `GET /api/toys/{address}/ai-suggest` / `POST /api/toys/{address}/ai-apply`
+- `GET /api/export/json`, `/api/export/csv`, `/api/export/logs.csv`
 - `GET /api/events`: Server-Sent Events stream for live UI updates
 
 ## Tests

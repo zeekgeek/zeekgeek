@@ -22,6 +22,7 @@ from .protocols import (
     protocol_config,
     resolve_device_profile,
 )
+from .signal_quality import device_type_label, rssi_stats
 
 
 def utc_now() -> datetime:
@@ -43,6 +44,8 @@ class ToyObservation:
     tx_power: int | None = None
     details: dict[str, Any] = field(default_factory=dict)
     observed_at: datetime = field(default_factory=utc_now)
+    ble_device: Any = None
+    source: str = "live"
 
 
 @dataclass
@@ -68,6 +71,12 @@ class ToyTrack:
     levels: dict[str, int] = field(default_factory=dict)
     active_pattern: str | None = None
     battery_percent: int | None = None
+    gatt_services: list[dict[str, Any]] = field(default_factory=list)
+    gatt_error: str | None = None
+    transport: str = "ble"
+    device_class: str | None = None
+    ble_device: Any = None
+    data_source: str = "live"
     events: deque[dict[str, Any]] = field(default_factory=lambda: deque(maxlen=40))
     findings: list[Finding] = field(default_factory=list)
 
@@ -96,6 +105,10 @@ class ToyTrack:
             self.manufacturer_data = list(observation.details["manufacturer_data"])
         self.tx_power = observation.tx_power if observation.tx_power is not None else self.tx_power
         self.details.update(observation.details)
+        if observation.ble_device is not None:
+            self.ble_device = observation.ble_device
+        if observation.source:
+            self.data_source = observation.source
         local_name = observation.details.get("local_name")
         self.profile = resolve_device_profile(
             self.name,
@@ -173,6 +186,13 @@ class ToyTrack:
                 "service_uuid": config["service_uuid"],
                 "tx_uuid": config["tx_uuid"],
             }
+        signal_stats = rssi_stats(rssi_values)
+        device_type = device_type_label(
+            controllable=profile is not None,
+            adorime_match=profile is not None and profile.brand == "adorime",
+            galaku_service=has_galaku_service(self.service_uuids),
+            name=self.name,
+        )
         return {
             "address": self.address,
             "name": self.name,
@@ -184,6 +204,14 @@ class ToyTrack:
             "controllable": profile is not None,
             "adorime_match": profile is not None and profile.brand == "adorime",
             "galaku_service": has_galaku_service(self.service_uuids),
+            "device_type": device_type,
+            "transport": self.transport,
+            "device_class": self.device_class,
+            "data_source": self.data_source,
+            "signal_stats": signal_stats,
+            "signal_quality": signal_stats["quality"],
+            "gatt_services": list(self.gatt_services),
+            "gatt_error": self.gatt_error,
             "motors": profile.to_dict()["motors"] if profile else [],
             "address_family": address_family(self.address, self.address_type),
             "address_type": self.address_type,
@@ -226,19 +254,32 @@ class ControllerState:
         self._scanner_paused = False
         self._scanner_active = False
         self._scanner_error: str | None = None
+        self._scanner_mode: str = "off"
+        self._adapter_probe: dict[str, Any] | None = None
         self._observation_count = 0
         self._last_observation_at: datetime | None = None
         self._deep_scan_until: datetime | None = None
+        self._deep_scan_task: asyncio.Task | None = None
+        self._min_rssi_filter: int = -127
+        self._device_type_filter: str = "all"
         self._lock = asyncio.Lock()
 
     async def is_scanner_paused(self) -> bool:
         async with self._lock:
             return self._scanner_paused
 
-    async def set_scanner_active(self, active: bool, *, error: str | None = None) -> None:
+    async def set_adapter_probe(self, probe: dict[str, Any] | None) -> None:
+        async with self._lock:
+            self._adapter_probe = probe
+
+    async def set_scanner_active(self, active: bool, *, error: str | None = None, mode: str | None = None) -> None:
         async with self._lock:
             self._scanner_active = active
             self._scanner_error = error
+            if mode is not None:
+                self._scanner_mode = mode
+            elif not active and error:
+                self._scanner_mode = "off"
 
     def _deep_scan_active(self, now: datetime) -> bool:
         return self._deep_scan_until is not None and now < self._deep_scan_until
@@ -273,6 +314,80 @@ class ControllerState:
             }
             self._events.append(event)
             return event
+
+    async def set_scanner_filters(
+        self,
+        *,
+        min_rssi: int | None = None,
+        device_type: str | None = None,
+    ) -> None:
+        async with self._lock:
+            if min_rssi is not None:
+                parsed = int(min_rssi)
+                # -127 (or out-of-range values) means "show all devices"
+                self._min_rssi_filter = parsed if -100 <= parsed <= -30 else -127
+            if device_type is not None:
+                self._device_type_filter = device_type
+
+    async def store_gatt_result(self, address: str, result: dict[str, Any]) -> dict[str, Any] | None:
+        async with self._lock:
+            track = self._toys.get(address)
+            if track is None:
+                return None
+            track.gatt_services = list(result.get("services") or [])
+            track.gatt_error = result.get("error")
+            event = {
+                "type": "gatt-deep-scan",
+                "address": address,
+                "name": track.name,
+                "message": (
+                    f"GATT deep scan complete ({len(track.gatt_services)} services)"
+                    if not track.gatt_error
+                    else f"GATT deep scan failed: {track.gatt_error}"
+                ),
+                "at": iso_time(utc_now()),
+            }
+            track.events.append(event)
+            self._events.append(event)
+            return event
+
+    async def observe_classic_device(
+        self,
+        *,
+        address: str,
+        name: str,
+        device_class: str | None = None,
+        rssi: int | None = None,
+    ) -> None:
+        async with self._lock:
+            now = utc_now()
+            track = self._toys.get(address)
+            if track is None:
+                track = ToyTrack(
+                    address=address,
+                    first_seen=now,
+                    last_seen=now,
+                    name=name,
+                    transport="classic",
+                    device_class=device_class,
+                    seen_count=1,
+                )
+                if rssi is not None:
+                    track.rssi = rssi
+                    track.rssi_history.append(rssi)
+                    track.time_history.append(iso_time(now))
+                self._toys[address] = track
+                self._events.append(track._event("new", now, "Classic Bluetooth device discovered"))
+            else:
+                track.present = True
+                track.last_seen = now
+                track.name = name or track.name
+                track.transport = "classic"
+                track.device_class = device_class or track.device_class
+                if rssi is not None:
+                    track.rssi = rssi
+                    track.rssi_history.append(rssi)
+                    track.time_history.append(iso_time(now))
 
     async def set_stale_after(self, stale_after: float) -> None:
         async with self._lock:
@@ -328,6 +443,8 @@ class ControllerState:
                     tx_power=observation.tx_power,
                     details=dict(observation.details),
                     profile=profile,
+                    ble_device=observation.ble_device,
+                    data_source=observation.source,
                     seen_count=1,
                     levels={motor.id: 0 for motor in profile.motors} if profile else {},
                 )
@@ -400,7 +517,8 @@ class ControllerState:
     async def snapshot(self) -> dict[str, Any]:
         async with self._lock:
             now = utc_now()
-            toys = [track.snapshot(now) for track in self._toys.values()]
+            all_toys = [track.snapshot(now) for track in self._toys.values()]
+            toys = list(all_toys)
             toys.sort(
                 key=lambda item: (
                     item["present"],
@@ -412,11 +530,12 @@ class ControllerState:
             )
             return {
                 "generated_at": iso_time(now),
-                "scanner_mode": "live",
+                "scanner_mode": self._scanner_mode,
                 "scanner": {
                     "active": self._scanner_active,
                     "paused": self._scanner_paused,
                     "error": self._scanner_error,
+                    "mode": self._scanner_mode,
                     "deep_scan_active": self._deep_scan_active(now),
                     "deep_scan_until": iso_time(self._deep_scan_until)
                     if self._deep_scan_until
@@ -426,13 +545,24 @@ class ControllerState:
                     if self._last_observation_at
                     else None,
                     "stale_after": self.stale_after,
+                    "min_rssi_filter": self._min_rssi_filter,
+                    "device_type_filter": self._device_type_filter,
+                    "adapter_probe": self._adapter_probe,
+                    "live_data": self._scanner_mode == "live",
                 },
-                "device_count": len(toys),
-                "toy_count": len(toys),
-                "present_count": sum(1 for item in toys if item["present"]),
-                "connected_count": sum(1 for item in toys if item["connected"]),
-                "controllable_count": sum(1 for item in toys if item["controllable"]),
-                "adorime_count": sum(1 for item in toys if item["adorime_match"]),
+                "device_count": len(all_toys),
+                "toy_count": len(all_toys),
+                "present_count": sum(1 for item in all_toys if item["present"]),
+                "connected_count": sum(1 for item in all_toys if item["connected"]),
+                "controllable_count": sum(1 for item in all_toys if item["controllable"]),
+                "adorime_count": sum(1 for item in all_toys if item["adorime_match"]),
+                "filtered_count": len(
+                    [
+                        item
+                        for item in all_toys
+                        if self._passes_scanner_filters(item)
+                    ]
+                ),
                 "selected_address": self._selected_address,
                 "patterns": catalog_patterns(),
                 "thrust_modes": catalog_thrust_modes(),
@@ -445,6 +575,20 @@ class ControllerState:
     async def get_track(self, address: str) -> ToyTrack | None:
         async with self._lock:
             return self._toys.get(address)
+
+    async def get_ble_device(self, address: str) -> Any:
+        async with self._lock:
+            track = self._toys.get(address)
+            return track.ble_device if track is not None else None
+
+    def _passes_scanner_filters(self, toy: dict[str, Any]) -> bool:
+        if self._min_rssi_filter > -127:
+            rssi = toy.get("rssi")
+            if rssi is not None and rssi < self._min_rssi_filter:
+                return False
+        if self._device_type_filter != "all" and toy.get("device_type") != self._device_type_filter:
+            return False
+        return True
 
     async def add_system_event(self, event_type: str, message: str) -> dict[str, Any]:
         async with self._lock:
