@@ -1,5 +1,6 @@
-"""Thin launcher — run with: streamlit run etsy_ai_space/dashboard/app.py"""
+"""Launcher — prefer: python -m dashboard.app"""
 
-from etsy_ai_space.dashboard.app import main
+from dashboard.app import main
 
-main()
+if __name__ == "__main__":
+    raise SystemExit(main())

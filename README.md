@@ -379,7 +379,9 @@ python3 -m etsy_ai_space top --limit 5
 
 ## Live scraping (Phase 1)
 
-Requires Playwright and a local Chromium install:
+Requires Playwright and a local Chromium install. Requests are **rate-limited by default**
+(3–6s between Etsy requests, max ~12/min, exponential backoff on 429/503). Tune constants
+in `src/etsy_ai_space/scraper/rate_limit.py`.
 
 ```bash
 pip install -e ".[etsy]"

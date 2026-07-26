@@ -1,4 +1,4 @@
-"""Headless Playwright scraper with humanized pacing."""
+"""Headless Playwright scraper with humanized pacing and polite rate limits."""
 
 from __future__ import annotations
 
@@ -9,7 +9,13 @@ from urllib.parse import quote_plus
 
 from ..models import ScrapedListing, utc_now
 from ..scoring import score_listing
-from ..tools.delays import human_delay, micro_delay
+from ..tools.delays import micro_delay
+from .rate_limit import (
+    MAX_DELAY_SECONDS,
+    MIN_DELAY_SECONDS,
+    EtsyRateLimiter,
+    polite_goto,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -25,9 +31,10 @@ class PlaywrightScraperBackend:
         self,
         *,
         headless: bool = True,
-        min_delay: float = 1.5,
-        max_delay: float = 4.5,
+        min_delay: float = MIN_DELAY_SECONDS,
+        max_delay: float = MAX_DELAY_SECONDS,
         user_agent: str | None = None,
+        rate_limiter: EtsyRateLimiter | None = None,
     ) -> None:
         self.headless = headless
         self.min_delay = min_delay
@@ -35,6 +42,10 @@ class PlaywrightScraperBackend:
         self.user_agent = user_agent or (
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        )
+        self.rate_limiter = rate_limiter or EtsyRateLimiter(
+            min_delay=min_delay,
+            max_delay=max_delay,
         )
 
     async def scrape_search(self, query: str, *, max_results: int = 48) -> list[ScrapedListing]:
@@ -57,9 +68,31 @@ class PlaywrightScraperBackend:
                 locale="en-US",
             )
             page = await context.new_page()
+
+            def _on_response(response: Any) -> None:
+                try:
+                    if "etsy.com" not in response.url:
+                        return
+                    status = response.status
+                    if status >= 400:
+                        LOGGER.info(
+                            "rate-limit: observed response url=%s status=%d",
+                            response.url[:120],
+                            status,
+                        )
+                except Exception:
+                    pass
+
+            page.on("response", _on_response)
+
             try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=45000)
-                await human_delay(self.min_delay, self.max_delay)
+                await polite_goto(
+                    page,
+                    url,
+                    self.rate_limiter,
+                    wait_until="domcontentloaded",
+                    timeout=45000,
+                )
                 await self._gentle_scroll(page)
                 cards = page.locator("[data-listing-id], a.listing-link")
                 count = await cards.count()
@@ -83,6 +116,13 @@ class PlaywrightScraperBackend:
                 await context.close()
                 await browser.close()
 
+        stats = self.rate_limiter.stats
+        LOGGER.info(
+            "rate-limit: session complete requests=%d rate_limit_events=%d total_sleep=%.1fs",
+            stats.requests,
+            stats.rate_limit_events,
+            stats.total_sleep_seconds,
+        )
         listings.sort(key=lambda item: item.performance_score or 0.0, reverse=True)
         return listings
 
