@@ -5,6 +5,7 @@
 This repo contains self-contained Python apps under `src/`:
 
 - `bt_radar` — BLE scanner + FastAPI dashboard
+- `bt_thrust` — live Adorime BLE scanner + thrust/vibration controller dashboard
 - `wifi_radar` — WiFi motion radar + FastAPI dashboard
 - `mac_battery` — MacBook battery/charging diagnostic + FastAPI dashboard
 - `jet_radar` — private-jet ADS-B movement radar + strange-event alarm dashboard
@@ -20,6 +21,8 @@ Running the apps:
 - Cloud VMs have no Bluetooth adapter / `bluetoothd`, so live BLE scanning will not work.
  Always run bt_radar in demo mode: `python3 -m bt_radar --demo`. (Without `--demo` the app tries
  live scanning and auto-falls back to demo mode, printing a system event.)
+- BT thrust controller: `python3 -m bt_thrust` (live Adorime BLE scan + GATT control;
+  needs Bluetooth adapter + Adorime device advertising). Default dashboard port is `8800`.
 - WiFi radar: `python3 -m wifi_radar --demo` (live needs `iw` / wireless hardware).
 - Mac battery: `python3 -m mac_battery --demo` on non-macOS hosts (live needs macOS `ioreg` /
  AppleSmartBattery). Default dashboard port is `8780`.
