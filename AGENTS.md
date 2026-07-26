@@ -9,6 +9,7 @@ This repo contains self-contained Python apps under `src/`:
 - `wifi_radar` — WiFi motion radar + FastAPI dashboard
 - `mac_battery` — MacBook battery/charging diagnostic + FastAPI dashboard
 - `jet_radar` — private-jet ADS-B movement radar + strange-event alarm dashboard
+- `shield_line` — threat-aware messaging time sink + FastAPI simulator dashboard
 
 There is no database and no frontend build step (dashboard HTML/JS is embedded
 in each package’s `web.py`).
@@ -26,7 +27,9 @@ Running the apps:
 - Mac battery: `python3 -m mac_battery --demo` on non-macOS hosts (live needs macOS `ioreg` /
  AppleSmartBattery). Default dashboard port is `8780`.
 - Jet radar: `python3 -m jet_radar --demo` (live polls adsb.lol; needs network egress).
-  Default dashboard port is `8790`.
+ Default dashboard port is `8790`.
+- Shield Line: `python3 -m shield_line` (threat detection + time-wasting auto-replies; use `--demo` for scripted samples).
+ Default dashboard port is `8775`.
 - Dashboards bind to `http://127.0.0.1:<port>` by default. If the port is busy the app
  auto-increments to the next free port and prints the chosen URL, so read the startup log
  rather than assuming the default. Pass `--port <n>` for deterministic binding.

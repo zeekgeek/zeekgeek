@@ -16,6 +16,7 @@ bt-thrust = "bt_thrust.__main__:main"
 wifi-radar = "wifi_radar.__main__:main"
 mac-battery = "mac_battery.__main__:main"
 jet-radar = "jet_radar.__main__:main"
+shield-line = "shield_line.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

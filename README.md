@@ -392,3 +392,57 @@ python3 -m jet_radar --host 127.0.0.1 --port 8790 --sigma 3 --trigger-threshold 
 - `GET /api/jets`: snapshot (jets, baseline, hideout candidates, watchlist moves, events)
 - `POST /api/sensitivity`: body `{"sigma": 3.0, "trigger_threshold": 3}`
 - `GET /api/events`: Server-Sent Events stream
+
+---
+
+# Shield Line (threat-aware time sink)
+
+Local tool that **scores inbound messages for threats, coercion, and abuse** and,
+when shield mode is on, **auto-replies with a time-wasting bot** (bureaucratic loops,
+fake compliance checks, captcha puzzles, and mirroring) so an abusive contact stays
+engaged while you step away, document messages, or reach safety resources.
+
+This is a **simulator and API** for trying the logic on your machine — wire it to SMS
+or chat bridges yourself; it does not message anyone automatically.
+
+## Quick start
+
+```bash
+source .venv/bin/activate
+pip install -e .
+python3 -m shield_line
+```
+
+Open <http://127.0.0.1:8775>, type or paste threatening sample text, and watch the
+bot burn their attention with slow, pointless replies.
+
+Demo playback of canned abusive lines:
+
+```bash
+python3 -m shield_line --demo
+```
+
+## Command options
+
+```text
+python3 -m shield_line --host 127.0.0.1 --port 8775 --no-auto-shield
+```
+
+- `--demo`: inject sample threatening messages on an interval
+- `--demo-interval`: seconds between demo lines (default `8`)
+- `--no-auto-shield`: detection only until you enable shield in the UI
+- `--host` / `--port` / `--log-level`
+
+## API
+
+- `GET /api/snapshot`: full chat log, stats, and events
+- `POST /api/chat`: body `{"message": "..."}` → threat assessment + optional bot reply
+- `POST /api/mode`: body `{"mode": "shield"|"passive", "auto_shield": true}`
+- `POST /api/reset`: new anonymous session
+- `GET /api/events`: Server-Sent Events stream
+
+## Safety note
+
+If you are in immediate danger, contact local emergency services. In the U.S., the
+National Domestic Violence Hotline is 1-800-799-7233 and crisis support is available
+via 988. This app does not contact law enforcement or hotlines on your behalf.
