@@ -15,6 +15,7 @@ etsy = [
     "playwright",
     "anthropic",
     "streamlit",
+    "pyyaml",
 ]
 
 [project.scripts]

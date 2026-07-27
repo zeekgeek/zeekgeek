@@ -45,6 +45,7 @@ def default_state() -> dict[str, Any]:
             "listings_generated": 0,
             "successful_uploads": 0,
             "compute_cost_usd": 0.0,
+            "revenue_usd": 0.0,
             "scrape_runs": 0,
             "successes": 0,
             "errors": 0,

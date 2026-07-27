@@ -13,6 +13,7 @@ from etsy_ai_space.agents.researcher.runner import run_researcher
 from etsy_ai_space.db import StoreDatabase
 from etsy_ai_space.export.bundle import export_pending_drafts
 from etsy_ai_space.models import CreativeBrief, ListingDraft, ProductConcept
+from etsy_ai_space.pipeline.autopilot import AutopilotConfig, AutopilotRunner
 from etsy_ai_space.pipeline.orchestrator import ManagerAgent, run_orchestrator
 from etsy_ai_space.pipeline.state_tracker import SwarmStateTracker, default_state
 from etsy_ai_space.scraper.demo import DemoScraperBackend
@@ -116,6 +117,20 @@ class EtsyAiSpaceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("metrics", state)
         self.assertEqual(len(state["agents"]), 5)
         self.assertIn("listings_generated", state["metrics"])
+
+    def test_autopilot_config_loads(self) -> None:
+        config = AutopilotConfig.load(Path("/workspace/etsy_ai_space/autopilot.yaml"))
+        self.assertGreaterEqual(len(config.niches), 1)
+        self.assertTrue(config.demo)
+
+    async def test_autopilot_single_cycle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = StoreDatabase(Path(tmp) / "store.db")
+            config = AutopilotConfig(niches=["retro cat shirt"], demo=True, max_cycles_per_day=2)
+            runner = AutopilotRunner(db, config, export_dir=Path(tmp) / "exports")
+            result = await runner.run_cycle()
+            self.assertEqual(result["concepts"], 5)
+            self.assertIn("export", result)
 
     def test_designer_worker_builds_listing(self) -> None:
         brief = CreativeBrief(

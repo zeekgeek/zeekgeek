@@ -69,12 +69,13 @@ def run_dashboard(*, refresh_seconds: int = 3) -> None:
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Listings generated", int(metrics.get("listings_generated") or 0))
     c2.metric("Successful uploads", int(metrics.get("successful_uploads") or 0))
-    c3.metric("Scrape runs", int(metrics.get("scrape_runs") or 0))
-    c4.metric("Compute cost (USD)", f"${float(metrics.get('compute_cost_usd') or 0):.4f}")
+    c3.metric("Revenue (USD)", f"${float(metrics.get('revenue_usd') or 0):.2f}")
+    c4.metric("Scrape runs", int(metrics.get("scrape_runs") or 0))
+    c5.metric("Compute cost (USD)", f"${float(metrics.get('compute_cost_usd') or 0):.4f}")
     success = int(metrics.get("successes") or 0)
     errors = int(metrics.get("errors") or 0)
     rate = (success / (success + errors) * 100) if (success + errors) else 100.0
-    c5.metric("Success rate", f"{rate:.0f}%")
+    st.sidebar.metric("Agent success rate", f"{rate:.0f}%")
 
     st.subheader("Agent cards")
     cards = st.columns(min(len(agents) or 1, 5))

@@ -12,6 +12,13 @@ from .agents.researcher.runner import build_scraper, run_researcher
 from .agents.ultron.orchestrator import UltronOrchestrator
 from .db import StoreDatabase, default_db_path
 from .export.bundle import export_pending_drafts
+from .pipeline.autopilot import (
+    AutopilotConfig,
+    AutopilotRunner,
+    approve_ready_drafts,
+    record_manual_upload,
+)
+from .pipeline.state_tracker import SwarmStateTracker
 from .pipeline.orchestrator import run_orchestrator
 from .scraper.etsy_scraper import scrape_niche_to_db
 
@@ -62,6 +69,20 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard = sub.add_parser("dashboard", help="Launch Streamlit swarm status dashboard")
     dashboard.add_argument("--port", type=int, default=8501)
     dashboard.add_argument("--refresh", type=int, default=3, help="Auto-refresh interval in seconds")
+
+    autopilot = sub.add_parser("autopilot", help="Autonomous loop: scrape → concepts → export")
+    autopilot.add_argument("--config", type=Path, default=None, help="Path to autopilot.yaml")
+    autopilot.add_argument("--once", action="store_true", help="Run one cycle and exit")
+    autopilot.add_argument("--demo", action="store_true", help="Override config demo=true")
+
+    approve = sub.add_parser("approve", help="Approve drafts for manual Etsy upload")
+    approve.add_argument("--include-needs-revision", action="store_true")
+
+    record = sub.add_parser("record-upload", help="Log manual uploads and revenue")
+    record.add_argument("--count", type=int, default=1)
+    record.add_argument("--revenue", type=float, default=0.0)
+
+    queue = sub.add_parser("queue", help="Show listing drafts by status")
 
     return parser
 
@@ -142,6 +163,48 @@ def cmd_top(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_queue(args: argparse.Namespace) -> int:
+    db = StoreDatabase(args.db)
+    payload = {
+        "approved_for_export": db.listing_drafts(status="approved_for_export"),
+        "pending_review": db.listing_drafts(status="pending_review"),
+        "needs_revision": db.listing_drafts(status="needs_revision"),
+        "exported": db.listing_drafts(status="exported"),
+    }
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+def cmd_approve(args: argparse.Namespace) -> int:
+    db = StoreDatabase(args.db)
+    count = approve_ready_drafts(db, include_needs_revision=args.include_needs_revision)
+    approved = db.listing_drafts(status="approved_for_export")
+    print(json.dumps({"approved_now": count, "total_approved": len(approved)}, indent=2))
+    return 0
+
+
+def cmd_record_upload(args: argparse.Namespace) -> int:
+    db = StoreDatabase(args.db)
+    record_manual_upload(db, count=args.count, revenue_usd=args.revenue)
+    tracker = SwarmStateTracker()
+    print(json.dumps(tracker.load().get("metrics", {}), indent=2))
+    return 0
+
+
+async def cmd_autopilot(args: argparse.Namespace) -> int:
+    db = StoreDatabase(args.db)
+    config = AutopilotConfig.load(args.config)
+    if args.demo:
+        config.demo = True
+    runner = AutopilotRunner(db, config)
+    if args.once:
+        result = await runner.run_cycle()
+        print(json.dumps(result, indent=2))
+        return 0
+    await runner.run_forever()
+    return 0
+
+
 def cmd_dashboard(args: argparse.Namespace) -> int:
     import subprocess
     import sys
@@ -185,6 +248,14 @@ def main() -> None:
         raise SystemExit(cmd_top(args))
     if args.command == "dashboard":
         raise SystemExit(cmd_dashboard(args))
+    if args.command == "autopilot":
+        raise SystemExit(asyncio.run(cmd_autopilot(args)))
+    if args.command == "approve":
+        raise SystemExit(cmd_approve(args))
+    if args.command == "record-upload":
+        raise SystemExit(cmd_record_upload(args))
+    if args.command == "queue":
+        raise SystemExit(cmd_queue(args))
     parser.error(f"Unknown command: {args.command}")
 
 
