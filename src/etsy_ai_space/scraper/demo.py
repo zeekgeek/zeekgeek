@@ -11,6 +11,64 @@ from ..tools.delays import human_delay
 
 
 DEMO_TEMPLATES: dict[str, list[dict[str, object]]] = {
+    "sober": [
+        {
+            "title": "Custom Soberversary Date Shirt | Sobriety Milestone Gift Tee",
+            "shop_name": "ScarredAndSoberCo",
+            "price": 27.99,
+            "reviews": 352,
+            "rating": 4.9,
+            "favorites": 2100,
+            "tags": ["soberversary shirt", "sobriety gift", "recovery milestone", "sober anniversary"],
+        },
+        {
+            "title": "Recovery Definition Shirt | Sobriety Gift Typographic Tee",
+            "shop_name": "MikeShirtCrafts",
+            "price": 18.44,
+            "reviews": 371,
+            "rating": 5.0,
+            "favorites": 1800,
+            "tags": ["recovery shirt", "sobriety definition", "recovery gift", "wellness tee"],
+        },
+        {
+            "title": "Sober Anniversary Minimal Tee | We Do Recover Style Gift Shirt",
+            "shop_name": "LALocalDesign",
+            "price": 14.90,
+            "reviews": 8200,
+            "rating": 4.9,
+            "favorites": 12000,
+            "tags": ["sober anniversary", "recovery tee", "sobriety shirt", "minimal recovery gift"],
+        },
+    ],
+    "recovery": [
+        {
+            "title": "Soberversary Comfort Colors Tee | Custom Est Date Recovery Gift",
+            "shop_name": "MilestoneThreadCo",
+            "price": 29.75,
+            "reviews": 352,
+            "rating": 4.8,
+            "favorites": 3400,
+            "tags": ["soberversary gift", "recovery shirt", "sobriety milestone", "custom date tee"],
+        },
+        {
+            "title": "Dictionary Recovery Shirt | Sobriety Noun Definition Graphic Tee",
+            "shop_name": "RecoveryWords",
+            "price": 16.99,
+            "reviews": 371,
+            "rating": 5.0,
+            "favorites": 950,
+            "tags": ["recovery definition", "sobriety shirt", "dictionary tee", "recovery gift"],
+        },
+        {
+            "title": "One Day at a Time Shirt | Sobriety Support Gift Unisex Tee",
+            "shop_name": "DailyStrengthTees",
+            "price": 19.99,
+            "reviews": 1240,
+            "rating": 4.8,
+            "favorites": 4100,
+            "tags": ["one day at a time", "sobriety gift", "recovery support", "motivation shirt"],
+        },
+    ],
     "retro cat": [
         {
             "title": "Retro Sunset Cat Lover Tee | Vintage 70s Graphic Shirt",
@@ -94,6 +152,10 @@ class DemoScraperBackend:
             if template_key in lowered:
                 key = template_key
                 break
+        if key == "default" and any(
+            word in lowered for word in ("sober", "sobriety", "recovery", "addiction", "milestone")
+        ):
+            key = "sober" if "sober" in lowered else "recovery"
         templates = DEMO_TEMPLATES[key]
         now = datetime.now(UTC)
         listings: list[ScrapedListing] = []

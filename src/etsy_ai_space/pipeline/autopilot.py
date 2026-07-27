@@ -121,7 +121,7 @@ class AutopilotRunner:
             "export": result.get("export"),
             "pending_review": pending,
             "approved_for_export": approved,
-            "next_action": "Review exports and run: etsy_ai_space approve --all-ready",
+            "next_action": "Review exports, then: python3 -m etsy_ai_space approve && upload manually",
         }
         self.tracker.log(f"Autopilot cycle done: {json.dumps(summary, default=str)}")
         return summary
