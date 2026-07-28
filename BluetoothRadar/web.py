@@ -262,18 +262,25 @@ h1{font-size:22px;letter-spacing:.08em;margin:0}.mark{color:var(--cyan)}.sub{col
 .pulse{width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 0 0 #38e29b88;animation:p 1.4s infinite}
 @keyframes p{70%{box-shadow:0 0 0 9px transparent}}main{padding:22px 30px}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
 .card,.panel{background:#101722dd;border:1px solid var(--line);border-radius:10px}.card{padding:16px}.value{font-size:25px;color:var(--cyan);margin-top:8px}
-.grid{display:grid;grid-template-columns:minmax(520px,1.25fr) minmax(380px,.75fr);gap:14px;margin-top:14px}.panel{overflow:hidden}
+.grid{display:grid;grid-template-columns:minmax(520px,1.25fr) minmax(380px,.75fr);gap:14px;margin-top:14px}
+.radar-grid{display:grid;grid-template-columns:minmax(420px,1fr) minmax(420px,1fr);gap:14px;margin-top:14px}
+.panel{overflow:hidden}
 .panel h2{font-size:13px;letter-spacing:.1em;margin:0;padding:14px 16px;border-bottom:1px solid var(--line);color:#bcd0e7}
+.radar-panel{display:flex;flex-direction:column}.radar-wrap{position:relative;flex:1;min-height:420px;background:radial-gradient(circle at center,#0d1828 0,#070b12 70%)}
+#radar3d{display:block;width:100%;height:420px;cursor:grab}#radar3d:active{cursor:grabbing}
+.radar-hud{position:absolute;left:16px;bottom:14px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#0b121dcc;color:var(--muted);font-size:11px;line-height:1.5;pointer-events:none}
+.radar-hud strong{color:var(--cyan)}.list-panel .table-wrap{max-height:420px}
 .table-wrap{max-height:480px;overflow:auto}table{width:100%;border-collapse:collapse}th,td{padding:11px 12px;border-bottom:1px solid #1e2938;text-align:left}
 th{position:sticky;top:0;background:#121b28;color:var(--muted);cursor:pointer;font-size:11px}.rssi{font-weight:700;color:var(--cyan)}
 .hidden{color:var(--red);font-weight:700}.service{max-width:170px;color:var(--muted);font-size:11px;overflow-wrap:anywhere}
+.row-active{background:#152033}.row-click{cursor:pointer}
 .empty{padding:28px 16px;color:var(--muted);line-height:1.6}.banner{margin:0 0 14px;padding:12px 16px;border:1px solid var(--line);border-radius:10px;background:#121b28cc;color:var(--muted)}
 .banner.warn{border-color:#7c5d12;color:var(--amber)}.banner.error{border-color:#7f1d1d;color:var(--red)}
 #graph{display:block;width:100%;height:355px;background:linear-gradient(#0e1622aa 1px,transparent 1px),linear-gradient(90deg,#0e1622aa 1px,transparent 1px);background-size:26px 26px}
 .edge{stroke:#536984}.node{cursor:pointer;stroke:#d9f5ff;stroke-width:1.5}.node.hidden-node{fill:var(--red)}.node.visible-node{fill:var(--cyan)}
 .node-label{fill:#eaf6ff;font-size:10px;pointer-events:none}.edge-label{fill:#8ea0b8;font-size:9px}.detail{min-height:120px;padding:14px 16px;color:var(--muted);line-height:1.55}
 .detail strong{color:#fff}.intel{padding:13px 16px;min-height:115px}.intel div{margin:5px 0;color:var(--muted)}
-@media(max-width:950px){.stats{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}}
+@media(max-width:950px){.stats{grid-template-columns:repeat(2,1fr)}.grid,.radar-grid{grid-template-columns:1fr}}
 </style></head>
 <body><header><div><h1><span class="mark">◉</span> BLUETOOTH/RADAR</h1><div class="sub">Advertisement telemetry · relationship hypotheses</div></div>
 <div class="status"><span class="pulse"></span><span id="sourceBadge" class="badge">CONNECTING</span></div></header>
@@ -281,12 +288,56 @@ th{position:sticky;top:0;background:#121b28;color:var(--muted);cursor:pointer;fo
 <div class="card">IDENTITY-LIMITED<div id="hiddenValue" class="value">0</div></div>
 <div class="card">UPDATES<div id="seqValue" class="value">0</div></div>
 <div class="card">LAST FRAME<div id="ageValue" class="value">—</div></div></section>
-<section class="grid"><div class="panel"><h2>LIVE ADVERTISEMENT TABLE · CLICK HEADERS TO SORT</h2><div class="table-wrap">
+<section class="radar-grid"><div class="panel radar-panel"><h2>3D PROXIMITY RADAR · LIVE SCAN SWEEP</h2><div class="radar-wrap">
+<canvas id="radar3d"></canvas><div id="radarHud" class="radar-hud"><strong>Observer</strong> at center · distance from RSSI · azimuth from identifier hash<br>Click a blip or list row to inspect a device</div></div></div>
+<div class="panel list-panel"><h2>LIVE DEVICE LIST · CLICK ROW TO SELECT</h2><div class="table-wrap">
 <table><thead><tr><th data-sort="name">DEVICE</th><th data-sort="address">IDENTIFIER</th><th data-sort="rssi">RSSI</th><th>MANUFACTURER</th><th>SERVICES</th></tr></thead><tbody id="deviceRows"></tbody></table>
-<div id="emptyState" class="empty">Waiting for the first BLE advertisement…</div></div></div>
-<div><div class="panel"><h2>INFERRED RELATIONSHIP GRAPH</h2><svg id="graph" viewBox="0 0 600 355"></svg>
+<div id="emptyState" class="empty">Waiting for the first BLE advertisement…</div></div></div></section>
+<section class="grid"><div class="panel"><h2>INFERRED RELATIONSHIP GRAPH</h2><svg id="graph" viewBox="0 0 600 355"></svg>
 <div id="detail" class="detail">Select a node for observed details. Edges are heuristics, not confirmed connections.</div></div>
-<div class="panel" style="margin-top:14px"><h2>GRAPH INTELLIGENCE</h2><div id="intel" class="intel"></div></div></div></section></main>
+<div><div class="panel" style="margin-top:0"><h2>GRAPH INTELLIGENCE</h2><div id="intel" class="intel"></div></div></div></section></main>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+const canvas=document.getElementById("radar3d");
+const hud=document.getElementById("radarHud");
+const renderer=new THREE.WebGLRenderer({canvas,antialias:true,alpha:true});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
+const scene=new THREE.Scene();
+scene.fog=new THREE.FogExp2(0x070b12,0.045);
+const camera=new THREE.PerspectiveCamera(52,1,0.1,100);
+camera.position.set(8,11,12);
+const controls=new OrbitControls(camera,canvas);
+controls.enableDamping=true;controls.target.set(0,0,0);controls.maxPolarAngle=Math.PI*0.48;controls.minDistance=6;controls.maxDistance=24;
+scene.add(new THREE.AmbientLight(0x6fd6ff,0.55));
+const keyLight=new THREE.DirectionalLight(0x9be8ff,1.1);keyLight.position.set(6,12,4);scene.add(keyLight);
+const ground=new THREE.Mesh(new THREE.CircleGeometry(10,96),new THREE.MeshBasicMaterial({color:0x0f2238,transparent:true,opacity:0.55,side:THREE.DoubleSide}));
+ground.rotation.x=-Math.PI/2;scene.add(ground);
+for(const radius of [2.5,5,7.5,10]){const ring=new THREE.Mesh(new THREE.RingGeometry(radius-0.03,radius,96),new THREE.MeshBasicMaterial({color:0x39d8ff,transparent:true,opacity:0.18,side:THREE.DoubleSide}));ring.rotation.x=-Math.PI/2;scene.add(ring);}
+const axis=new THREE.GridHelper(20,20,0x1f3550,0x14263a);axis.position.y=-0.01;scene.add(axis);
+const observer=new THREE.Mesh(new THREE.ConeGeometry(0.35,0.9,16),new THREE.MeshStandardMaterial({color:0x38e29b,emissive:0x0a4d35,metalness:0.2,roughness:0.35}));
+observer.position.y=0.45;scene.add(observer);
+const sweepGroup=new THREE.Group();scene.add(sweepGroup);
+const sweepPlane=new THREE.Mesh(new THREE.CircleGeometry(10,64,0,Math.PI/5),new THREE.MeshBasicMaterial({color:0x38e29b,transparent:true,opacity:0.12,side:THREE.DoubleSide}));
+sweepPlane.rotation.x=-Math.PI/2;sweepGroup.add(sweepPlane);
+const sweepLine=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0.05,0),new THREE.Vector3(0,0.05,10)]),new THREE.LineBasicMaterial({color:0x38e29b,transparent:true,opacity:0.85}));
+sweepGroup.add(sweepLine);
+const blipGroup=new THREE.Group();scene.add(blipGroup);
+const blips=new Map();
+let selectedId=null,scanning=false,clock=new THREE.Clock();
+function resize(){const bounds=canvas.getBoundingClientRect();renderer.setSize(bounds.width,bounds.height,false);camera.aspect=bounds.width/Math.max(bounds.height,1);camera.updateProjectionMatrix();}
+window.addEventListener("resize",resize);resize();
+function rssiRadius(rssi){const clamped=Math.max(-95,Math.min(-35,rssi));return 1.4+((-clamped-35)/60)*8.2;}
+function stableAngle(address){let hash=0;for(let index=0;index<address.length;index+=1){hash=(hash*31+address.charCodeAt(index))>>>0;}return (hash%360)*Math.PI/180;}
+function deviceLabel(device){return device.identity_limited?"Hidden":(device.name||device.address.slice(-8));}
+function makeBlip(device){const group=new THREE.Group();const color=device.identity_limited?0xff496a:0x39d8ff;const core=new THREE.Mesh(new THREE.SphereGeometry(0.28,20,20),new THREE.MeshStandardMaterial({color,emissive:color,emissiveIntensity:0.45,metalness:0.35,roughness:0.25}));group.add(core);const halo=new THREE.Mesh(new THREE.RingGeometry(0.34,0.52,24),new THREE.MeshBasicMaterial({color,transparent:true,opacity:0.35,side:THREE.DoubleSide}));halo.rotation.x=-Math.PI/2;group.add(halo);group.userData={address:device.address,core,halo};return group;}
+function updateBlips(devices){const seen=new Set();devices.forEach((device)=>{seen.add(device.address);const angle=stableAngle(device.address);const radius=rssiRadius(device.rssi);const x=Math.cos(angle)*radius;const z=Math.sin(angle)*radius;const y=0.35+Math.max(0,(device.rssi+70)/80);let blip=blips.get(device.address);if(!blip){blip=makeBlip(device);blipGroup.add(blip);blips.set(device.address,blip);}blip.position.set(x,y,z);blip.userData.core.material.emissiveIntensity=selectedId===device.address?0.95:0.45;blip.userData.core.scale.setScalar(selectedId===device.address?1.45:1);blip.visible=true;});blips.forEach((blip,address)=>{if(!seen.has(address)){blip.visible=false;}});}
+function animate(){requestAnimationFrame(animate);const elapsed=clock.getElapsedTime();sweepGroup.rotation.y=elapsed*1.35;observer.rotation.y=elapsed*0.4;if(scanning){sweepPlane.material.opacity=0.1+Math.sin(elapsed*4)*0.03;}controls.update();renderer.render(scene,camera);}
+animate();
+window.addEventListener("radar-update",(event)=>{const detail=event.detail||{};selectedId=detail.selected||null;scanning=!!detail.scanning;updateBlips(detail.devices||[]);const count=(detail.devices||[]).length;hud.innerHTML=`<strong>${scanning?"Scanning":"Tracking"}</strong> · ${count} device${count===1?"":"s"} · sweep ${scanning?"active":"idle"}<br>Stronger RSSI sits closer to the center · red blips are identity-limited`;});
+canvas.addEventListener("pointerdown",(event)=>{const bounds=canvas.getBoundingClientRect();const pointer=new THREE.Vector2(((event.clientX-bounds.left)/bounds.width)*2-1,-((event.clientY-bounds.top)/bounds.height)*2+1);const raycaster=new THREE.Raycaster();raycaster.setFromCamera(pointer,camera);const hits=raycaster.intersectObjects(blipGroup.children,true);if(!hits.length){return;}let node=hits[0].object;while(node&& !node.userData.address){node=node.parent;}if(node&&node.userData.address){window.dispatchEvent(new CustomEvent("radar-select",{detail:{address:node.userData.address}}));}});
+</script>
 <script>
 const ui={
   source:document.getElementById("sourceBadge"),
@@ -316,7 +367,8 @@ function renderBanner(){
   }else{ui.banner.textContent="";ui.banner.className="banner";}
 }
 function renderTable(devices){
-  ui.rows.innerHTML=devices.map((device)=>`<tr><td class="${device.identity_limited?"hidden":""}">${device.identity_limited?"🕵️ HIDDEN":esc(device.name||"Unnamed")}</td><td>${esc(device.address)}</td><td class="rssi">${device.rssi} dBm</td><td>${esc((device.manufacturer_data||[]).map((item)=>item.company).join(", ")||"—")}</td><td class="service">${esc((device.service_uuids||[]).join(", ")||"—")}</td></tr>`).join("");
+  ui.rows.innerHTML=devices.map((device)=>`<tr class="row-click ${selected===device.address?"row-active":""}" data-address="${esc(device.address)}"><td class="${device.identity_limited?"hidden":""}">${device.identity_limited?"🕵️ HIDDEN":esc(device.name||"Unnamed")}</td><td>${esc(device.address)}</td><td class="rssi">${device.rssi} dBm</td><td>${esc((device.manufacturer_data||[]).map((item)=>item.company).join(", ")||"—")}</td><td class="service">${esc((device.service_uuids||[]).join(", ")||"—")}</td></tr>`).join("");
+  ui.rows.querySelectorAll("tr[data-address]").forEach((row)=>{row.addEventListener("click",()=>selectDevice(row.dataset.address));});
   ui.empty.style.display=devices.length?"none":"block";
   ui.empty.textContent=snapshot && snapshot.status==="scanning" ? "Scanning for nearby BLE advertisements…" : "No devices observed yet.";
 }
@@ -365,17 +417,20 @@ function render(){
   ui.seq.textContent=snapshot.sequence;
   ui.age.textContent=devices.length?`${Math.max(0,Date.now()/1000-Math.max(...devices.map((device)=>device.last_seen))).toFixed(1)}s`:"—";
   renderBanner();renderTable(devices);renderGraph();
+  window.dispatchEvent(new CustomEvent("radar-update",{detail:{devices,selected,scanning:snapshot.status==="scanning"||snapshot.status==="streaming"||snapshot.status==="demo"||snapshot.status==="fallback"}}));
   const hubs=snapshot.analysis.hubs.map((hub)=>snapshot.graph.nodes.find((node)=>node.id===hub.id)?.label||hub.id);
   ui.intel.innerHTML=`<div><strong>Hub candidates:</strong> ${esc(hubs.join(", ")||"none")}</div><div><strong>Clusters:</strong> ${snapshot.analysis.clusters.length}</div><div><strong>Overlapping:</strong> ${esc(snapshot.analysis.multi_cluster_devices.join(", ")||"none")}</div>`;
 }
-function selectNode(id){
+function selectDevice(id){
   selected=id;
   const device=snapshot.devices.find((item)=>item.address===id);
   if(!device)return;
   const edges=snapshot.graph.edges.filter((edge)=>edge.source===id||edge.target===id);
   ui.detail.innerHTML=`<strong>${esc(device.name||"🕵️ Hidden")}</strong><br>${esc(device.address)} · ${device.rssi} dBm · ${device.sightings} sightings<br>${esc((device.manufacturer_data||[]).map((item)=>`${item.company} ${item.frame_type||""}`.trim()).join(", ")||"No manufacturer data")}<br>${edges.length} inferred edge(s)`;
-  renderGraph();
+  render();
 }
+function selectNode(id){selectDevice(id);renderGraph();}
+window.addEventListener("radar-select",(event)=>{if(event.detail&&event.detail.address){selectDevice(event.detail.address);}});
 async function load(){
   try{
     const response=await fetch("/api/snapshot",{cache:"no-store"});

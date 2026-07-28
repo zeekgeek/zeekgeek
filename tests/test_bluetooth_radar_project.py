@@ -113,6 +113,8 @@ class BrowserDashboardTests(unittest.TestCase):
             self.assertEqual(page.status_code, 200)
             self.assertIn("BLUETOOTH/RADAR", page.text)
             self.assertIn("deviceRows", page.text)
+            self.assertIn("radar3d", page.text)
+            self.assertIn("3D PROXIMITY RADAR", page.text)
 
             first = client.get("/api/snapshot").json()
             time.sleep(0.9)

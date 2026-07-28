@@ -100,8 +100,9 @@ you pass `--no-auto-demo-fallback`.
 
 The dashboard defaults to <http://127.0.0.1:8766> and selects the next free
 port when needed. Its source badge always says `SIMULATED LIVE` or `LIVE BLE`.
-Rows, RSSI values, relationship edges, and graph intelligence refresh as
-advertisements arrive.
+The page includes a live **3D proximity radar** (RSSI distance rings, rotating
+scan sweep, clickable blips) plus a sortable **device list** fed by the same
+scan stream.
 
 The graph opens after scanning. Red nodes are identity-limited advertisements.
 Click a node to display its observations and incident edge scores.
