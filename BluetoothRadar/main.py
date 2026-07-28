@@ -170,6 +170,11 @@ def parse_args() -> argparse.Namespace:
         help="serve a continuously updating browser dashboard",
     )
     parser.add_argument(
+        "--live",
+        action="store_true",
+        help="browser mode: scan real BLE instead of starting in demo mode",
+    )
+    parser.add_argument(
         "--no-auto-demo-fallback",
         action="store_true",
         help="keep live mode empty instead of switching to simulated devices",

@@ -115,6 +115,8 @@ class BrowserDashboardTests(unittest.TestCase):
             self.assertIn("deviceRows", page.text)
             self.assertIn("radar3d", page.text)
             self.assertIn("3D PROXIMITY RADAR", page.text)
+            self.assertIn("Living Room Hub", page.text)
+            self.assertNotIn("__INITIAL_SNAPSHOT__", page.text)
 
             first = client.get("/api/snapshot").json()
             time.sleep(0.9)

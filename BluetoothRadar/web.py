@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import socket
 import time
 import webbrowser
@@ -119,7 +120,7 @@ async def _live_stream(
     scanner = BluetoothRadarScanner(
         active=active, adapter=adapter, on_update=state.update
     )
-    await scanner.run_continuous(empty_timeout=15.0)
+    await scanner.run_continuous(empty_timeout=5.0)
 
 
 async def _run_dashboard_stream(
@@ -162,6 +163,11 @@ async def _run_dashboard_stream(
         await _demo_stream(state)
 
 
+def _render_dashboard_html(initial_snapshot: dict[str, Any]) -> str:
+    payload = json.dumps(initial_snapshot).replace("<", "\\u003c")
+    return DASHBOARD_HTML.replace("__INITIAL_SNAPSHOT__", payload)
+
+
 def create_app(
     *,
     demo: bool = False,
@@ -197,7 +203,7 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard() -> HTMLResponse:
-        return HTMLResponse(DASHBOARD_HTML)
+        return HTMLResponse(_render_dashboard_html(state.snapshot()))
 
     @app.get("/api/snapshot")
     async def snapshot() -> dict[str, Any]:
@@ -218,11 +224,12 @@ def _available_port(host: str, preferred: int) -> int:
 
 
 def run_dashboard(args: Any) -> int:
+    use_demo = args.demo or not getattr(args, "live", False)
     port = _available_port(args.host, args.port)
     url = f"http://{args.host}:{port}"
     print(f"BluetoothRadar dashboard: {url}", flush=True)
-    if args.demo:
-        print("Running in demo mode with simulated devices.", flush=True)
+    if use_demo:
+        print("Running browser dashboard in demo mode with simulated devices.", flush=True)
     elif args.no_auto_demo_fallback:
         print("Running live scan without automatic demo fallback.", flush=True)
     else:
@@ -234,7 +241,7 @@ def run_dashboard(args: Any) -> int:
         Timer(0.8, lambda: webbrowser.open(url)).start()
     uvicorn.run(
         create_app(
-            demo=args.demo,
+            demo=use_demo,
             active=args.scan_mode == "active",
             adapter=args.adapter,
             auto_demo_fallback=not args.no_auto_demo_fallback,
@@ -296,49 +303,34 @@ th{position:sticky;top:0;background:#121b28;color:var(--muted);cursor:pointer;fo
 <section class="grid"><div class="panel"><h2>INFERRED RELATIONSHIP GRAPH</h2><svg id="graph" viewBox="0 0 600 355"></svg>
 <div id="detail" class="detail">Select a node for observed details. Edges are heuristics, not confirmed connections.</div></div>
 <div><div class="panel" style="margin-top:0"><h2>GRAPH INTELLIGENCE</h2><div id="intel" class="intel"></div></div></div></section></main>
-<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
-<script type="module">
-import * as THREE from "three";
-import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-const canvas=document.getElementById("radar3d");
-const hud=document.getElementById("radarHud");
-const renderer=new THREE.WebGLRenderer({canvas,antialias:true,alpha:true});
-renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
-const scene=new THREE.Scene();
-scene.fog=new THREE.FogExp2(0x070b12,0.045);
-const camera=new THREE.PerspectiveCamera(52,1,0.1,100);
-camera.position.set(8,11,12);
-const controls=new OrbitControls(camera,canvas);
-controls.enableDamping=true;controls.target.set(0,0,0);controls.maxPolarAngle=Math.PI*0.48;controls.minDistance=6;controls.maxDistance=24;
-scene.add(new THREE.AmbientLight(0x6fd6ff,0.55));
-const keyLight=new THREE.DirectionalLight(0x9be8ff,1.1);keyLight.position.set(6,12,4);scene.add(keyLight);
-const ground=new THREE.Mesh(new THREE.CircleGeometry(10,96),new THREE.MeshBasicMaterial({color:0x0f2238,transparent:true,opacity:0.55,side:THREE.DoubleSide}));
-ground.rotation.x=-Math.PI/2;scene.add(ground);
-for(const radius of [2.5,5,7.5,10]){const ring=new THREE.Mesh(new THREE.RingGeometry(radius-0.03,radius,96),new THREE.MeshBasicMaterial({color:0x39d8ff,transparent:true,opacity:0.18,side:THREE.DoubleSide}));ring.rotation.x=-Math.PI/2;scene.add(ring);}
-const axis=new THREE.GridHelper(20,20,0x1f3550,0x14263a);axis.position.y=-0.01;scene.add(axis);
-const observer=new THREE.Mesh(new THREE.ConeGeometry(0.35,0.9,16),new THREE.MeshStandardMaterial({color:0x38e29b,emissive:0x0a4d35,metalness:0.2,roughness:0.35}));
-observer.position.y=0.45;scene.add(observer);
-const sweepGroup=new THREE.Group();scene.add(sweepGroup);
-const sweepPlane=new THREE.Mesh(new THREE.CircleGeometry(10,64,0,Math.PI/5),new THREE.MeshBasicMaterial({color:0x38e29b,transparent:true,opacity:0.12,side:THREE.DoubleSide}));
-sweepPlane.rotation.x=-Math.PI/2;sweepGroup.add(sweepPlane);
-const sweepLine=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0.05,0),new THREE.Vector3(0,0.05,10)]),new THREE.LineBasicMaterial({color:0x38e29b,transparent:true,opacity:0.85}));
-sweepGroup.add(sweepLine);
-const blipGroup=new THREE.Group();scene.add(blipGroup);
-const blips=new Map();
-let selectedId=null,scanning=false,clock=new THREE.Clock();
-function resize(){const bounds=canvas.getBoundingClientRect();renderer.setSize(bounds.width,bounds.height,false);camera.aspect=bounds.width/Math.max(bounds.height,1);camera.updateProjectionMatrix();}
-window.addEventListener("resize",resize);resize();
-function rssiRadius(rssi){const clamped=Math.max(-95,Math.min(-35,rssi));return 1.4+((-clamped-35)/60)*8.2;}
-function stableAngle(address){let hash=0;for(let index=0;index<address.length;index+=1){hash=(hash*31+address.charCodeAt(index))>>>0;}return (hash%360)*Math.PI/180;}
-function deviceLabel(device){return device.identity_limited?"Hidden":(device.name||device.address.slice(-8));}
-function makeBlip(device){const group=new THREE.Group();const color=device.identity_limited?0xff496a:0x39d8ff;const core=new THREE.Mesh(new THREE.SphereGeometry(0.28,20,20),new THREE.MeshStandardMaterial({color,emissive:color,emissiveIntensity:0.45,metalness:0.35,roughness:0.25}));group.add(core);const halo=new THREE.Mesh(new THREE.RingGeometry(0.34,0.52,24),new THREE.MeshBasicMaterial({color,transparent:true,opacity:0.35,side:THREE.DoubleSide}));halo.rotation.x=-Math.PI/2;group.add(halo);group.userData={address:device.address,core,halo};return group;}
-function updateBlips(devices){const seen=new Set();devices.forEach((device)=>{seen.add(device.address);const angle=stableAngle(device.address);const radius=rssiRadius(device.rssi);const x=Math.cos(angle)*radius;const z=Math.sin(angle)*radius;const y=0.35+Math.max(0,(device.rssi+70)/80);let blip=blips.get(device.address);if(!blip){blip=makeBlip(device);blipGroup.add(blip);blips.set(device.address,blip);}blip.position.set(x,y,z);blip.userData.core.material.emissiveIntensity=selectedId===device.address?0.95:0.45;blip.userData.core.scale.setScalar(selectedId===device.address?1.45:1);blip.visible=true;});blips.forEach((blip,address)=>{if(!seen.has(address)){blip.visible=false;}});}
-function animate(){requestAnimationFrame(animate);const elapsed=clock.getElapsedTime();sweepGroup.rotation.y=elapsed*1.35;observer.rotation.y=elapsed*0.4;if(scanning){sweepPlane.material.opacity=0.1+Math.sin(elapsed*4)*0.03;}controls.update();renderer.render(scene,camera);}
-animate();
-window.addEventListener("radar-update",(event)=>{const detail=event.detail||{};selectedId=detail.selected||null;scanning=!!detail.scanning;updateBlips(detail.devices||[]);const count=(detail.devices||[]).length;hud.innerHTML=`<strong>${scanning?"Scanning":"Tracking"}</strong> · ${count} device${count===1?"":"s"} · sweep ${scanning?"active":"idle"}<br>Stronger RSSI sits closer to the center · red blips are identity-limited`;});
-canvas.addEventListener("pointerdown",(event)=>{const bounds=canvas.getBoundingClientRect();const pointer=new THREE.Vector2(((event.clientX-bounds.left)/bounds.width)*2-1,-((event.clientY-bounds.top)/bounds.height)*2+1);const raycaster=new THREE.Raycaster();raycaster.setFromCamera(pointer,camera);const hits=raycaster.intersectObjects(blipGroup.children,true);if(!hits.length){return;}let node=hits[0].object;while(node&& !node.userData.address){node=node.parent;}if(node&&node.userData.address){window.dispatchEvent(new CustomEvent("radar-select",{detail:{address:node.userData.address}}));}});
-</script>
 <script>
+const INITIAL_SNAPSHOT=__INITIAL_SNAPSHOT__;
+class RadarCanvas3D{
+  constructor(canvas,hud){
+    this.canvas=canvas;this.hud=hud;this.ctx=canvas.getContext("2d");
+    this.devices=[];this.selected=null;this.scanning=true;this.yaw=0.72;this.spin=0.0038;
+    this.blipHits=[];this.resize=()=>{const bounds=canvas.getBoundingClientRect();this.width=Math.max(1,Math.floor(bounds.width));this.height=Math.max(1,Math.floor(bounds.height));canvas.width=this.width*devicePixelRatio;canvas.height=this.height*devicePixelRatio;this.ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);};window.addEventListener("resize",this.resize);this.resize();
+    canvas.addEventListener("click",(event)=>{const rect=canvas.getBoundingClientRect();const x=event.clientX-rect.left,y=event.clientY-rect.top;let best=null,bestDist=18;for(const hit of this.blipHits){const dx=hit.x-x,dy=hit.y-y,d=Math.hypot(dx,dy);if(d<bestDist){best=hit.address;bestDist=d;}}if(best){window.dispatchEvent(new CustomEvent("radar-select",{detail:{address:best}}));}});
+    this.loop=()=>{this.yaw+=this.spin;this.draw();requestAnimationFrame(this.loop);};requestAnimationFrame(this.loop);
+  }
+  rssiRadius(rssi){const clamped=Math.max(-95,Math.min(-35,rssi));return 1.2+((-clamped-35)/60)*7.5;}
+  stableAngle(address){let hash=0;for(let i=0;i<address.length;i+=1){hash=(hash*31+address.charCodeAt(i))>>>0;}return (hash%360)*Math.PI/180;}
+  project(x,y,z){const cos=Math.cos(this.yaw),sin=Math.sin(this.yaw);const rx=x*cos-z*sin,rz=x*sin+z*cos;const scale=Math.min(this.width,this.height)/22;const cx=this.width/2,cy=this.height*0.56;return {x:cx+(rx-rz)*scale*0.86,y:cy-y*scale+(rx+rz)*scale*0.52,depth:rx+rz};}
+  update(devices,selected,scanning){this.devices=devices||[];this.selected=selected;this.scanning=!!scanning;const count=this.devices.length;this.hud.innerHTML=`<strong>${this.scanning?"Scanning":"Tracking"}</strong> · ${count} device${count===1?"":"s"} · local 3D radar<br>Closer blips = stronger RSSI · red = identity-limited · click to select`;}
+  draw(){
+    const ctx=this.ctx,w=this.width,h=this.height;ctx.clearRect(0,0,w,h);
+    const gradient=ctx.createRadialGradient(w/2,h*0.55,10,w/2,h*0.55,Math.max(w,h)*0.55);gradient.addColorStop(0,"#12324a");gradient.addColorStop(1,"#070b12");ctx.fillStyle=gradient;ctx.fillRect(0,0,w,h);
+    const cx=w/2,cy=h*0.56,scale=Math.min(w,h)/22;ctx.strokeStyle="rgba(57,216,255,0.18)";ctx.lineWidth=1;
+    for(const radius of [2.5,5,7.5,10]){ctx.beginPath();for(let step=0;step<=96;step+=1){const t=step/96*Math.PI*2;const px=cx+Math.cos(t)*radius*scale*0.86;const py=cy+Math.sin(t)*radius*scale*0.52;if(step===0){ctx.moveTo(px,py);}else{ctx.lineTo(px,py);}}ctx.stroke();}
+    ctx.strokeStyle="rgba(31,53,80,0.8)";ctx.beginPath();ctx.moveTo(cx-scale*8,cy);ctx.lineTo(cx+scale*8,cy);ctx.moveTo(cx,cy-scale*5);ctx.lineTo(cx,cy+scale*5);ctx.stroke();
+    const sweep=this.yaw*2.2;ctx.fillStyle="rgba(56,226,155,0.12)";ctx.beginPath();ctx.moveTo(cx,cy);ctx.arc(cx,cy,scale*10,sweep-Math.PI/10,sweep+Math.PI/10);ctx.closePath();ctx.fill();
+    ctx.strokeStyle="rgba(56,226,155,0.9)";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(cx+Math.cos(sweep)*scale*10*0.86,cy+Math.sin(sweep)*scale*10*0.52);ctx.stroke();
+    ctx.fillStyle="#38e29b";ctx.beginPath();ctx.arc(cx,cy,5,0,Math.PI*2);ctx.fill();
+    this.blipHits=[];const points=this.devices.map((device)=>{const angle=this.stableAngle(device.address);const radius=this.rssiRadius(device.rssi);const x=Math.cos(angle)*radius;const z=Math.sin(angle)*radius;const y=0.35+Math.max(0,(device.rssi+70)/90);const point=this.project(x,y,z);return {device,point};}).sort((a,b)=>a.point.depth-b.point.depth);
+    for(const entry of points){const {device,point}=entry;const hidden=!!device.identity_limited;const color=hidden?"#ff496a":"#39d8ff";const active=this.selected===device.address;ctx.fillStyle=color;ctx.beginPath();ctx.arc(point.x,point.y,active?9:6,0,Math.PI*2);ctx.fill();ctx.strokeStyle=active?"#ffffff":"rgba(255,255,255,0.35)";ctx.lineWidth=active?2:1;ctx.stroke();ctx.fillStyle="rgba(255,255,255,0.92)";ctx.font="11px ui-monospace, monospace";ctx.fillText(hidden?"Hidden":(device.name||device.address.slice(-8)),point.x+10,point.y-8);this.blipHits.push({address:device.address,x:point.x,y:point.y});}
+    if(!this.devices.length){ctx.fillStyle="rgba(142,160,184,0.95)";ctx.font="14px ui-monospace, monospace";ctx.fillText(this.scanning?"Scanning for BLE advertisements…":"No devices in range yet",24,28);}
+  }
+}
 const ui={
   source:document.getElementById("sourceBadge"),
   banner:document.getElementById("banner"),
@@ -352,19 +344,17 @@ const ui={
   detail:document.getElementById("detail"),
   graph:document.getElementById("graph")
 };
-let snapshot=null,sortKey="rssi",selected=null;
+const radar3d=new RadarCanvas3D(document.getElementById("radar3d"),document.getElementById("radarHud"));
+let snapshot=INITIAL_SNAPSHOT||null,sortKey="rssi",selected=null;
 const esc=(value)=>String(value??"").replace(/[&<>"']/g,(char)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[char]));
-document.querySelectorAll("th[data-sort]").forEach((header)=>{
-  header.addEventListener("click",()=>{sortKey=header.dataset.sort;render();});
-});
+document.querySelectorAll("th[data-sort]").forEach((header)=>{header.addEventListener("click",()=>{sortKey=header.dataset.sort;render();});});
 function renderBanner(){
   if(!snapshot){ui.banner.textContent="Connecting to scanner stream…";ui.banner.className="banner";return;}
   if(snapshot.message){ui.banner.textContent=snapshot.message;ui.banner.className=snapshot.error?"banner warn":"banner";}
-  else if(snapshot.error){ui.banner.textContent=snapshot.error;ui.banner.className="banner error";}
-  else if(snapshot.devices.length===0 && snapshot.status==="scanning"){
-    ui.banner.textContent="Scanning for nearby BLE advertisements…";
-    ui.banner.className="banner";
-  }else{ui.banner.textContent="";ui.banner.className="banner";}
+  else if(snapshot.error && !snapshot.devices.length){ui.banner.textContent=snapshot.error;ui.banner.className="banner error";}
+  else if(snapshot.error){ui.banner.textContent=snapshot.error;ui.banner.className="banner warn";}
+  else if(snapshot.devices.length===0 && snapshot.status==="scanning"){ui.banner.textContent="Scanning for nearby BLE advertisements…";ui.banner.className="banner";}
+  else{ui.banner.textContent="";ui.banner.className="banner";}
 }
 function renderTable(devices){
   ui.rows.innerHTML=devices.map((device)=>`<tr class="row-click ${selected===device.address?"row-active":""}" data-address="${esc(device.address)}"><td class="${device.identity_limited?"hidden":""}">${device.identity_limited?"🕵️ HIDDEN":esc(device.name||"Unnamed")}</td><td>${esc(device.address)}</td><td class="rssi">${device.rssi} dBm</td><td>${esc((device.manufacturer_data||[]).map((item)=>item.company).join(", ")||"—")}</td><td class="service">${esc((device.service_uuids||[]).join(", ")||"—")}</td></tr>`).join("");
@@ -374,50 +364,21 @@ function renderTable(devices){
 }
 function renderGraph(){
   const nodes=snapshot.graph.nodes,positions={};
-  nodes.forEach((node,index)=>{
-    const angle=-Math.PI/2+index*2*Math.PI/Math.max(nodes.length,1);
-    positions[node.id]={x:300+190*Math.cos(angle),y:175+125*Math.sin(angle)};
-  });
+  nodes.forEach((node,index)=>{const angle=-Math.PI/2+index*2*Math.PI/Math.max(nodes.length,1);positions[node.id]={x:300+190*Math.cos(angle),y:175+125*Math.sin(angle)};});
   ui.graph.innerHTML="";
-  snapshot.graph.edges.forEach((edge)=>{
-    const start=positions[edge.source],end=positions[edge.target];
-    const line=document.createElementNS("http://www.w3.org/2000/svg","line");
-    line.setAttribute("x1",start.x);line.setAttribute("y1",start.y);
-    line.setAttribute("x2",end.x);line.setAttribute("y2",end.y);
-    line.setAttribute("class","edge");line.setAttribute("stroke-width",1+edge.weight*5);
-    ui.graph.appendChild(line);
-    const label=document.createElementNS("http://www.w3.org/2000/svg","text");
-    label.setAttribute("x",(start.x+end.x)/2);label.setAttribute("y",(start.y+end.y)/2);
-    label.setAttribute("class","edge-label");label.textContent=edge.weight.toFixed(2);
-    ui.graph.appendChild(label);
-  });
-  nodes.forEach((node)=>{
-    const point=positions[node.id];
-    const circle=document.createElementNS("http://www.w3.org/2000/svg","circle");
-    circle.setAttribute("cx",point.x);circle.setAttribute("cy",point.y);
-    circle.setAttribute("r",selected===node.id?20:15);
-    circle.setAttribute("class",`node ${node.hidden?"hidden-node":"visible-node"}`);
-    circle.addEventListener("click",()=>selectNode(node.id));
-    ui.graph.appendChild(circle);
-    const label=document.createElementNS("http://www.w3.org/2000/svg","text");
-    label.setAttribute("x",point.x);label.setAttribute("y",point.y+31);
-    label.setAttribute("text-anchor","middle");label.setAttribute("class","node-label");
-    label.textContent=node.label;ui.graph.appendChild(label);
-  });
+  snapshot.graph.edges.forEach((edge)=>{const start=positions[edge.source],end=positions[edge.target];const line=document.createElementNS("http://www.w3.org/2000/svg","line");line.setAttribute("x1",start.x);line.setAttribute("y1",start.y);line.setAttribute("x2",end.x);line.setAttribute("y2",end.y);line.setAttribute("class","edge");line.setAttribute("stroke-width",1+edge.weight*5);ui.graph.appendChild(line);const label=document.createElementNS("http://www.w3.org/2000/svg","text");label.setAttribute("x",(start.x+end.x)/2);label.setAttribute("y",(start.y+end.y)/2);label.setAttribute("class","edge-label");label.textContent=edge.weight.toFixed(2);ui.graph.appendChild(label);});
+  nodes.forEach((node)=>{const point=positions[node.id];const circle=document.createElementNS("http://www.w3.org/2000/svg","circle");circle.setAttribute("cx",point.x);circle.setAttribute("cy",point.y);circle.setAttribute("r",selected===node.id?20:15);circle.setAttribute("class",`node ${node.hidden?"hidden-node":"visible-node"}`);circle.addEventListener("click",()=>selectNode(node.id));ui.graph.appendChild(circle);const label=document.createElementNS("http://www.w3.org/2000/svg","text");label.setAttribute("x",point.x);label.setAttribute("y",point.y+31);label.setAttribute("text-anchor","middle");label.setAttribute("class","node-label");label.textContent=node.label;ui.graph.appendChild(label);});
 }
 function render(){
   if(!snapshot)return;
-  const devices=[...snapshot.devices].sort((left,right)=>{
-    if(sortKey==="rssi")return right.rssi-left.rssi;
-    return String(left[sortKey]||"").localeCompare(String(right[sortKey]||""));
-  });
+  const devices=[...snapshot.devices].sort((left,right)=>sortKey==="rssi"?right.rssi-left.rssi:String(left[sortKey]||"").localeCompare(String(right[sortKey]||"")));
   ui.source.textContent=snapshot.source;
   ui.count.textContent=devices.length;
   ui.hidden.textContent=devices.filter((device)=>device.identity_limited).length;
   ui.seq.textContent=snapshot.sequence;
   ui.age.textContent=devices.length?`${Math.max(0,Date.now()/1000-Math.max(...devices.map((device)=>device.last_seen))).toFixed(1)}s`:"—";
   renderBanner();renderTable(devices);renderGraph();
-  window.dispatchEvent(new CustomEvent("radar-update",{detail:{devices,selected,scanning:snapshot.status==="scanning"||snapshot.status==="streaming"||snapshot.status==="demo"||snapshot.status==="fallback"}}));
+  radar3d.update(devices,selected,snapshot.status==="scanning"||snapshot.status==="streaming"||snapshot.status==="demo"||snapshot.status==="fallback");
   const hubs=snapshot.analysis.hubs.map((hub)=>snapshot.graph.nodes.find((node)=>node.id===hub.id)?.label||hub.id);
   ui.intel.innerHTML=`<div><strong>Hub candidates:</strong> ${esc(hubs.join(", ")||"none")}</div><div><strong>Clusters:</strong> ${snapshot.analysis.clusters.length}</div><div><strong>Overlapping:</strong> ${esc(snapshot.analysis.multi_cluster_devices.join(", ")||"none")}</div>`;
 }
@@ -439,10 +400,12 @@ async function load(){
     render();
   }catch(error){
     ui.source.textContent="DISCONNECTED";
-    ui.banner.textContent=`Could not reach /api/snapshot (${error.message}). Is the dashboard server running?`;
+    ui.banner.textContent=`Could not reach /api/snapshot (${error.message}). Start the server with: python main.py --browser --open-browser`;
     ui.banner.className="banner error";
+    radar3d.update([],null,true);
   }
 }
+render();
 load();
 setInterval(load,700);
 setInterval(()=>{if(snapshot)render();},200);
