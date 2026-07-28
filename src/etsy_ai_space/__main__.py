@@ -59,6 +59,9 @@ def build_parser() -> argparse.ArgumentParser:
     browserclaw.add_argument("--reuse-tab", action="store_true")
     browserclaw.add_argument("--db", type=Path, default=None)
 
+    cdp_check = sub.add_parser("cdp-check", help="Verify BrowserClaw/OpenClaw CDP is reachable")
+    cdp_check.add_argument("--cdp-url", default=None, help="Optional explicit CDP URL to test")
+
     pipeline = sub.add_parser("pipeline", help="Run phases 1–4 and export a manual upload bundle")
     pipeline.add_argument("query", help="Seed Etsy search query / niche")
     pipeline.add_argument("--niche", default=None, help="Creative niche override")
@@ -130,6 +133,12 @@ async def cmd_scrape(args: argparse.Namespace) -> int:
         )
     print(json.dumps(result, indent=2))
     return 0
+
+
+def cmd_cdp_check(args: argparse.Namespace) -> int:
+    from .scraper.cdp_screenshot import cmd_check
+
+    return cmd_check(args.cdp_url)
 
 
 async def cmd_browserclaw_scrape(args: argparse.Namespace) -> int:
@@ -265,6 +274,8 @@ def main() -> None:
         raise SystemExit(asyncio.run(cmd_scrape(args)))
     if args.command == "browserclaw-scrape":
         raise SystemExit(asyncio.run(cmd_browserclaw_scrape(args)))
+    if args.command == "cdp-check":
+        raise SystemExit(cmd_cdp_check(args))
     if args.command == "orchestrate":
         raise SystemExit(asyncio.run(cmd_orchestrate(args)))
     if args.command == "pipeline":

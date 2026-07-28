@@ -19,6 +19,7 @@ from etsy_ai_space.scraper.playwright import PlaywrightScraperBackend
 class BrowserClawScraperTests(unittest.TestCase):
     def test_normalize_http_and_ws_urls(self) -> None:
         self.assertEqual(normalize_cdp_url("9222"), "http://127.0.0.1:9222")
+        self.assertEqual(normalize_cdp_url("18800"), "http://127.0.0.1:18800")
         self.assertEqual(normalize_cdp_url("127.0.0.1:9222"), "http://127.0.0.1:9222")
         self.assertEqual(
             normalize_cdp_url("http://127.0.0.1:9222"),

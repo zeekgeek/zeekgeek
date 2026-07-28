@@ -10,9 +10,12 @@ import urllib.request
 from typing import Any
 from urllib.parse import urlparse
 
-DEFAULT_CDP_URL = "http://127.0.0.1:9222"
+DEFAULT_CDP_URL = "http://127.0.0.1:18800"
 CDP_ENV_VARS = ("BROWSERCLAW_CDP_URL", "BROWSER_CDP_URL", "CDP_URL")
-COMMON_CDP_PORTS = (9222, 9223, 9224, 9225, 9226, 9229)
+# Chrome manual debug ports + BrowserClaw/OpenClaw managed range (default 18800)
+CHROME_CDP_PORTS = (9222, 9223, 9224, 9225, 9226, 9229)
+OPENCLAW_CDP_PORTS = tuple(range(18800, 18811))
+COMMON_CDP_PORTS = OPENCLAW_CDP_PORTS + CHROME_CDP_PORTS
 
 
 def resolve_cdp_url(explicit: str | None = None) -> str:
@@ -87,16 +90,21 @@ def discover_cdp_url(ports: tuple[int, ...] = COMMON_CDP_PORTS) -> str | None:
 
 def cdp_setup_hint() -> str:
     return (
-        "No Chrome/BrowserClaw CDP endpoint found on localhost.\n\n"
-        "1) Open a NEW Terminal window (keep it open).\n"
-        "2) Start Chrome with remote debugging:\n\n"
-        '   /Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome \\\n'
-        "     --remote-debugging-port=9222 \\\n"
-        "     --remote-debugging-address=127.0.0.1 \\\n"
-        '     --user-data-dir=\"$HOME/browserclaw-profile\"\n\n'
-        "3) Verify:\n\n"
-        "   curl -s http://127.0.0.1:9222/json/version\n\n"
-        "4) Re-run this command.\n"
+        "No BrowserClaw / Chrome CDP endpoint found on localhost.\n\n"
+        "BrowserClaw (OpenClaw) usually uses port 18800 — NOT 9222.\n"
+        "Being your default browser only opens links; automation needs CDP running.\n\n"
+        "Try these checks:\n\n"
+        "  curl -s http://127.0.0.1:18800/json/version\n"
+        "  curl -s http://127.0.0.1:9222/json/version\n\n"
+        "If you use OpenClaw/BrowserClaw CLI:\n\n"
+        "  openclaw browser status\n\n"
+        "If both fail, start a debug Chrome in a NEW Terminal window:\n\n"
+        '  /Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome \\\n'
+        "    --remote-debugging-port=9222 \\\n"
+        "    --remote-debugging-address=127.0.0.1 \\\n"
+        '    --user-data-dir=\"$HOME/browserclaw-profile\"\n\n'
+        "Then run:\n\n"
+        "  python3 -m etsy_ai_space.scraper.cdp_screenshot --check\n"
     )
 
 
