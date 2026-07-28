@@ -167,17 +167,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--browser",
         action="store_true",
-        help="serve a continuously updating browser dashboard",
+        help="serve a live browser dashboard (real BLE by default)",
     )
     parser.add_argument(
-        "--live",
+        "--demo-fallback",
         action="store_true",
-        help="browser mode: scan real BLE instead of starting in demo mode",
+        help="browser mode: use simulated devices if live scanning fails",
     )
     parser.add_argument(
         "--no-auto-demo-fallback",
         action="store_true",
-        help="keep live mode empty instead of switching to simulated devices",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8766)

@@ -136,7 +136,7 @@ class BrowserDashboardTests(unittest.TestCase):
             side_effect=RuntimeError("No BLE advertisements observed."),
         ):
             with TestClient(
-                create_app(demo=False, auto_demo_fallback=True)
+                create_app(demo=False, demo_fallback=True)
             ) as client:
                 time.sleep(0.3)
                 snapshot = client.get("/api/snapshot").json()
@@ -144,6 +144,17 @@ class BrowserDashboardTests(unittest.TestCase):
         self.assertEqual(snapshot["source"], "SIMULATED LIVE (fallback)")
         self.assertGreaterEqual(len(snapshot["devices"]), 4)
         self.assertIn("No BLE advertisements observed.", snapshot["error"])
+
+    def test_event_stream_route_is_registered(self) -> None:
+        app = create_app(demo=True)
+        paths = {getattr(route, "path", "") for route in app.routes}
+        self.assertIn("/api/events", paths)
+
+    def test_dashboard_connects_to_event_stream(self) -> None:
+        with TestClient(create_app(demo=True)) as client:
+            page = client.get("/").text
+        self.assertIn("/api/events", page)
+        self.assertIn("EventSource", page)
 
 
 if __name__ == "__main__":

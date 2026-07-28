@@ -14,7 +14,7 @@ from typing import Any
 
 import uvicorn
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 
 from analysis import analyze_graph
 from graph import build_relationship_graph
@@ -112,15 +112,30 @@ async def _demo_stream(state: DashboardState) -> None:
 async def _live_stream(
     state: DashboardState, active: bool, adapter: str | None
 ) -> None:
-    state.status = "scanning"
-    state.message = (
-        "Scanning for nearby BLE advertisements. Results appear here as they "
-        "are observed."
-    )
-    scanner = BluetoothRadarScanner(
-        active=active, adapter=adapter, on_update=state.update
-    )
-    await scanner.run_continuous(empty_timeout=5.0)
+    loop = asyncio.get_running_loop()
+    while True:
+        state.source = "LIVE BLE"
+        state.status = "scanning"
+        state.error = None
+        state.message = (
+            "Live BLE scan active. Nearby advertisements will appear as they "
+            "are observed."
+        )
+        scanner = BluetoothRadarScanner(
+            active=active,
+            adapter=adapter,
+            on_update=state.update,
+            loop=loop,
+        )
+        try:
+            await scanner.run_continuous()
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            state.status = "error"
+            state.error = str(error)
+            state.message = f"Live scanner error: {error}. Retrying in 3s…"
+            await asyncio.sleep(3.0)
 
 
 async def _run_dashboard_stream(
@@ -129,7 +144,7 @@ async def _run_dashboard_stream(
     demo: bool,
     active: bool,
     adapter: str | None,
-    auto_demo_fallback: bool,
+    demo_fallback: bool,
 ) -> None:
     if demo:
         state.source = "SIMULATED LIVE"
@@ -137,17 +152,17 @@ async def _run_dashboard_stream(
         await _demo_stream(state)
         return
 
-    state.source = "LIVE BLE"
     try:
         await _live_stream(state, active, adapter)
     except asyncio.CancelledError:
         raise
     except Exception as error:
-        if not auto_demo_fallback:
+        if not demo_fallback:
             state.status = "error"
             state.error = str(error)
             state.message = (
-                "Live scanning failed and auto-demo fallback is disabled."
+                "Live scanning failed. Restart with --demo-fallback to use "
+                "simulated devices when hardware is unavailable."
             )
             while True:
                 await asyncio.sleep(3600)
@@ -157,8 +172,7 @@ async def _run_dashboard_stream(
         state.status = "fallback"
         state.error = str(error)
         state.message = (
-            "Live scanning did not produce results. Showing simulated devices "
-            "so the dashboard remains usable."
+            "Live scanning unavailable on this host. Showing simulated devices."
         )
         await _demo_stream(state)
 
@@ -173,10 +187,18 @@ def create_app(
     demo: bool = False,
     active: bool = True,
     adapter: str | None = None,
-    auto_demo_fallback: bool = True,
+    demo_fallback: bool = False,
 ) -> FastAPI:
     initial_source = "SIMULATED LIVE" if demo else "LIVE BLE"
-    state = DashboardState(initial_source)
+    state = DashboardState(
+        initial_source,
+        status="demo" if demo else "scanning",
+    )
+    if not demo:
+        state.message = (
+            "Starting live BLE scan. Enable Bluetooth and grant scan permission "
+            "to your terminal app."
+        )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -188,7 +210,7 @@ def create_app(
                 demo=demo,
                 active=active,
                 adapter=adapter,
-                auto_demo_fallback=auto_demo_fallback,
+                demo_fallback=demo_fallback,
             )
         )
         try:
@@ -209,6 +231,19 @@ def create_app(
     async def snapshot() -> dict[str, Any]:
         return state.snapshot()
 
+    @app.get("/api/events")
+    async def events() -> StreamingResponse:
+        async def stream() -> Any:
+            last_sequence = -1
+            while True:
+                payload = state.snapshot()
+                if payload["sequence"] != last_sequence:
+                    last_sequence = payload["sequence"]
+                yield f"data: {json.dumps(payload)}\n\n"
+                await asyncio.sleep(0.35)
+
+        return StreamingResponse(stream(), media_type="text/event-stream")
+
     return app
 
 
@@ -224,19 +259,19 @@ def _available_port(host: str, preferred: int) -> int:
 
 
 def run_dashboard(args: Any) -> int:
-    use_demo = args.demo or not getattr(args, "live", False)
+    use_demo = bool(args.demo)
+    demo_fallback = bool(getattr(args, "demo_fallback", False))
     port = _available_port(args.host, args.port)
     url = f"http://{args.host}:{port}"
     print(f"BluetoothRadar dashboard: {url}", flush=True)
     if use_demo:
         print("Running browser dashboard in demo mode with simulated devices.", flush=True)
-    elif args.no_auto_demo_fallback:
-        print("Running live scan without automatic demo fallback.", flush=True)
     else:
-        print(
-            "Running live scan with automatic demo fallback if no devices appear.",
-            flush=True,
-        )
+        print("Running live BLE scan. Nearby advertisements will stream to the dashboard.", flush=True)
+        if demo_fallback:
+            print("Demo fallback enabled if live scanning is unavailable.", flush=True)
+        else:
+            print("Demo fallback disabled. Pass --demo-fallback to enable simulated data.", flush=True)
     if args.open_browser:
         Timer(0.8, lambda: webbrowser.open(url)).start()
     uvicorn.run(
@@ -244,7 +279,7 @@ def run_dashboard(args: Any) -> int:
             demo=use_demo,
             active=args.scan_mode == "active",
             adapter=args.adapter,
-            auto_demo_fallback=not args.no_auto_demo_fallback,
+            demo_fallback=demo_fallback,
         ),
         host=args.host,
         port=port,
@@ -405,8 +440,13 @@ async function load(){
     radar3d.update([],null,true);
   }
 }
+function connectLiveStream(){
+  if(typeof EventSource==="undefined"){load();setInterval(load,700);return;}
+  const stream=new EventSource("/api/events");
+  stream.onmessage=(event)=>{snapshot=JSON.parse(event.data);render();};
+  stream.onerror=()=>{ui.source.textContent="RECONNECTING";load();};
+}
 render();
-load();
-setInterval(load,700);
+connectLiveStream();
 setInterval(()=>{if(snapshot)render();},200);
 </script></body></html>"""

@@ -87,16 +87,18 @@ Console-only scan, sorted by name, with exports:
 python3 main.py --no-gui --sort name --json observations.json --csv observations.csv
 ```
 
-Continuously updating browser dashboard (demo mode is the default):
+Continuously updating browser dashboard (live BLE by default):
 
 ```bash
 python3 main.py --browser --open-browser
-python3 main.py --browser --live --scan-mode active
+python3 main.py --browser --demo
+python3 main.py --browser --demo-fallback
 ```
 
-Browser mode now embeds the first scan snapshot directly in the page and renders
-the 3D radar with local Canvas code (no external CDN). If live scanning finds
-nothing within about 5 seconds, it automatically switches to simulated devices.
+Live advertisements stream to the browser over `/api/events` (Server-Sent
+Events). The 3D radar and device list update as each packet is observed. On
+macOS, grant Bluetooth access to Terminal in **System Settings → Privacy &
+Security → Bluetooth**.
 
 The dashboard defaults to <http://127.0.0.1:8766> and selects the next free
 port when needed. Its source badge always says `SIMULATED LIVE` or `LIVE BLE`.

@@ -63,9 +63,10 @@ class BluetoothRadarScanner:
     def __init__(
         self,
         *,
-        active: bool = False,
+        active: bool = True,
         adapter: str | None = None,
         on_update: UpdateCallback | None = None,
+        loop: asyncio.AbstractEventLoop | None = None,
     ) -> None:
         if not active and platform.system() == "Darwin":
             raise ValueError(
@@ -75,6 +76,7 @@ class BluetoothRadarScanner:
         self.active = active
         self.adapter = adapter
         self.on_update = on_update
+        self.loop = loop
         self.devices: dict[str, DiscoveredDevice] = {}
 
     @staticmethod
@@ -82,10 +84,12 @@ class BluetoothRadarScanner:
         normalized = (name or "").strip()
         return not normalized or bool(PRIVACY_NAME.fullmatch(normalized))
 
-    def _detection_callback(self, device: Any, advertisement: Any) -> None:
+    def _build_device(
+        self, device: Any, advertisement: Any
+    ) -> DiscoveredDevice | None:
         address = str(getattr(device, "address", "") or getattr(device, "name", ""))
         if not address:
-            return
+            return None
         name = (
             getattr(advertisement, "local_name", None)
             or getattr(device, "name", None)
@@ -137,9 +141,20 @@ class BluetoothRadarScanner:
             current.last_seen = now
             current.sightings += 1
             current.identity_limited = self._is_identity_limited(current.name)
+        return current
 
-        if self.on_update:
-            self.on_update(current)
+    def _emit_update(self, record: DiscoveredDevice) -> None:
+        if not self.on_update:
+            return
+        if self.loop is None:
+            self.on_update(record)
+            return
+        self.loop.call_soon_threadsafe(self.on_update, record)
+
+    def _detection_callback(self, device: Any, advertisement: Any) -> None:
+        record = self._build_device(device, advertisement)
+        if record is not None:
+            self._emit_update(record)
 
     def _scanner_kwargs(self) -> dict[str, Any]:
         scanner_args: dict[str, Any] = {
@@ -153,6 +168,8 @@ class BluetoothRadarScanner:
     async def scan(self, duration: float) -> list[DiscoveredDevice]:
         if duration <= 0:
             raise ValueError("scan duration must be positive")
+        if self.loop is None:
+            self.loop = asyncio.get_running_loop()
         scanner = BleakScanner(**self._scanner_kwargs())
         await scanner.start()
         try:
@@ -161,25 +178,14 @@ class BluetoothRadarScanner:
             await scanner.stop()
         return list(self.devices.values())
 
-    async def run_continuous(
-        self, *, empty_timeout: float = 15.0
-    ) -> list[DiscoveredDevice]:
-        """Keep one scanner session open until cancelled or empty timeout."""
-        started = time.time()
+    async def run_continuous(self) -> list[DiscoveredDevice]:
+        """Keep one scanner session open until cancelled."""
+        if self.loop is None:
+            self.loop = asyncio.get_running_loop()
         scanner = BleakScanner(**self._scanner_kwargs())
         async with scanner:
             while True:
                 await asyncio.sleep(1.0)
-                if (
-                    empty_timeout > 0
-                    and not self.devices
-                    and time.time() - started >= empty_timeout
-                ):
-                    raise RuntimeError(
-                        "No BLE advertisements observed. Check that Bluetooth is "
-                        "enabled, the app has scan permission, and devices are "
-                        "nearby and advertising."
-                    )
         return list(self.devices.values())
 
 
@@ -229,4 +235,3 @@ async def demo_scan(
             on_update(record)
         await asyncio.sleep(delay)
     return records
-
