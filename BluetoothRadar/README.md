@@ -94,6 +94,10 @@ python3 main.py --browser --demo --open-browser
 python3 main.py --browser --scan-mode active
 ```
 
+If live scanning finds no devices (missing adapter, permissions, or no nearby
+advertisers), the dashboard automatically switches to simulated devices unless
+you pass `--no-auto-demo-fallback`.
+
 The dashboard defaults to <http://127.0.0.1:8766> and selects the next free
 port when needed. Its source badge always says `SIMULATED LIVE` or `LIVE BLE`.
 Rows, RSSI values, relationship edges, and graph intelligence refresh as

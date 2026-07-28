@@ -141,21 +141,45 @@ class BluetoothRadarScanner:
         if self.on_update:
             self.on_update(current)
 
-    async def scan(self, duration: float) -> list[DiscoveredDevice]:
-        if duration <= 0:
-            raise ValueError("scan duration must be positive")
+    def _scanner_kwargs(self) -> dict[str, Any]:
         scanner_args: dict[str, Any] = {
             "detection_callback": self._detection_callback,
             "scanning_mode": "active" if self.active else "passive",
         }
         if self.adapter:
             scanner_args["adapter"] = self.adapter
-        scanner = BleakScanner(**scanner_args)
+        return scanner_args
+
+    async def scan(self, duration: float) -> list[DiscoveredDevice]:
+        if duration <= 0:
+            raise ValueError("scan duration must be positive")
+        scanner = BleakScanner(**self._scanner_kwargs())
         await scanner.start()
         try:
             await asyncio.sleep(duration)
         finally:
             await scanner.stop()
+        return list(self.devices.values())
+
+    async def run_continuous(
+        self, *, empty_timeout: float = 15.0
+    ) -> list[DiscoveredDevice]:
+        """Keep one scanner session open until cancelled or empty timeout."""
+        started = time.time()
+        scanner = BleakScanner(**self._scanner_kwargs())
+        async with scanner:
+            while True:
+                await asyncio.sleep(1.0)
+                if (
+                    empty_timeout > 0
+                    and not self.devices
+                    and time.time() - started >= empty_timeout
+                ):
+                    raise RuntimeError(
+                        "No BLE advertisements observed. Check that Bluetooth is "
+                        "enabled, the app has scan permission, and devices are "
+                        "nearby and advertising."
+                    )
         return list(self.devices.values())
 
 

@@ -112,8 +112,8 @@ class BrowserDashboardTests(unittest.TestCase):
             page = client.get("/")
             self.assertEqual(page.status_code, 200)
             self.assertIn("BLUETOOTH/RADAR", page.text)
+            self.assertIn("deviceRows", page.text)
 
-            time.sleep(0.3)
             first = client.get("/api/snapshot").json()
             time.sleep(0.9)
             second = client.get("/api/snapshot").json()
@@ -125,6 +125,21 @@ class BrowserDashboardTests(unittest.TestCase):
             [item["rssi"] for item in first["devices"]],
             [item["rssi"] for item in second["devices"]],
         )
+
+    def test_live_mode_falls_back_when_scanner_fails(self) -> None:
+        with patch(
+            "web._live_stream",
+            side_effect=RuntimeError("No BLE advertisements observed."),
+        ):
+            with TestClient(
+                create_app(demo=False, auto_demo_fallback=True)
+            ) as client:
+                time.sleep(0.3)
+                snapshot = client.get("/api/snapshot").json()
+
+        self.assertEqual(snapshot["source"], "SIMULATED LIVE (fallback)")
+        self.assertGreaterEqual(len(snapshot["devices"]), 4)
+        self.assertIn("No BLE advertisements observed.", snapshot["error"])
 
 
 if __name__ == "__main__":

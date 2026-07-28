@@ -169,6 +169,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="serve a continuously updating browser dashboard",
     )
+    parser.add_argument(
+        "--no-auto-demo-fallback",
+        action="store_true",
+        help="keep live mode empty instead of switching to simulated devices",
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8766)
     parser.add_argument(
