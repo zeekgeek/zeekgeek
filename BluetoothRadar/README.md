@@ -56,9 +56,9 @@ On macOS, grant Bluetooth access to Terminal (or the application that launches
 Python) in **System Settings → Privacy & Security → Bluetooth**.
 
 On Linux, ensure BlueZ and `bluetoothd` are installed, the adapter is powered,
-and the user has permission to scan. PyBluez is installed on Linux for future
-classic-Bluetooth/HCI extensions; the current cross-platform scanner uses
-Bleak.
+and the user has permission to scan. PyBluez2, the current-build-compatible
+PyBluez fork, is installed on Linux for future classic-Bluetooth extensions;
+the current cross-platform BLE scanner uses Bleak.
 
 ## Run
 

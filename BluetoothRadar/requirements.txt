@@ -5,6 +5,7 @@ matplotlib>=3.9
 pandas>=2.2
 rich>=13.9
 
-# PyBluez does not implement modern CoreBluetooth BLE scanning on macOS.
-# It is retained only for optional Linux/classic-Bluetooth extensions.
-PyBluez==0.23; platform_system == "Linux"
+# Upstream PyBluez 0.23 no longer builds with current setuptools/Python.
+# PyBluez2 is its maintained-compatible fork for optional Linux/classic
+# Bluetooth extensions; BLE scanning itself remains on Bleak.
+pybluez2>=0.46; platform_system == "Linux"
