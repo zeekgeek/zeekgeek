@@ -59,7 +59,17 @@ async def run_researcher(
         raise
 
 
-def build_scraper(*, demo: bool, headless: bool = True) -> ScraperBackend:
+def build_scraper(
+    *,
+    demo: bool,
+    headless: bool = True,
+    cdp_url: str | None = None,
+    reuse_browser_tab: bool = False,
+) -> ScraperBackend:
     if demo:
         return DemoScraperBackend()
-    return PlaywrightScraperBackend(headless=headless)
+    return PlaywrightScraperBackend(
+        headless=headless,
+        cdp_url=cdp_url,
+        reuse_browser_tab=reuse_browser_tab,
+    )

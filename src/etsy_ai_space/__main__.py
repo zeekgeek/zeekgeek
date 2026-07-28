@@ -39,6 +39,25 @@ def build_parser() -> argparse.ArgumentParser:
     scrape.add_argument("--max-results", type=int, default=48)
     scrape.add_argument("--min-score", type=float, default=35.0)
     scrape.add_argument("--headless", action="store_true", default=True)
+    scrape.add_argument(
+        "--cdp-url",
+        default=None,
+        help="Attach to BrowserClaw via CDP (http or WebSocket debugger URL)",
+    )
+    scrape.add_argument("--reuse-tab", action="store_true", help="Reuse active BrowserClaw tab")
+
+    browserclaw = sub.add_parser(
+        "browserclaw-scrape",
+        help="Scrape autopilot niches via active BrowserClaw CDP session",
+    )
+    browserclaw.add_argument("query", nargs="?", default=None, help="Optional single niche")
+    browserclaw.add_argument("--cdp-url", default=None)
+    browserclaw.add_argument("--config", type=Path, default=None)
+    browserclaw.add_argument("--all-niches", action="store_true")
+    browserclaw.add_argument("--max-results", type=int, default=24)
+    browserclaw.add_argument("--min-score", type=float, default=35.0)
+    browserclaw.add_argument("--reuse-tab", action="store_true")
+    browserclaw.add_argument("--db", type=Path, default=None)
 
     pipeline = sub.add_parser("pipeline", help="Run phases 1–4 and export a manual upload bundle")
     pipeline.add_argument("query", help="Seed Etsy search query / niche")
@@ -106,9 +125,17 @@ async def cmd_scrape(args: argparse.Namespace) -> int:
             max_results=args.max_results,
             min_score=args.min_score,
             headless=args.headless,
+            cdp_url=args.cdp_url,
+            reuse_browser_tab=getattr(args, "reuse_tab", False),
         )
     print(json.dumps(result, indent=2))
     return 0
+
+
+async def cmd_browserclaw_scrape(args: argparse.Namespace) -> int:
+    from .scraper.browserclaw_scraper import _cli as browserclaw_cli
+
+    return await browserclaw_cli(args)
 
 
 async def cmd_orchestrate(args: argparse.Namespace) -> int:
@@ -236,6 +263,8 @@ def main() -> None:
 
     if args.command == "scrape":
         raise SystemExit(asyncio.run(cmd_scrape(args)))
+    if args.command == "browserclaw-scrape":
+        raise SystemExit(asyncio.run(cmd_browserclaw_scrape(args)))
     if args.command == "orchestrate":
         raise SystemExit(asyncio.run(cmd_orchestrate(args)))
     if args.command == "pipeline":

@@ -27,10 +27,19 @@ async def scrape_niche_to_db(
     min_score: float = 35.0,
     headless: bool = True,
     tracker: SwarmStateTracker | None = None,
+    cdp_url: str | None = None,
+    reuse_browser_tab: bool = False,
 ) -> dict[str, object]:
     """Search Etsy for a niche, extract listing metadata, persist high performers."""
     state = tracker or SwarmStateTracker()
-    scraper = DemoScraperBackend() if demo else PlaywrightScraperBackend(headless=headless)
+    if demo:
+        scraper = DemoScraperBackend()
+    else:
+        scraper = PlaywrightScraperBackend(
+            headless=headless,
+            cdp_url=cdp_url,
+            reuse_browser_tab=reuse_browser_tab,
+        )
     run = db.start_scrape_run(query=query, source=scraper.source)
     assert run.id is not None
 
@@ -73,6 +82,8 @@ async def _cli(args: argparse.Namespace) -> int:
             min_score=args.min_score,
             headless=args.headless,
             tracker=tracker,
+            cdp_url=args.cdp_url,
+            reuse_browser_tab=args.reuse_tab,
         )
     tracker.bump_metric("scrape_runs", 1)
     tracker.set_agent("Scraper", "Idle")
@@ -88,6 +99,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-results", type=int, default=48)
     parser.add_argument("--min-score", type=float, default=35.0)
     parser.add_argument("--headless", action="store_true", default=True)
+    parser.add_argument(
+        "--cdp-url",
+        default=None,
+        help="Attach to BrowserClaw via CDP instead of launching Chromium",
+    )
+    parser.add_argument(
+        "--reuse-tab",
+        action="store_true",
+        help="Reuse the active BrowserClaw tab when using --cdp-url",
+    )
     parser.add_argument("--log-level", default="info", choices=["debug", "info", "warning", "error"])
     return parser
 
