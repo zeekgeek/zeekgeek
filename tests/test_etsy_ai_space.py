@@ -121,7 +121,8 @@ class EtsyAiSpaceTests(unittest.IsolatedAsyncioTestCase):
     def test_autopilot_config_loads(self) -> None:
         config = AutopilotConfig.load(Path("/workspace/etsy_ai_space/autopilot.yaml"))
         self.assertGreaterEqual(len(config.niches), 5)
-        self.assertIn("soberversary shirt gift", config.niches)
+        self.assertIn("recovery definition shirt", config.niches)
+        self.assertIn("soberversary shirt custom date", config.niches)
         self.assertTrue(config.demo)
 
     async def test_autopilot_single_cycle(self) -> None:
