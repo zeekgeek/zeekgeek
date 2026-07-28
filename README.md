@@ -100,72 +100,6 @@ python3 -m unittest discover -s tests
 
 ---
 
-# Adorime Thrust Controller
-
-Live BLE scanner and thrust/vibration controller focused on **Adorime**
-products. Identifies devices from their advertised BLE names (for example
-`BGSF`, `SN80`, `AX05`) and exposes a rose-themed dashboard with live thrust
-controls.
-
-Supported Adorime profiles include masturbators, anal trainers, rabbit dildos,
-wearable eggs, cock rings, chastity cage, and related dual-motor models.
-Control uses the Adorime/Galaku-family BLE write format documented via
-Buttplug/Intiface community research.
-
-## Quick start
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
-python3 -m bt_thrust
-```
-
-Open <http://127.0.0.1:8800>, select a live Adorime toy, click **Connect**,
-then use the thrust/vibration sliders or pattern presets.
-
-Requires a powered Bluetooth adapter and an Adorime device in
-advertising/pairing mode. Linux hosts usually need `bluetoothd` running and BLE
-scan permission for the current user/session.
-
-## Dashboard behavior
-
-- **Live Adorime toys** panel lists only recognized in-range Adorime devices
-  with RSSI, estimated distance, and movement hints.
-- **Thrust controls** expose separate **Thrust** and **Vibration** sliders on
-  dual-motor models, with live command sending while connected.
-- **Pattern presets** loop thrust/vibration levels while connected.
-- **Stop all** sends a zero command and cancels any active pattern.
-- **Browser notifications** for discovered, connected, and disconnected toys.
-
-## Command options
-
-```text
-python3 -m bt_thrust --host 127.0.0.1 --port 8800 --stale-after 20
-```
-
-- `--host`: dashboard bind address
-- `--port`: dashboard port (default `8800`)
-- `--stale-after`: seconds without sightings before a toy is marked as left
-- `--log-level`: `debug`, `info`, `warning`, or `error`
-
-## API
-
-- `GET /api/toys`: current snapshot of scanned toys and control state
-- `POST /api/select`: body `{"address": "..."}` to select a toy in the UI
-- `POST /api/toys/{address}/connect` / `disconnect`: manage BLE connection
-- `POST /api/toys/{address}/control`: body `{"levels": {"thrust": 50, "vibrate": 30}}`
-- `POST /api/toys/{address}/pattern`: body `{"pattern": "pulse"}`
-- `GET /api/events`: Server-Sent Events stream for live UI updates
-
-## Tests
-
-```bash
-python3 -m unittest discover -s tests
-```
-
----
-
 # WiFi Motion Radar
 
 A separate, self-contained radar for **WiFi** devices. It scans nearby WiFi
@@ -392,3 +326,108 @@ python3 -m jet_radar --host 127.0.0.1 --port 8790 --sigma 3 --trigger-threshold 
 - `GET /api/jets`: snapshot (jets, baseline, hideout candidates, watchlist moves, events)
 - `POST /api/sensitivity`: body `{"sigma": 3.0, "trigger_threshold": 3}`
 - `GET /api/events`: Server-Sent Events stream
+
+---
+
+# Etsy AI Space
+
+Phased agent swarm for **safe** print-on-demand store research. It follows a
+manual-upload rollout: scrape trends → creative brief → listing copy → JSON/CSV
+export. Nothing publishes to Etsy automatically.
+
+## Architecture
+
+```text
+src/etsy_ai_space/
+├── database/
+│   └── schema.sql         # SQLite schema (listings, concepts, drafts)
+├── scraper/
+│   └── etsy_scraper.py    # Playwright niche scraper → DB
+├── agents/
+│   └── workers.py         # Copywriter, design (Midjourney), SEO workers
+├── pipeline/
+│   ├── orchestrator.py    # Manager agent → 5 concepts → export
+│   └── state.json         # Live agent status (gitignored; see state.schema.json)
+├── dashboard/
+│   └── app.py             # Streamlit live status UI
+├── tools/                 # Humanized delays + QC rules
+└── obsidian_vault/        # Brief memory (Markdown)
+```
+
+## Quick start (demo — no Etsy network)
+
+```bash
+source .venv/bin/activate
+pip install -e .
+
+# Phase 1 only — scrape + SQLite
+python3 -m etsy_ai_space scrape "retro cat shirt" --demo
+
+# Full swarm — scrape, 5 concepts, worker drafts, export
+python3 -m etsy_ai_space orchestrate "retro cat shirt" --demo
+
+# Legacy single-brief pipeline
+python3 -m etsy_ai_space pipeline "retro cat shirt" --demo
+```
+
+Inspect stored trends:
+
+```bash
+python3 -m etsy_ai_space stats
+python3 -m etsy_ai_space top --limit 5
+```
+
+## Live scraping (Phase 1)
+
+Requires Playwright and a local Chromium install. Requests are **rate-limited by default**
+(3–6s between Etsy requests, max ~12/min, exponential backoff on 429/503). Tune constants
+in `src/etsy_ai_space/scraper/rate_limit.py`.
+
+```bash
+pip install -e ".[etsy]"
+playwright install chromium
+python3 -m etsy_ai_space scrape "cottagecore mushroom shirt"
+```
+
+The scraper uses randomized delays between actions. Start with low volume and
+ `--max-results 24` while you validate selectors.
+
+## Claude orchestration (Phase 2–3)
+
+Set `ANTHROPIC_API_KEY` and run the pipeline without `--demo` when ready:
+
+```bash
+export ANTHROPIC_API_KEY=sk-...
+python3 -m etsy_ai_space pipeline "retro cat shirt"
+```
+
+Without the key, Ultron falls back to deterministic templates so you can test
+the full export flow offline.
+
+## Safe scaling checklist
+
+1. Run demo pipeline locally and review `etsy_ai_space/exports/listing-bundle-*.json`.
+2. Generate artwork from `image_prompt` in your tool of choice; save paths into the bundle.
+3. Upload listings **manually** in Etsy Seller Manager (3–5/day for new shops).
+4. Only after the shop is established, consider Etsy Open API or browser assist tools.
+5. Never auto-delete listings — warroom outputs recommendations only.
+
+## Command reference
+
+```text
+python3 -m etsy_ai_space scrape <query> [--demo] [--max-results 48] [--min-score 35]
+python3 -m etsy_ai_space orchestrate <niche> [--demo] [--concepts 5] [--skip-scrape]
+python3 -m etsy_ai_space pipeline <query> [--demo] [--niche "..."] [--export-dir PATH]
+python3 -m etsy_ai_space export [--export-dir PATH]
+python3 -m etsy_ai_space stats
+python3 -m etsy_ai_space top [--limit 10]
+
+# Live Streamlit dashboard (auto-refreshes from pipeline/state.json)
+pip install -e ".[etsy]"
+python -m dashboard.app --port 8501
+# or: python3 -m etsy_ai_space dashboard --port 8501
+
+# Standalone module entry points
+python3 -m etsy_ai_space.scraper.etsy_scraper "retro cat shirt" --demo
+python3 -m etsy_ai_space.pipeline.orchestrator "retro cat shirt" --demo
+```

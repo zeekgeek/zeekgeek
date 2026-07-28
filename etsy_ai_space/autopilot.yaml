@@ -1,0 +1,35 @@
+# Autopilot configuration — edit niches and schedule here
+#
+# Focus: sobriety / addiction recovery POD (not medical/surgery recovery).
+# Add more search phrases below as you validate winners from manual Etsy browsing.
+
+niches:
+  - soberversary shirt gift
+  - sobriety recovery shirt
+  - sober anniversary t shirt
+  - recovery definition shirt
+  - one day at a time shirt
+  - sober milestone gift shirt
+  - addiction recovery support gift
+
+# How long to sleep between full pipeline cycles (seconds)
+cycle_interval_seconds: 21600  # 6 hours
+
+# Safety caps — keep new shops under Etsy's spam radar
+max_cycles_per_day: 4
+concepts_per_cycle: 5
+max_results_per_scrape: 24
+
+# Use demo scraper (true = offline, no Etsy HTTP). Set false on your Mac for live trends.
+demo: true
+
+# Optional: set via environment variable ANTHROPIC_API_KEY for smarter copy
+use_claude: false
+
+# Human gate — autopilot never auto-uploads; you approve then upload manually
+require_manual_upload: true
+daily_upload_cap: 5
+
+# Suggested price band for recovery niche (reference for workers; listings use ~24.99 default)
+target_price_min: 22.99
+target_price_max: 28.99

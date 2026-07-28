@@ -5,10 +5,10 @@
 This repo contains self-contained Python apps under `src/`:
 
 - `bt_radar` — BLE scanner + FastAPI dashboard
-- `bt_thrust` — live Adorime BLE scanner + thrust/vibration controller dashboard
 - `wifi_radar` — WiFi motion radar + FastAPI dashboard
 - `mac_battery` — MacBook battery/charging diagnostic + FastAPI dashboard
 - `jet_radar` — private-jet ADS-B movement radar + strange-event alarm dashboard
+- `etsy_ai_space` — phased Etsy POD research swarm (scrape → brief → export; manual upload)
 
 There is no database and no frontend build step (dashboard HTML/JS is embedded
 in each package’s `web.py`).
@@ -20,13 +20,16 @@ Running the apps:
 - Cloud VMs have no Bluetooth adapter / `bluetoothd`, so live BLE scanning will not work.
  Always run bt_radar in demo mode: `python3 -m bt_radar --demo`. (Without `--demo` the app tries
  live scanning and auto-falls back to demo mode, printing a system event.)
-- BT thrust controller: `python3 -m bt_thrust` (live Adorime BLE scan + GATT control;
-  needs Bluetooth adapter + Adorime device advertising). Default dashboard port is `8800`.
 - WiFi radar: `python3 -m wifi_radar --demo` (live needs `iw` / wireless hardware).
 - Mac battery: `python3 -m mac_battery --demo` on non-macOS hosts (live needs macOS `ioreg` /
  AppleSmartBattery). Default dashboard port is `8780`.
 - Jet radar: `python3 -m jet_radar --demo` (live polls adsb.lol; needs network egress).
-  Default dashboard port is `8790`.
+ Default dashboard port is `8790`.
+- Etsy AI Space: `python3 -m etsy_ai_space scrape "retro cat shirt" --demo` (Phase 1 demo scraper +
+ SQLite logging). Live Etsy scraping needs `pip install -e ".[etsy]"` and `playwright install chromium`.
+ Phase 4 exports JSON/CSV for **manual** listing upload — no Etsy API publish in this flow.
+ Dashboard: `python3 -m etsy_ai_space dashboard` (Streamlit; reads `etsy_ai_space/pipeline/state.json`).
+ Autopilot: `python3 -m etsy_ai_space autopilot --once --demo` (loop with `autopilot.yaml`; manual upload gate).
 - Dashboards bind to `http://127.0.0.1:<port>` by default. If the port is busy the app
  auto-increments to the next free port and prints the chosen URL, so read the startup log
  rather than assuming the default. Pass `--port <n>` for deterministic binding.
