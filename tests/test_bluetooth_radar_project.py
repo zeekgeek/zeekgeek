@@ -3,13 +3,22 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+import numpy as np
+from matplotlib import pyplot as plt
+from matplotlib.backend_bases import MouseEvent, PickEvent
 
 
 PROJECT = Path(__file__).resolve().parents[1] / "BluetoothRadar"
 sys.path.insert(0, str(PROJECT))
 
 from analysis import analyze_graph  # noqa: E402
-from graph import build_relationship_graph  # noqa: E402
+from graph import (  # noqa: E402
+    _first_pick_index,
+    build_relationship_graph,
+    show_interactive_graph,
+)
 from parser import parse_manufacturer_record  # noqa: E402
 from scanner import DiscoveredDevice  # noqa: E402
 
@@ -28,6 +37,39 @@ class ParserTests(unittest.TestCase):
 
 
 class GraphTests(unittest.TestCase):
+    def test_first_node_pick_is_not_treated_as_empty(self) -> None:
+        self.assertEqual(_first_pick_index(np.array([0])), 0)
+        self.assertIsNone(_first_pick_index(np.array([], dtype=int)))
+
+    def test_clicking_first_node_displays_its_annotation(self) -> None:
+        graph = build_relationship_graph(
+            [DiscoveredDevice("hub", "Living Room Hub", -40, None)]
+        )
+        annotation_text: list[str] = []
+
+        def click_first_node() -> None:
+            figure = plt.gcf()
+            canvas = figure.canvas
+            node_artist = figure.axes[0].collections[0]
+            mouse_event = MouseEvent("button_press_event", canvas, 0, 0)
+            event = PickEvent(
+                "pick_event",
+                canvas,
+                mouse_event,
+                node_artist,
+                ind=np.array([0]),
+            )
+            canvas.callbacks.process("pick_event", event)
+            annotation = figure.axes[0].texts[-1]
+            self.assertTrue(annotation.get_visible())
+            annotation_text.append(annotation.get_text())
+
+        with patch("graph.plt.show", side_effect=click_first_node):
+            show_interactive_graph(graph)
+        plt.close("all")
+
+        self.assertIn("Living Room Hub", annotation_text[0])
+
     def test_shared_service_creates_evidenced_edge(self) -> None:
         service = "0000180f-0000-1000-8000-00805f9b34fb"
         devices = [

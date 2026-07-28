@@ -63,6 +63,11 @@ def build_relationship_graph(
     return graph
 
 
+def _first_pick_index(indices: Iterable[int]) -> int | None:
+    """Return the first picked index, including zero, or None when empty."""
+    return next((int(index) for index in indices), None)
+
+
 def show_interactive_graph(graph: nx.Graph) -> None:
     """Open a Matplotlib graph; clicking nodes shows complete observations."""
     if not graph:
@@ -117,9 +122,10 @@ def show_interactive_graph(graph: nx.Graph) -> None:
 
     def on_pick(event: object) -> None:
         indices = getattr(event, "ind", [])
-        if not indices:
+        picked_index = _first_pick_index(indices)
+        if picked_index is None:
             return
-        node = nodes[indices[0]]
+        node = nodes[picked_index]
         attrs = graph.nodes[node]
         details = attrs["details"]
         incident = [
