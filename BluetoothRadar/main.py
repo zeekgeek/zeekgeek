@@ -165,6 +165,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sort", choices=("rssi", "name", "address", "last_seen"), default="rssi")
     parser.add_argument("--demo", action="store_true", help="use deterministic sample data")
     parser.add_argument(
+        "--browser",
+        action="store_true",
+        help="serve a continuously updating browser dashboard",
+    )
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8766)
+    parser.add_argument(
+        "--open-browser",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="open the dashboard URL in the default browser",
+    )
+    parser.add_argument(
         "--gui",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -177,7 +190,12 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     try:
-        return asyncio.run(run(parse_args()))
+        args = parse_args()
+        if args.browser:
+            from web import run_dashboard
+
+            return run_dashboard(args)
+        return asyncio.run(run(args))
     except (ValueError, RuntimeError, OSError) as error:
         console.print(f"[bold red]Scan failed:[/] {error}")
         return 2

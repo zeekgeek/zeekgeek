@@ -13,6 +13,7 @@ BluetoothRadar/
 ├── parser.py
 ├── graph.py
 ├── analysis.py
+├── web.py
 ├── requirements.txt
 └── README.md
 ```
@@ -85,6 +86,18 @@ Console-only scan, sorted by name, with exports:
 ```bash
 python3 main.py --no-gui --sort name --json observations.json --csv observations.csv
 ```
+
+Continuously updating browser dashboard:
+
+```bash
+python3 main.py --browser --demo --open-browser
+python3 main.py --browser --scan-mode active
+```
+
+The dashboard defaults to <http://127.0.0.1:8766> and selects the next free
+port when needed. Its source badge always says `SIMULATED LIVE` or `LIVE BLE`.
+Rows, RSSI values, relationship edges, and graph intelligence refresh as
+advertisements arrive.
 
 The graph opens after scanning. Red nodes are identity-limited advertisements.
 Click a node to display its observations and incident edge scores.

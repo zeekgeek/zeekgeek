@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -21,6 +22,8 @@ from graph import (  # noqa: E402
 )
 from parser import parse_manufacturer_record  # noqa: E402
 from scanner import DiscoveredDevice  # noqa: E402
+from web import create_app  # noqa: E402
+from fastapi.testclient import TestClient
 
 
 class ParserTests(unittest.TestCase):
@@ -101,6 +104,27 @@ class GraphTests(unittest.TestCase):
         report = analyze_graph(graph)
         self.assertEqual(report.hubs[0][0], "hub")
         self.assertTrue(report.suggestions)
+
+
+class BrowserDashboardTests(unittest.TestCase):
+    def test_dashboard_streams_fresh_demo_snapshots(self) -> None:
+        with TestClient(create_app(demo=True)) as client:
+            page = client.get("/")
+            self.assertEqual(page.status_code, 200)
+            self.assertIn("BLUETOOTH/RADAR", page.text)
+
+            time.sleep(0.3)
+            first = client.get("/api/snapshot").json()
+            time.sleep(0.9)
+            second = client.get("/api/snapshot").json()
+
+        self.assertEqual(first["source"], "SIMULATED LIVE")
+        self.assertEqual(len(first["devices"]), 4)
+        self.assertGreater(second["sequence"], first["sequence"])
+        self.assertNotEqual(
+            [item["rssi"] for item in first["devices"]],
+            [item["rssi"] for item in second["devices"]],
+        )
 
 
 if __name__ == "__main__":
