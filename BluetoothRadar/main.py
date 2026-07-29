@@ -170,6 +170,11 @@ def parse_args() -> argparse.Namespace:
         help="serve a live browser dashboard (real BLE by default)",
     )
     parser.add_argument(
+        "--desktop",
+        action="store_true",
+        help="open the desktop radar dashboard with live Bluetooth scanning",
+    )
+    parser.add_argument(
         "--demo-fallback",
         action="store_true",
         help="browser mode: allow simulated devices when no Bluetooth adapter is found",
@@ -206,6 +211,11 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     try:
         args = parse_args()
+        if args.desktop:
+            args.browser = True
+            args.open_browser = True
+            args.demo = False
+            args.no_demo_fallback = True
         if args.browser:
             from web import run_dashboard
 

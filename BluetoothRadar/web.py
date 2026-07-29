@@ -22,7 +22,10 @@ from scanner import (
     BluetoothRadarScanner,
     DiscoveredDevice,
     demo_scan,
+    macos_permission_hint,
+    platform_scan_label,
     probe_bluetooth,
+    IS_MACOS,
 )
 
 
@@ -131,11 +134,15 @@ async def _live_stream(
 ) -> None:
     loop = asyncio.get_running_loop()
     while True:
-        state.source = "LIVE BLE"
+        state.source = platform_scan_label()
         state.status = "scanning"
         state.error = None
+        state.hardware_ok = True
         state.message = (
-            "Live BLE scan active. Nearby advertisements will appear as they "
+            "Live macOS Bluetooth scan active — advertisements stream to the "
+            "desktop radar as CoreBluetooth observes them."
+            if IS_MACOS
+            else "Live BLE scan active. Nearby advertisements will appear as they "
             "are observed."
         )
         scanner = BluetoothRadarScanner(
@@ -180,18 +187,18 @@ async def _run_dashboard_stream(
             state.error = detail
             state.message = (
                 "No usable Bluetooth adapter detected. Streaming simulated "
-                "devices so the dashboard stays usable. On a Mac with Bluetooth "
-                "enabled, restart without --demo and grant Terminal Bluetooth "
-                "permission."
+                "devices so the dashboard stays usable. "
+                + macos_permission_hint()
             )
             await _demo_stream(state)
             return
-        state.source = "LIVE BLE"
+        state.source = platform_scan_label()
         state.status = "error"
         state.error = detail
         state.message = (
-            "Live scanning unavailable. Enable Bluetooth / BlueZ, grant scan "
-            "permission, or restart with --demo-fallback."
+            "Live scanning unavailable. "
+            + (macos_permission_hint() if IS_MACOS else "Enable Bluetooth / BlueZ.")
+            + " Or restart with --demo-fallback."
         )
         while True:
             await asyncio.sleep(3600)
@@ -206,10 +213,7 @@ async def _run_dashboard_stream(
         if not demo_fallback:
             state.status = "error"
             state.error = str(error)
-            state.message = (
-                "Live scanning failed. Restart with --demo-fallback to use "
-                "simulated devices when hardware is unavailable."
-            )
+            state.message = str(error)
             while True:
                 await asyncio.sleep(3600)
             return
@@ -235,15 +239,15 @@ def create_app(
     adapter: str | None = None,
     demo_fallback: bool = False,
 ) -> FastAPI:
-    initial_source = "SIMULATED LIVE" if demo else "LIVE BLE"
+    initial_source = "SIMULATED LIVE" if demo else platform_scan_label()
     state = DashboardState(
         initial_source,
         status="demo" if demo else "scanning",
     )
     if not demo:
         state.message = (
-            "Starting live BLE scan. Enable Bluetooth and grant scan permission "
-            "to your terminal app."
+            "Starting live Bluetooth scan for the desktop radar. "
+            + (macos_permission_hint() if IS_MACOS else "Enable your Bluetooth adapter.")
         )
 
     @asynccontextmanager
@@ -316,25 +320,30 @@ def _available_port(host: str, preferred: int) -> int:
 
 def run_dashboard(args: Any) -> int:
     use_demo = bool(args.demo)
-    # Default: fall back to simulated data only when no Bluetooth hardware is
-    # available. Pass --no-demo-fallback to keep an empty LIVE error state.
-    demo_fallback = not bool(getattr(args, "no_demo_fallback", False))
-    if getattr(args, "demo_fallback", False):
+    # macOS: keep live CoreBluetooth data by default (no silent demo swap).
+    # Linux cloud/VMs: fall back to simulated devices when no adapter exists.
+    if getattr(args, "no_demo_fallback", False):
+        demo_fallback = False
+    elif getattr(args, "demo_fallback", False):
         demo_fallback = True
+    else:
+        demo_fallback = not IS_MACOS
     port = _available_port(args.host, args.port)
     url = f"http://{args.host}:{port}"
     print(f"BluetoothRadar dashboard: {url}", flush=True)
     if use_demo:
         print("Running browser dashboard in demo mode with simulated devices.", flush=True)
     else:
-        print("Running live BLE scan. Nearby advertisements will stream to the dashboard.", flush=True)
+        print(f"Running {platform_scan_label()}.", flush=True)
+        if IS_MACOS:
+            print(macos_permission_hint(), flush=True)
         if demo_fallback:
             print(
                 "If no Bluetooth adapter is available, the dashboard will fall back to simulated devices.",
                 flush=True,
             )
         else:
-            print("Demo fallback disabled with --no-demo-fallback.", flush=True)
+            print("Demo fallback disabled — waiting for live adapter advertisements only.", flush=True)
     if args.open_browser:
         Timer(0.8, lambda: webbrowser.open(url)).start()
     uvicorn.run(

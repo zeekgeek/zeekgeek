@@ -8,6 +8,7 @@ addresses.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import platform
 import re
 import time
@@ -21,6 +22,7 @@ from parser import ManufacturerRecord, parse_manufacturer_data
 
 UpdateCallback = Callable[["DiscoveredDevice"], None]
 PRIVACY_NAME = re.compile(r"^(unknown|n/?a|null|none|device|ble[-_ ]?\w{0,4})$", re.I)
+IS_MACOS = platform.system() == "Darwin"
 
 
 @dataclass
@@ -67,12 +69,39 @@ def _rssi_from(device: Any, advertisement: Any) -> int:
         return -127
 
 
+def platform_scan_label() -> str:
+    if IS_MACOS:
+        return "LIVE BLE (macOS CoreBluetooth)"
+    if platform.system() == "Linux":
+        return "LIVE BLE (BlueZ)"
+    return "LIVE BLE"
+
+
+def macos_permission_hint() -> str:
+    return (
+        "On macOS: turn Bluetooth on, then grant Bluetooth permission to "
+        "Terminal (or iTerm/Cursor) in System Settings → Privacy & Security → "
+        "Bluetooth. Keep nearby devices advertising, and do not pass --demo."
+    )
+
+
 async def probe_bluetooth(
     *, adapter: str | None = None, timeout: float = 1.0
 ) -> tuple[bool, str]:
-    """Return whether a BLE adapter can start scanning on this host."""
+    """Return whether a BLE adapter can start scanning on this host.
+
+    On macOS this intentionally avoids a start/stop probe cycle. CoreBluetooth
+    central managers are sensitive to rapid restart and permission prompts, so
+    readiness is validated when the live scanner starts.
+    """
+    if IS_MACOS:
+        return True, (
+            "macOS CoreBluetooth ready — starting live advertisement scan. "
+            + macos_permission_hint()
+        )
+
     scanner_args: dict[str, Any] = {"scanning_mode": "active"}
-    if adapter and platform.system() != "Darwin":
+    if adapter:
         scanner_args["adapter"] = adapter
     try:
         scanner = BleakScanner(**scanner_args)
@@ -103,12 +132,12 @@ class BluetoothRadarScanner:
         on_update: UpdateCallback | None = None,
         loop: asyncio.AbstractEventLoop | None = None,
     ) -> None:
-        if not active and platform.system() == "Darwin":
+        if not active and IS_MACOS:
             raise ValueError(
-                "CoreBluetooth does not expose passive-scan selection on macOS; "
-                "choose active mode or run passive mode with BlueZ on Linux."
+                "CoreBluetooth does not support passive scanning on macOS; "
+                "use --scan-mode active."
             )
-        self.active = active
+        self.active = True if IS_MACOS else active
         self.adapter = adapter
         self.on_update = on_update
         self.loop = loop
@@ -211,12 +240,12 @@ class BluetoothRadarScanner:
             self._emit_update(record)
 
     def _scanner_kwargs(self) -> dict[str, Any]:
+        # CoreBluetooth only supports active scanning.
         scanner_args: dict[str, Any] = {
             "detection_callback": self._detection_callback,
-            "scanning_mode": "active" if self.active else "passive",
+            "scanning_mode": "active" if (self.active or IS_MACOS) else "passive",
         }
-        # Adapter selection is BlueZ-only. CoreBluetooth ignores / rejects it.
-        if self.adapter and platform.system() != "Darwin":
+        if self.adapter and not IS_MACOS:
             scanner_args["adapter"] = self.adapter
         return scanner_args
 
@@ -237,13 +266,21 @@ class BluetoothRadarScanner:
         """Keep one scanner session open until cancelled."""
         if self.loop is None:
             self.loop = asyncio.get_running_loop()
-        ready, detail = await probe_bluetooth(adapter=self.adapter, timeout=0.4)
-        if not ready:
-            raise RuntimeError(detail)
         scanner = BleakScanner(**self._scanner_kwargs())
-        async with scanner:
+        try:
+            await scanner.start()
+        except Exception as error:
+            hint = f" {macos_permission_hint()}" if IS_MACOS else ""
+            raise RuntimeError(
+                f"Failed to start live BLE scanner ({type(error).__name__}: {error})."
+                f"{hint}"
+            ) from error
+        try:
             while True:
                 await asyncio.sleep(1.0)
+        finally:
+            with contextlib.suppress(Exception):
+                await scanner.stop()
         return list(self.devices.values())
 
 

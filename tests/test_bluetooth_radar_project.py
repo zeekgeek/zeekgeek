@@ -180,10 +180,20 @@ class BrowserDashboardTests(unittest.TestCase):
                 time.sleep(0.2)
                 snapshot = client.get("/api/snapshot").json()
 
-        self.assertEqual(snapshot["source"], "LIVE BLE")
+        self.assertEqual(snapshot["source"], "LIVE BLE (BlueZ)")
         self.assertEqual(snapshot["status"], "error")
         self.assertEqual(snapshot["devices"], [])
         self.assertIn("No Bluetooth adapter", snapshot["error"])
+
+    def test_macos_probe_reports_ready_without_start_stop_cycle(self) -> None:
+        import asyncio
+
+        with patch("scanner.IS_MACOS", True), patch("web.IS_MACOS", True):
+            from scanner import probe_bluetooth as probe
+
+            ready, detail = asyncio.run(probe(timeout=0.1))
+        self.assertTrue(ready)
+        self.assertIn("CoreBluetooth", detail)
 
     def test_event_stream_route_is_registered(self) -> None:
         app = create_app(demo=True)

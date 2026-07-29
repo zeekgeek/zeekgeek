@@ -87,20 +87,26 @@ Console-only scan, sorted by name, with exports:
 python3 main.py --no-gui --sort name --json observations.json --csv observations.csv
 ```
 
-Continuously updating browser dashboard (live BLE by default):
+Continuously updating browser / desktop radar (live BLE by default):
 
 ```bash
-python3 main.py --browser --open-browser
-python3 main.py --browser --demo
-python3 main.py --browser --no-demo-fallback
+# macOS desktop radar with live CoreBluetooth advertisements
+python3 main.py --desktop
+
+# equivalent explicit form
+python3 main.py --browser --open-browser --no-demo-fallback
+
+# simulated devices only
+python3 main.py --browser --demo --open-browser
 ```
 
-On start the dashboard probes for a Bluetooth adapter. If one is available it
-streams live advertisements over `/api/events`. If no adapter is found it falls
-back to simulated devices unless you pass `--no-demo-fallback`.
+On macOS the dashboard uses the built-in Bluetooth adapter through Bleak’s
+CoreBluetooth backend. Grant Bluetooth access to Terminal (or iTerm/Cursor) in
+**System Settings → Privacy & Security → Bluetooth**, keep Bluetooth on, and do
+**not** pass `--demo`. The badge should read `LIVE BLE (macOS CoreBluetooth)`.
 
-On macOS, grant Bluetooth access to Terminal in **System Settings → Privacy &
-Security → Bluetooth**, keep Bluetooth on, and leave `--demo` off.
+On Linux cloud hosts without an adapter, the dashboard falls back to simulated
+devices unless `--no-demo-fallback` is set.
 
 The dashboard defaults to <http://127.0.0.1:8766> and selects the next free
 port when needed. Its source badge always says `SIMULATED LIVE` or `LIVE BLE`.
