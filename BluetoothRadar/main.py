@@ -17,7 +17,12 @@ from rich.table import Table
 
 from analysis import GraphReport, analyze_graph
 from graph import build_relationship_graph, show_interactive_graph
-from scanner import BluetoothRadarScanner, DiscoveredDevice, demo_scan
+from scanner import (
+    BluetoothRadarScanner,
+    DiscoveredDevice,
+    demo_scan,
+    diagnose_live_scan,
+)
 
 
 console = Console()
@@ -159,6 +164,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--duration", type=float, default=15.0)
     parser.add_argument(
+        "--diagnose-bluetooth",
+        action="store_true",
+        help="test the local Bluetooth backend and print packet/device counts",
+    )
+    parser.add_argument(
         "--scan-mode", choices=("active", "passive"), default="active"
     )
     parser.add_argument("--adapter", help="Linux BlueZ adapter, e.g. hci0")
@@ -211,6 +221,10 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     try:
         args = parse_args()
+        if args.diagnose_bluetooth:
+            report = asyncio.run(diagnose_live_scan(args.duration))
+            console.print_json(data=report)
+            return 0 if report["ok"] else 2
         if args.desktop:
             args.browser = True
             args.open_browser = True

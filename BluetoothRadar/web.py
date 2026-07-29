@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import platform
 import socket
 import time
 import webbrowser
@@ -280,6 +281,22 @@ def create_app(
     @app.get("/api/snapshot")
     async def snapshot() -> dict[str, Any]:
         return state.snapshot()
+
+    @app.get("/api/source")
+    async def source() -> dict[str, Any]:
+        return {
+            "source": state.source,
+            "status": state.status,
+            "hardware_ok": state.hardware_ok,
+            "host_platform": platform.platform(),
+            "macos_version": platform.mac_ver()[0] if IS_MACOS else None,
+            "backend": "CoreBluetooth" if IS_MACOS else (
+                "BlueZ" if platform.system() == "Linux" else platform.system()
+            ),
+            "packets": state.packets,
+            "devices": len(state.devices),
+            "error": state.error,
+        }
 
     @app.get("/api/events")
     async def events() -> StreamingResponse:

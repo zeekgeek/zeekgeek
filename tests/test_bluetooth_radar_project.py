@@ -21,7 +21,12 @@ from graph import (  # noqa: E402
     show_interactive_graph,
 )
 from parser import parse_manufacturer_record  # noqa: E402
-from scanner import DiscoveredDevice, _rssi_from, probe_bluetooth  # noqa: E402
+from scanner import (  # noqa: E402
+    DiscoveredDevice,
+    _rssi_from,
+    diagnose_live_scan,
+    probe_bluetooth,
+)
 from web import create_app  # noqa: E402
 from fastapi.testclient import TestClient
 
@@ -58,6 +63,16 @@ class ScannerLiveDataTests(unittest.TestCase):
             self.assertTrue(detail)
         else:
             self.assertIn("ready", detail.lower())
+
+    def test_diagnostic_reports_backend_and_real_counts(self) -> None:
+        import asyncio
+
+        with patch("scanner.BluetoothRadarScanner.scan", return_value=[]):
+            report = asyncio.run(diagnose_live_scan(0.01))
+        self.assertIn(report["backend"], {"BlueZ", "CoreBluetooth"})
+        self.assertEqual(report["packets"], 0)
+        self.assertEqual(report["devices"], 0)
+        self.assertTrue(report["ok"])
 
 
 class GraphTests(unittest.TestCase):
@@ -199,6 +214,14 @@ class BrowserDashboardTests(unittest.TestCase):
         app = create_app(demo=True)
         paths = {getattr(route, "path", "") for route in app.routes}
         self.assertIn("/api/events", paths)
+        self.assertIn("/api/source", paths)
+
+    def test_source_endpoint_identifies_backend(self) -> None:
+        with TestClient(create_app(demo=True)) as client:
+            source = client.get("/api/source").json()
+        self.assertEqual(source["source"], "SIMULATED LIVE")
+        self.assertIn(source["backend"], {"BlueZ", "CoreBluetooth"})
+        self.assertIn("host_platform", source)
 
     def test_dashboard_connects_to_event_stream(self) -> None:
         with TestClient(create_app(demo=True)) as client:

@@ -108,12 +108,28 @@ CoreBluetooth backend. Grant Bluetooth access to Terminal (or iTerm/Cursor) in
 **System Settings → Privacy & Security → Bluetooth**, keep Bluetooth on, and do
 **not** pass `--demo`. The badge should read `LIVE BLE (macOS CoreBluetooth)`.
 
+Verify the local Sequoia data source before opening the dashboard:
+
+```bash
+python3 main.py --diagnose-bluetooth --duration 8
+```
+
+The JSON report must show `"backend": "CoreBluetooth"` and `"ok": true`.
+`packets` may remain zero if no nearby BLE peripheral is currently advertising.
+If the report says access was denied, enable the terminal application that
+actually launches Python in macOS Bluetooth privacy settings and restart that
+application. A dashboard running on a Linux VM cannot read a Mac's Bluetooth
+radio; `python3 main.py --desktop` must run locally on the Mac.
+
 Browser mode is **live-only by default** (no simulated devices). Use `--demo` for
 fake data, or `--demo-fallback` if you want simulated devices only when the
 adapter is missing.
 
 The dashboard defaults to <http://127.0.0.1:8766> and selects the next free
 port when needed. Its source badge always says `SIMULATED LIVE` or `LIVE BLE`.
+`GET /api/source` reports the host OS, Bluetooth backend, source mode, packet
+count, and adapter error so simulated/cloud data cannot be mistaken for the
+Mac's local CoreBluetooth stream.
 The page includes a live **3D proximity radar** (RSSI distance rings, rotating
 scan sweep, clickable blips) plus a sortable **device list** fed by the same
 scan stream.

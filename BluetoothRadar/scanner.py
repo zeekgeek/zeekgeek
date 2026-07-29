@@ -16,6 +16,10 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Callable
 
 from bleak import BleakScanner
+from bleak.exc import (
+    BleakBluetoothNotAvailableError,
+    BleakBluetoothNotAvailableReason,
+)
 
 from parser import ManufacturerRecord, parse_manufacturer_data
 
@@ -85,6 +89,34 @@ def macos_permission_hint() -> str:
     )
 
 
+def bluetooth_error_message(error: Exception) -> str:
+    """Turn Bleak availability failures into actionable operator guidance."""
+    if isinstance(error, BleakBluetoothNotAvailableError):
+        reason = error.reason
+        actions = {
+            BleakBluetoothNotAvailableReason.POWERED_OFF: (
+                "Turn Bluetooth on in macOS Control Center, then retry."
+            ),
+            BleakBluetoothNotAvailableReason.DENIED_BY_USER: (
+                "Allow the app that launched Python in System Settings → "
+                "Privacy & Security → Bluetooth, then restart it."
+            ),
+            BleakBluetoothNotAvailableReason.DENIED_BY_SYSTEM: (
+                "Bluetooth access is blocked by system policy. Ask the Mac "
+                "administrator to allow it."
+            ),
+            BleakBluetoothNotAvailableReason.NO_BLUETOOTH: (
+                "No Bluetooth radio is available to this process."
+            ),
+            BleakBluetoothNotAvailableReason.NO_BLE_CENTRAL_ROLE: (
+                "The selected adapter cannot perform BLE central scanning."
+            ),
+        }
+        action = actions.get(reason, macos_permission_hint())
+        return f"{error.args[0]} {action}"
+    return f"{type(error).__name__}: {error}"
+
+
 async def probe_bluetooth(
     *, adapter: str | None = None, timeout: float = 1.0
 ) -> tuple[bool, str]:
@@ -118,7 +150,7 @@ async def probe_bluetooth(
             f"({error}). Install BlueZ and enable bluetoothd, or use --demo.",
         )
     except Exception as error:  # bleak backend / permission failures
-        return False, f"{type(error).__name__}: {error}"
+        return False, bluetooth_error_message(error)
 
 
 class BluetoothRadarScanner:
@@ -270,10 +302,9 @@ class BluetoothRadarScanner:
         try:
             await scanner.start()
         except Exception as error:
-            hint = f" {macos_permission_hint()}" if IS_MACOS else ""
             raise RuntimeError(
-                f"Failed to start live BLE scanner ({type(error).__name__}: {error})."
-                f"{hint}"
+                "Failed to start live BLE scanner: "
+                f"{bluetooth_error_message(error)}"
             ) from error
         try:
             while True:
@@ -282,6 +313,39 @@ class BluetoothRadarScanner:
             with contextlib.suppress(Exception):
                 await scanner.stop()
         return list(self.devices.values())
+
+
+async def diagnose_live_scan(duration: float = 8.0) -> dict[str, Any]:
+    """Run the same backend as the dashboard and report actual packet flow."""
+    if duration <= 0:
+        raise ValueError("diagnostic duration must be positive")
+
+    observed: dict[str, DiscoveredDevice] = {}
+    scanner = BluetoothRadarScanner(
+        active=True,
+        on_update=lambda device: observed.__setitem__(device.address, device),
+    )
+    started = time.time()
+    error: str | None = None
+    try:
+        await scanner.scan(duration)
+    except Exception as exc:
+        error = bluetooth_error_message(exc)
+
+    return {
+        "platform": platform.platform(),
+        "macos_version": platform.mac_ver()[0] if IS_MACOS else None,
+        "backend": "CoreBluetooth" if IS_MACOS else (
+            "BlueZ" if platform.system() == "Linux" else platform.system()
+        ),
+        "duration_seconds": round(time.time() - started, 2),
+        "packets": scanner.packet_count,
+        "devices": len(observed),
+        "source": platform_scan_label(),
+        "ok": error is None,
+        "error": error,
+        "permission_hint": macos_permission_hint() if IS_MACOS else None,
+    }
 
 
 async def demo_scan(
