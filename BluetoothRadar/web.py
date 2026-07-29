@@ -320,14 +320,16 @@ def _available_port(host: str, preferred: int) -> int:
 
 def run_dashboard(args: Any) -> int:
     use_demo = bool(args.demo)
-    # macOS: keep live CoreBluetooth data by default (no silent demo swap).
-    # Linux cloud/VMs: fall back to simulated devices when no adapter exists.
-    if getattr(args, "no_demo_fallback", False):
+    # Live adapter data is the default. Simulated devices only when --demo or
+    # an explicit --demo-fallback is requested.
+    if use_demo:
         demo_fallback = False
     elif getattr(args, "demo_fallback", False):
         demo_fallback = True
     else:
-        demo_fallback = not IS_MACOS
+        demo_fallback = False
+    if getattr(args, "no_demo_fallback", False):
+        demo_fallback = False
     port = _available_port(args.host, args.port)
     url = f"http://{args.host}:{port}"
     print(f"BluetoothRadar dashboard: {url}", flush=True)
@@ -339,11 +341,14 @@ def run_dashboard(args: Any) -> int:
             print(macos_permission_hint(), flush=True)
         if demo_fallback:
             print(
-                "If no Bluetooth adapter is available, the dashboard will fall back to simulated devices.",
+                "Demo fallback enabled — simulated devices only if the adapter is unavailable.",
                 flush=True,
             )
         else:
-            print("Demo fallback disabled — waiting for live adapter advertisements only.", flush=True)
+            print(
+                "Live-only mode — desktop radar waits for real Bluetooth advertisements.",
+                flush=True,
+            )
     if args.open_browser:
         Timer(0.8, lambda: webbrowser.open(url)).start()
     uvicorn.run(
