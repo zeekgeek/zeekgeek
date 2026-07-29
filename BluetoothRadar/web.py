@@ -366,13 +366,14 @@ h1{font-size:22px;letter-spacing:.08em;margin:0}.mark{color:var(--cyan)}.sub{col
 @keyframes p{70%{box-shadow:0 0 0 9px transparent}}main{padding:22px 30px}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
 .card,.panel{background:#101722dd;border:1px solid var(--line);border-radius:10px}.card{padding:16px}.value{font-size:25px;color:var(--cyan);margin-top:8px}
 .grid{display:grid;grid-template-columns:minmax(520px,1.25fr) minmax(380px,.75fr);gap:14px;margin-top:14px}
-.radar-grid{display:grid;grid-template-columns:minmax(420px,1fr) minmax(420px,1fr);gap:14px;margin-top:14px}
+.radar-grid{display:grid;grid-template-columns:minmax(360px,1.1fr) minmax(360px,.9fr);gap:14px;margin-top:14px}
 .panel{overflow:hidden}
 .panel h2{font-size:13px;letter-spacing:.1em;margin:0;padding:14px 16px;border-bottom:1px solid var(--line);color:#bcd0e7}
-.radar-panel{display:flex;flex-direction:column}.radar-wrap{position:relative;flex:1;min-height:420px;background:radial-gradient(circle at center,#0d1828 0,#070b12 70%)}
-#radar3d{display:block;width:100%;height:420px;cursor:grab}#radar3d:active{cursor:grabbing}
-.radar-hud{position:absolute;left:16px;bottom:14px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#0b121dcc;color:var(--muted);font-size:11px;line-height:1.5;pointer-events:none}
-.radar-hud strong{color:var(--cyan)}.list-panel .table-wrap{max-height:420px}
+.radar-panel{display:flex;flex-direction:column;min-height:480px}
+.radar-wrap{position:relative;flex:1;min-height:440px;height:440px;background:radial-gradient(circle at 50% 58%,#14324d 0%,#0a1420 52%,#070b12 100%);border-top:1px solid #1a2738}
+#radar3d{display:block;width:100%;height:440px;min-height:440px;cursor:pointer}
+.radar-hud{position:absolute;left:16px;bottom:14px;z-index:2;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#0b121dcc;color:var(--muted);font-size:11px;line-height:1.5;pointer-events:none}
+.radar-hud strong{color:var(--cyan)}.list-panel .table-wrap{max-height:440px}
 .table-wrap{max-height:480px;overflow:auto}table{width:100%;border-collapse:collapse}th,td{padding:11px 12px;border-bottom:1px solid #1e2938;text-align:left}
 th{position:sticky;top:0;background:#121b28;color:var(--muted);cursor:pointer;font-size:11px}.rssi{font-weight:700;color:var(--cyan)}
 .hidden{color:var(--red);font-weight:700}.service{max-width:170px;color:var(--muted);font-size:11px;overflow-wrap:anywhere}
@@ -392,7 +393,19 @@ th{position:sticky;top:0;background:#121b28;color:var(--muted);cursor:pointer;fo
 <div class="card">PACKETS<div id="seqValue" class="value">0</div></div>
 <div class="card">LAST FRAME<div id="ageValue" class="value">—</div></div></section>
 <section class="radar-grid"><div class="panel radar-panel"><h2>3D PROXIMITY RADAR · LIVE SCAN SWEEP</h2><div class="radar-wrap">
-<canvas id="radar3d"></canvas><div id="radarHud" class="radar-hud"><strong>Observer</strong> at center · distance from RSSI · azimuth from identifier hash<br>Click a blip or list row to inspect a device</div></div></div>
+<svg id="radar3d" viewBox="0 0 640 440" role="img" aria-label="Bluetooth proximity radar">
+  <defs>
+    <radialGradient id="radarGlow" cx="50%" cy="58%" r="55%"><stop offset="0%" stop-color="#1a4d6e"/><stop offset="70%" stop-color="#0b1624"/><stop offset="100%" stop-color="#070b12"/></radialGradient>
+    <linearGradient id="sweepGrad" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stop-color="#38e29b" stop-opacity="0"/><stop offset="100%" stop-color="#38e29b" stop-opacity="0.35"/></linearGradient>
+  </defs>
+  <rect width="640" height="440" fill="url(#radarGlow)"/>
+  <g id="radarFloor" transform="translate(320 255) scale(1 0.55)"></g>
+  <g id="radarSweep" transform="translate(320 255) scale(1 0.55)"><path id="sweepWedge" d="" fill="url(#sweepGrad)"/><line id="sweepArm" x1="0" y1="0" x2="0" y2="-180" stroke="#38e29b" stroke-width="2" stroke-opacity="0.95"/></g>
+  <circle cx="320" cy="255" r="6" fill="#38e29b"/>
+  <g id="radarBlips"></g>
+  <text id="radarEmpty" x="24" y="36" fill="#8ea0b8" font-size="14" font-family="ui-monospace,monospace">Starting radar…</text>
+</svg>
+<div id="radarHud" class="radar-hud"><strong>Observer</strong> at center · distance from RSSI · azimuth from identifier hash<br>Click a blip or list row to inspect a device</div></div></div>
 <div class="panel list-panel"><h2>LIVE DEVICE LIST · CLICK ROW TO SELECT</h2><div class="table-wrap">
 <table><thead><tr><th data-sort="name">DEVICE</th><th data-sort="address">IDENTIFIER</th><th data-sort="rssi">RSSI</th><th>MANUFACTURER</th><th>SERVICES</th></tr></thead><tbody id="deviceRows"></tbody></table>
 <div id="emptyState" class="empty">Waiting for the first BLE advertisement…</div></div></div></section>
@@ -401,30 +414,79 @@ th{position:sticky;top:0;background:#121b28;color:var(--muted);cursor:pointer;fo
 <div><div class="panel" style="margin-top:0"><h2>GRAPH INTELLIGENCE</h2><div id="intel" class="intel"></div></div></div></section></main>
 <script>
 const INITIAL_SNAPSHOT=__INITIAL_SNAPSHOT__;
-class RadarCanvas3D{
-  constructor(canvas,hud){
-    this.canvas=canvas;this.hud=hud;this.ctx=canvas.getContext("2d");
-    this.devices=[];this.selected=null;this.scanning=true;this.yaw=0.72;this.spin=0.0038;
-    this.blipHits=[];this.resize=()=>{const bounds=canvas.getBoundingClientRect();this.width=Math.max(1,Math.floor(bounds.width));this.height=Math.max(1,Math.floor(bounds.height));canvas.width=this.width*devicePixelRatio;canvas.height=this.height*devicePixelRatio;this.ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);};window.addEventListener("resize",this.resize);this.resize();
-    canvas.addEventListener("click",(event)=>{const rect=canvas.getBoundingClientRect();const x=event.clientX-rect.left,y=event.clientY-rect.top;let best=null,bestDist=18;for(const hit of this.blipHits){const dx=hit.x-x,dy=hit.y-y,d=Math.hypot(dx,dy);if(d<bestDist){best=hit.address;bestDist=d;}}if(best){window.dispatchEvent(new CustomEvent("radar-select",{detail:{address:best}}));}});
-    this.loop=()=>{this.yaw+=this.spin;this.draw();requestAnimationFrame(this.loop);};requestAnimationFrame(this.loop);
+class RadarDisplay{
+  constructor(svg,hud){
+    this.svg=svg;this.hud=hud;
+    this.floor=document.getElementById("radarFloor");
+    this.sweep=document.getElementById("radarSweep");
+    this.wedge=document.getElementById("sweepWedge");
+    this.arm=document.getElementById("sweepArm");
+    this.blips=document.getElementById("radarBlips");
+    this.empty=document.getElementById("radarEmpty");
+    this.devices=[];this.selected=null;this.scanning=true;this.angle=0;
+    this._buildFloor();
+    this.svg.addEventListener("click",(event)=>{
+      const target=event.target.closest("[data-address]");
+      if(target){window.dispatchEvent(new CustomEvent("radar-select",{detail:{address:target.dataset.address}}));}
+    });
+    const tick=()=>{this.angle=(this.angle+0.045)%(Math.PI*2);this._drawSweep();requestAnimationFrame(tick);};
+    requestAnimationFrame(tick);
   }
-  rssiRadius(rssi){const clamped=Math.max(-95,Math.min(-35,rssi));return 1.2+((-clamped-35)/60)*7.5;}
-  stableAngle(address){let hash=0;for(let i=0;i<address.length;i+=1){hash=(hash*31+address.charCodeAt(i))>>>0;}return (hash%360)*Math.PI/180;}
-  project(x,y,z){const cos=Math.cos(this.yaw),sin=Math.sin(this.yaw);const rx=x*cos-z*sin,rz=x*sin+z*cos;const scale=Math.min(this.width,this.height)/22;const cx=this.width/2,cy=this.height*0.56;return {x:cx+(rx-rz)*scale*0.86,y:cy-y*scale+(rx+rz)*scale*0.52,depth:rx+rz};}
-  update(devices,selected,scanning){this.devices=devices||[];this.selected=selected;this.scanning=!!scanning;const count=this.devices.length;this.hud.innerHTML=`<strong>${this.scanning?"Scanning":"Tracking"}</strong> · ${count} device${count===1?"":"s"} · local 3D radar<br>Closer blips = stronger RSSI · red = identity-limited · click to select`;}
-  draw(){
-    const ctx=this.ctx,w=this.width,h=this.height;ctx.clearRect(0,0,w,h);
-    const gradient=ctx.createRadialGradient(w/2,h*0.55,10,w/2,h*0.55,Math.max(w,h)*0.55);gradient.addColorStop(0,"#12324a");gradient.addColorStop(1,"#070b12");ctx.fillStyle=gradient;ctx.fillRect(0,0,w,h);
-    const cx=w/2,cy=h*0.56,scale=Math.min(w,h)/22;ctx.strokeStyle="rgba(57,216,255,0.18)";ctx.lineWidth=1;
-    for(const radius of [2.5,5,7.5,10]){ctx.beginPath();for(let step=0;step<=96;step+=1){const t=step/96*Math.PI*2;const px=cx+Math.cos(t)*radius*scale*0.86;const py=cy+Math.sin(t)*radius*scale*0.52;if(step===0){ctx.moveTo(px,py);}else{ctx.lineTo(px,py);}}ctx.stroke();}
-    ctx.strokeStyle="rgba(31,53,80,0.8)";ctx.beginPath();ctx.moveTo(cx-scale*8,cy);ctx.lineTo(cx+scale*8,cy);ctx.moveTo(cx,cy-scale*5);ctx.lineTo(cx,cy+scale*5);ctx.stroke();
-    const sweep=this.yaw*2.2;ctx.fillStyle="rgba(56,226,155,0.12)";ctx.beginPath();ctx.moveTo(cx,cy);ctx.arc(cx,cy,scale*10,sweep-Math.PI/10,sweep+Math.PI/10);ctx.closePath();ctx.fill();
-    ctx.strokeStyle="rgba(56,226,155,0.9)";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(cx+Math.cos(sweep)*scale*10*0.86,cy+Math.sin(sweep)*scale*10*0.52);ctx.stroke();
-    ctx.fillStyle="#38e29b";ctx.beginPath();ctx.arc(cx,cy,5,0,Math.PI*2);ctx.fill();
-    this.blipHits=[];const points=this.devices.map((device)=>{const angle=this.stableAngle(device.address);const radius=this.rssiRadius(device.rssi);const x=Math.cos(angle)*radius;const z=Math.sin(angle)*radius;const y=0.35+Math.max(0,(device.rssi+70)/90);const point=this.project(x,y,z);return {device,point};}).sort((a,b)=>a.point.depth-b.point.depth);
-    for(const entry of points){const {device,point}=entry;const hidden=!!device.identity_limited;const color=hidden?"#ff496a":"#39d8ff";const active=this.selected===device.address;ctx.fillStyle=color;ctx.beginPath();ctx.arc(point.x,point.y,active?9:6,0,Math.PI*2);ctx.fill();ctx.strokeStyle=active?"#ffffff":"rgba(255,255,255,0.35)";ctx.lineWidth=active?2:1;ctx.stroke();ctx.fillStyle="rgba(255,255,255,0.92)";ctx.font="11px ui-monospace, monospace";ctx.fillText(hidden?"Hidden":(device.name||device.address.slice(-8)),point.x+10,point.y-8);this.blipHits.push({address:device.address,x:point.x,y:point.y});}
-    if(!this.devices.length){ctx.fillStyle="rgba(142,160,184,0.95)";ctx.font="14px ui-monospace, monospace";ctx.fillText(this.scanning?"Scanning for BLE advertisements…":"No devices in range yet",24,28);}
+  _buildFloor(){
+    this.floor.innerHTML="";
+    for(const radius of [45,90,135,180]){
+      const ring=document.createElementNS("http://www.w3.org/2000/svg","circle");
+      ring.setAttribute("cx","0");ring.setAttribute("cy","0");ring.setAttribute("r",String(radius));
+      ring.setAttribute("fill","none");ring.setAttribute("stroke","#39d8ff");ring.setAttribute("stroke-opacity","0.22");ring.setAttribute("stroke-width","1.5");
+      this.floor.appendChild(ring);
+    }
+    for(const [x1,y1,x2,y2] of [[-190,0,190,0],[0,-190,0,190]]){
+      const line=document.createElementNS("http://www.w3.org/2000/svg","line");
+      line.setAttribute("x1",x1);line.setAttribute("y1",y1);line.setAttribute("x2",x2);line.setAttribute("y2",y2);
+      line.setAttribute("stroke","#1f3550");line.setAttribute("stroke-width","1");
+      this.floor.appendChild(line);
+    }
+  }
+  _drawSweep(){
+    const start=this.angle-0.35,end=this.angle+0.35,r=180;
+    const x1=Math.sin(start)*r,y1=-Math.cos(start)*r,x2=Math.sin(end)*r,y2=-Math.cos(end)*r;
+    this.wedge.setAttribute("d",`M0 0 L${x1} ${y1} A${r} ${r} 0 0 1 ${x2} ${y2} Z`);
+    this.arm.setAttribute("x2",String(Math.sin(this.angle)*r));
+    this.arm.setAttribute("y2",String(-Math.cos(this.angle)*r));
+  }
+  rssiRadius(rssi){const clamped=Math.max(-95,Math.min(-35,Number(rssi)||-95));return 35+((-clamped-35)/60)*145;}
+  stableAngle(address){let hash=0;const text=String(address||"");for(let i=0;i<text.length;i+=1){hash=(hash*31+text.charCodeAt(i))>>>0;}return (hash%360)*Math.PI/180;}
+  update(devices,selected,scanning){
+    this.devices=devices||[];this.selected=selected;this.scanning=!!scanning;
+    const count=this.devices.length;
+    this.hud.innerHTML=`<strong>${this.scanning?"Scanning":"Tracking"}</strong> · ${count} device${count===1?"":"s"} · 3D proximity radar<br>Closer blips = stronger RSSI · red = identity-limited · click to select`;
+    this.empty.style.display=count?"none":"block";
+    this.empty.textContent=this.scanning?"Scanning for BLE advertisements…":"No devices in range yet";
+    this.blips.innerHTML="";
+    this.devices.forEach((device)=>{
+      const angle=this.stableAngle(device.address);
+      const radius=this.rssiRadius(device.rssi);
+      const x=320+Math.sin(angle)*radius;
+      const y=255-Math.cos(angle)*radius*0.55;
+      const hidden=!!device.identity_limited;
+      const active=this.selected===device.address;
+      const color=hidden?"#ff496a":"#39d8ff";
+      const group=document.createElementNS("http://www.w3.org/2000/svg","g");
+      group.setAttribute("data-address",device.address);
+      group.style.cursor="pointer";
+      const halo=document.createElementNS("http://www.w3.org/2000/svg","circle");
+      halo.setAttribute("cx",x);halo.setAttribute("cy",y);halo.setAttribute("r",active?"16":"11");
+      halo.setAttribute("fill",color);halo.setAttribute("fill-opacity","0.18");
+      const core=document.createElementNS("http://www.w3.org/2000/svg","circle");
+      core.setAttribute("cx",x);core.setAttribute("cy",y);core.setAttribute("r",active?"8":"6");
+      core.setAttribute("fill",color);core.setAttribute("stroke",active?"#fff":"rgba(255,255,255,0.35)");core.setAttribute("stroke-width",active?"2":"1");
+      const label=document.createElementNS("http://www.w3.org/2000/svg","text");
+      label.setAttribute("x",x+12);label.setAttribute("y",y-10);
+      label.setAttribute("fill","#eaf6ff");label.setAttribute("font-size","12");label.setAttribute("font-family","ui-monospace,monospace");
+      label.textContent=hidden?"Hidden":(device.name||String(device.address).slice(-8));
+      group.appendChild(halo);group.appendChild(core);group.appendChild(label);
+      this.blips.appendChild(group);
+    });
   }
 }
 const ui={
@@ -440,7 +502,7 @@ const ui={
   detail:document.getElementById("detail"),
   graph:document.getElementById("graph")
 };
-const radar3d=new RadarCanvas3D(document.getElementById("radar3d"),document.getElementById("radarHud"));
+const radar3d=new RadarDisplay(document.getElementById("radar3d"),document.getElementById("radarHud"));
 let snapshot=INITIAL_SNAPSHOT||null,sortKey="rssi",selected=null;
 const esc=(value)=>String(value??"").replace(/[&<>"']/g,(char)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[char]));
 document.querySelectorAll("th[data-sort]").forEach((header)=>{header.addEventListener("click",()=>{sortKey=header.dataset.sort;render();});});
@@ -475,10 +537,11 @@ function render(){
   ui.age.textContent=devices.length?`${Math.max(0,Date.now()/1000-Math.max(...devices.map((device)=>device.last_seen))).toFixed(1)}s`:"—";
   if(snapshot.source && String(snapshot.source).startsWith("LIVE")){ui.source.style.borderColor="#38e29b";ui.source.style.color="#38e29b";}
   else{ui.source.style.borderColor="#39d8ff";ui.source.style.color="#39d8ff";}
-  renderBanner();renderTable(devices);renderGraph();
-  radar3d.update(devices,selected,snapshot.status==="scanning"||snapshot.status==="streaming"||snapshot.status==="demo"||snapshot.status==="fallback");
-  const hubs=snapshot.analysis.hubs.map((hub)=>snapshot.graph.nodes.find((node)=>node.id===hub.id)?.label||hub.id);
-  ui.intel.innerHTML=`<div><strong>Hub candidates:</strong> ${esc(hubs.join(", ")||"none")}</div><div><strong>Clusters:</strong> ${snapshot.analysis.clusters.length}</div><div><strong>Overlapping:</strong> ${esc(snapshot.analysis.multi_cluster_devices.join(", ")||"none")}</div>`;
+  renderBanner();renderTable(devices);
+  try{renderGraph();}catch(error){console.error("graph render failed",error);}
+  try{radar3d.update(devices,selected,snapshot.status==="scanning"||snapshot.status==="streaming"||snapshot.status==="demo"||snapshot.status==="fallback");}catch(error){console.error("radar render failed",error);}
+  const hubs=(snapshot.analysis&&snapshot.analysis.hubs||[]).map((hub)=>(snapshot.graph.nodes.find((node)=>node.id===hub.id)||{}).label||hub.id);
+  ui.intel.innerHTML=`<div><strong>Hub candidates:</strong> ${esc(hubs.join(", ")||"none")}</div><div><strong>Clusters:</strong> ${(snapshot.analysis.clusters||[]).length}</div><div><strong>Overlapping:</strong> ${esc((snapshot.analysis.multi_cluster_devices||[]).join(", ")||"none")}</div>`;
 }
 function selectDevice(id){
   selected=id;
