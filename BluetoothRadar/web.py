@@ -303,9 +303,11 @@ def create_app(
 
 def _available_port(host: str, preferred: int) -> int:
     for port in range(preferred, preferred + 50):
-        with socket.socket() as candidate:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
-                candidate.bind((host, port))
+                probe.bind((host, port))
+                probe.listen(1)
             except OSError:
                 continue
             return port
