@@ -23,11 +23,11 @@ from .state_tracker import SwarmStateTracker
 LOGGER = logging.getLogger(__name__)
 
 CONCEPT_ANGLES = (
-    "minimal line-art variant with a single bold silhouette",
-    "retro sunset palette with distressed texture",
-    "humor-forward quote layout with hand-lettered feel",
-    "cottagecore nature motif with soft organic shapes",
-    "bold typographic statement with high contrast",
+    "dictionary definition layout — serif blocks, original recovery wording",
+    "minimal script quote — small centered text, lots of whitespace",
+    "soberversary date stamp — custom EST date placeholder for buyers",
+    "varsity crew typography — arched RECOVERY over CREW",
+    "one day at a time — bold number motif with time words",
 )
 
 

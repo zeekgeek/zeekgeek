@@ -14,9 +14,14 @@ class CopyOutput:
     description: str
 
 
+from .design_prompts import build_recovery_design_brief
+
+
 @dataclass
 class DesignOutput:
     midjourney_prompt: str
+    design_style: str = ""
+    shirt_text: str = ""
 
 
 @dataclass
@@ -42,14 +47,13 @@ def copywriter_agent(concept: ProductConcept, *, price: float = 24.99) -> CopyOu
 
 
 def design_agent(concept: ProductConcept) -> DesignOutput:
-    """Create a Midjourney-ready prompt from a product concept."""
-    palette = "warm retro tones, cream, burnt orange"
-    prompt = (
-        f"Print-ready flat t-shirt graphic, {concept.concept_name.lower()}, {concept.angle.lower()}, "
-        f"{concept.hook.lower()}, {palette}, centered composition, clean vector style, "
-        f"no text, no logos, no copyrighted characters, transparent background --ar 1:1 --style raw"
+    """Create Canva + AI art briefs for recovery typography shirts."""
+    brief = build_recovery_design_brief(concept)
+    return DesignOutput(
+        midjourney_prompt=brief.to_image_prompt(),
+        design_style=brief.style,
+        shirt_text=brief.shirt_text,
     )
-    return DesignOutput(midjourney_prompt=prompt)
 
 
 def seo_agent(concept: ProductConcept, title: str) -> SeoOutput:

@@ -56,7 +56,8 @@ class EtsyAiSpaceTests(unittest.IsolatedAsyncioTestCase):
         design = design_agent(concept)
         seo = seo_agent(concept, copy.title)
         self.assertIn("Retro Cat", copy.title)
-        self.assertIn("--ar 1:1", design.midjourney_prompt)
+        self.assertIn("CANVA", design.midjourney_prompt)
+        self.assertTrue(design.shirt_text)
         self.assertGreaterEqual(len(seo.tags), 5)
 
         draft = workers_build_listing(concept)
