@@ -18,7 +18,12 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 
 from analysis import analyze_graph
 from graph import build_relationship_graph
-from scanner import BluetoothRadarScanner, DiscoveredDevice, demo_scan
+from scanner import (
+    BluetoothRadarScanner,
+    DiscoveredDevice,
+    demo_scan,
+    probe_bluetooth,
+)
 
 
 class DashboardState:
@@ -30,12 +35,21 @@ class DashboardState:
         self.error: str | None = None
         self.message: str | None = None
         self.started_at = time.time()
+        self.hardware_ok: bool | None = None
+        self.packets = 0
+        self.last_packet_at: float | None = None
 
     def update(self, device: DiscoveredDevice) -> None:
         self.devices[device.address] = device
         self.sequence += 1
-        self.status = "streaming"
-        self.message = None
+        self.packets += 1
+        self.last_packet_at = device.last_seen
+        if self.status != "fallback":
+            self.status = "streaming"
+        # Keep the hardware failure reason visible while demo fallback streams.
+        if self.source.startswith("LIVE"):
+            self.error = None
+            self.message = None
 
     def snapshot(self) -> dict[str, Any]:
         devices = sorted(
@@ -48,6 +62,9 @@ class DashboardState:
             "status": self.status,
             "message": self.message,
             "sequence": self.sequence,
+            "packets": self.packets,
+            "last_packet_at": self.last_packet_at,
+            "hardware_ok": self.hardware_ok,
             "error": self.error,
             "uptime_seconds": round(time.time() - self.started_at, 1),
             "server_time": time.time(),
@@ -132,6 +149,7 @@ async def _live_stream(
         except asyncio.CancelledError:
             raise
         except Exception as error:
+            state.hardware_ok = False
             state.status = "error"
             state.error = str(error)
             state.message = f"Live scanner error: {error}. Retrying in 3s…"
@@ -149,9 +167,37 @@ async def _run_dashboard_stream(
     if demo:
         state.source = "SIMULATED LIVE"
         state.status = "demo"
+        state.hardware_ok = False
         await _demo_stream(state)
         return
 
+    ready, detail = await probe_bluetooth(adapter=adapter, timeout=0.8)
+    state.hardware_ok = ready
+    if not ready:
+        if demo_fallback:
+            state.source = "SIMULATED LIVE (fallback)"
+            state.status = "fallback"
+            state.error = detail
+            state.message = (
+                "No usable Bluetooth adapter detected. Streaming simulated "
+                "devices so the dashboard stays usable. On a Mac with Bluetooth "
+                "enabled, restart without --demo and grant Terminal Bluetooth "
+                "permission."
+            )
+            await _demo_stream(state)
+            return
+        state.source = "LIVE BLE"
+        state.status = "error"
+        state.error = detail
+        state.message = (
+            "Live scanning unavailable. Enable Bluetooth / BlueZ, grant scan "
+            "permission, or restart with --demo-fallback."
+        )
+        while True:
+            await asyncio.sleep(3600)
+        return
+
+    state.message = detail
     try:
         await _live_stream(state, active, adapter)
     except asyncio.CancelledError:
@@ -242,7 +288,15 @@ def create_app(
                 yield f"data: {json.dumps(payload)}\n\n"
                 await asyncio.sleep(0.35)
 
-        return StreamingResponse(stream(), media_type="text/event-stream")
+        return StreamingResponse(
+            stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     return app
 
@@ -260,7 +314,11 @@ def _available_port(host: str, preferred: int) -> int:
 
 def run_dashboard(args: Any) -> int:
     use_demo = bool(args.demo)
-    demo_fallback = bool(getattr(args, "demo_fallback", False))
+    # Default: fall back to simulated data only when no Bluetooth hardware is
+    # available. Pass --no-demo-fallback to keep an empty LIVE error state.
+    demo_fallback = not bool(getattr(args, "no_demo_fallback", False))
+    if getattr(args, "demo_fallback", False):
+        demo_fallback = True
     port = _available_port(args.host, args.port)
     url = f"http://{args.host}:{port}"
     print(f"BluetoothRadar dashboard: {url}", flush=True)
@@ -269,9 +327,12 @@ def run_dashboard(args: Any) -> int:
     else:
         print("Running live BLE scan. Nearby advertisements will stream to the dashboard.", flush=True)
         if demo_fallback:
-            print("Demo fallback enabled if live scanning is unavailable.", flush=True)
+            print(
+                "If no Bluetooth adapter is available, the dashboard will fall back to simulated devices.",
+                flush=True,
+            )
         else:
-            print("Demo fallback disabled. Pass --demo-fallback to enable simulated data.", flush=True)
+            print("Demo fallback disabled with --no-demo-fallback.", flush=True)
     if args.open_browser:
         Timer(0.8, lambda: webbrowser.open(url)).start()
     uvicorn.run(
@@ -328,7 +389,7 @@ th{position:sticky;top:0;background:#121b28;color:var(--muted);cursor:pointer;fo
 <div class="status"><span class="pulse"></span><span id="sourceBadge" class="badge">CONNECTING</span></div></header>
 <main><div id="banner" class="banner">Connecting to scanner stream…</div><section class="stats"><div class="card">DEVICES<div id="countValue" class="value">0</div></div>
 <div class="card">IDENTITY-LIMITED<div id="hiddenValue" class="value">0</div></div>
-<div class="card">UPDATES<div id="seqValue" class="value">0</div></div>
+<div class="card">PACKETS<div id="seqValue" class="value">0</div></div>
 <div class="card">LAST FRAME<div id="ageValue" class="value">—</div></div></section>
 <section class="radar-grid"><div class="panel radar-panel"><h2>3D PROXIMITY RADAR · LIVE SCAN SWEEP</h2><div class="radar-wrap">
 <canvas id="radar3d"></canvas><div id="radarHud" class="radar-hud"><strong>Observer</strong> at center · distance from RSSI · azimuth from identifier hash<br>Click a blip or list row to inspect a device</div></div></div>
@@ -388,7 +449,7 @@ function renderBanner(){
   if(snapshot.message){ui.banner.textContent=snapshot.message;ui.banner.className=snapshot.error?"banner warn":"banner";}
   else if(snapshot.error && !snapshot.devices.length){ui.banner.textContent=snapshot.error;ui.banner.className="banner error";}
   else if(snapshot.error){ui.banner.textContent=snapshot.error;ui.banner.className="banner warn";}
-  else if(snapshot.devices.length===0 && snapshot.status==="scanning"){ui.banner.textContent="Scanning for nearby BLE advertisements…";ui.banner.className="banner";}
+  else if(snapshot.devices.length===0 && snapshot.status==="scanning"){ui.banner.textContent="Live scan running — waiting for nearby BLE advertisements…";ui.banner.className="banner";}
   else{ui.banner.textContent="";ui.banner.className="banner";}
 }
 function renderTable(devices){
@@ -410,8 +471,10 @@ function render(){
   ui.source.textContent=snapshot.source;
   ui.count.textContent=devices.length;
   ui.hidden.textContent=devices.filter((device)=>device.identity_limited).length;
-  ui.seq.textContent=snapshot.sequence;
+  ui.seq.textContent=snapshot.packets ?? snapshot.sequence;
   ui.age.textContent=devices.length?`${Math.max(0,Date.now()/1000-Math.max(...devices.map((device)=>device.last_seen))).toFixed(1)}s`:"—";
+  if(snapshot.source && String(snapshot.source).startsWith("LIVE")){ui.source.style.borderColor="#38e29b";ui.source.style.color="#38e29b";}
+  else{ui.source.style.borderColor="#39d8ff";ui.source.style.color="#39d8ff";}
   renderBanner();renderTable(devices);renderGraph();
   radar3d.update(devices,selected,snapshot.status==="scanning"||snapshot.status==="streaming"||snapshot.status==="demo"||snapshot.status==="fallback");
   const hubs=snapshot.analysis.hubs.map((hub)=>snapshot.graph.nodes.find((node)=>node.id===hub.id)?.label||hub.id);

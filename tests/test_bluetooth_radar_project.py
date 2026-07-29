@@ -21,7 +21,7 @@ from graph import (  # noqa: E402
     show_interactive_graph,
 )
 from parser import parse_manufacturer_record  # noqa: E402
-from scanner import DiscoveredDevice  # noqa: E402
+from scanner import DiscoveredDevice, _rssi_from, probe_bluetooth  # noqa: E402
 from web import create_app  # noqa: E402
 from fastapi.testclient import TestClient
 
@@ -37,6 +37,27 @@ class ParserTests(unittest.TestCase):
         record = parse_manufacturer_record(0xBEEF, "0102")
         self.assertEqual(record.company_id, 0xBEEF)
         self.assertEqual(record.payload_hex, "0102")
+
+
+class ScannerLiveDataTests(unittest.TestCase):
+    def test_rssi_falls_back_to_device_when_advertisement_missing(self) -> None:
+        class Adv:
+            rssi = None
+
+        class Dev:
+            rssi = -61
+
+        self.assertEqual(_rssi_from(Dev(), Adv()), -61)
+
+    def test_probe_reports_missing_adapter_on_this_host(self) -> None:
+        import asyncio
+
+        ready, detail = asyncio.run(probe_bluetooth(timeout=0.2))
+        # Cloud VMs typically have no BLE adapter.
+        if not ready:
+            self.assertTrue(detail)
+        else:
+            self.assertIn("ready", detail.lower())
 
 
 class GraphTests(unittest.TestCase):
@@ -132,8 +153,8 @@ class BrowserDashboardTests(unittest.TestCase):
 
     def test_live_mode_falls_back_when_scanner_fails(self) -> None:
         with patch(
-            "web._live_stream",
-            side_effect=RuntimeError("No BLE advertisements observed."),
+            "web.probe_bluetooth",
+            return_value=(False, "No Bluetooth adapter / BlueZ socket found"),
         ):
             with TestClient(
                 create_app(demo=False, demo_fallback=True)
@@ -143,7 +164,24 @@ class BrowserDashboardTests(unittest.TestCase):
 
         self.assertEqual(snapshot["source"], "SIMULATED LIVE (fallback)")
         self.assertGreaterEqual(len(snapshot["devices"]), 4)
-        self.assertIn("No BLE advertisements observed.", snapshot["error"])
+        self.assertIn("No Bluetooth adapter", snapshot["error"])
+        self.assertFalse(snapshot["hardware_ok"])
+
+    def test_live_mode_without_fallback_keeps_error_state(self) -> None:
+        with patch(
+            "web.probe_bluetooth",
+            return_value=(False, "No Bluetooth adapter / BlueZ socket found"),
+        ):
+            with TestClient(
+                create_app(demo=False, demo_fallback=False)
+            ) as client:
+                time.sleep(0.2)
+                snapshot = client.get("/api/snapshot").json()
+
+        self.assertEqual(snapshot["source"], "LIVE BLE")
+        self.assertEqual(snapshot["status"], "error")
+        self.assertEqual(snapshot["devices"], [])
+        self.assertIn("No Bluetooth adapter", snapshot["error"])
 
     def test_event_stream_route_is_registered(self) -> None:
         app = create_app(demo=True)

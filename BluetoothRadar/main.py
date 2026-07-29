@@ -172,7 +172,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--demo-fallback",
         action="store_true",
-        help="browser mode: use simulated devices if live scanning fails",
+        help="browser mode: allow simulated devices when no Bluetooth adapter is found",
+    )
+    parser.add_argument(
+        "--no-demo-fallback",
+        action="store_true",
+        help="browser mode: never use simulated devices; keep LIVE error state",
     )
     parser.add_argument(
         "--no-auto-demo-fallback",

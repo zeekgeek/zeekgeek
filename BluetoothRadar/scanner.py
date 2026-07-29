@@ -57,6 +57,41 @@ class DiscoveredDevice:
         return result
 
 
+def _rssi_from(device: Any, advertisement: Any) -> int:
+    value = getattr(advertisement, "rssi", None)
+    if value is None:
+        value = getattr(device, "rssi", None)
+    try:
+        return int(value if value is not None else -127)
+    except (TypeError, ValueError):
+        return -127
+
+
+async def probe_bluetooth(
+    *, adapter: str | None = None, timeout: float = 1.0
+) -> tuple[bool, str]:
+    """Return whether a BLE adapter can start scanning on this host."""
+    scanner_args: dict[str, Any] = {"scanning_mode": "active"}
+    if adapter and platform.system() != "Darwin":
+        scanner_args["adapter"] = adapter
+    try:
+        scanner = BleakScanner(**scanner_args)
+        await scanner.start()
+        try:
+            await asyncio.sleep(max(timeout, 0.2))
+        finally:
+            await scanner.stop()
+        return True, "Bluetooth adapter ready for live scanning"
+    except FileNotFoundError as error:
+        return (
+            False,
+            "No Bluetooth adapter / BlueZ socket found "
+            f"({error}). Install BlueZ and enable bluetoothd, or use --demo.",
+        )
+    except Exception as error:  # bleak backend / permission failures
+        return False, f"{type(error).__name__}: {error}"
+
+
 class BluetoothRadarScanner:
     """Collect and merge BLE advertisements by platform-provided identifier."""
 
@@ -78,6 +113,8 @@ class BluetoothRadarScanner:
         self.on_update = on_update
         self.loop = loop
         self.devices: dict[str, DiscoveredDevice] = {}
+        self.packet_count = 0
+        self.last_packet_at: float | None = None
 
     @staticmethod
     def _is_identity_limited(name: str | None) -> bool:
@@ -87,7 +124,7 @@ class BluetoothRadarScanner:
     def _build_device(
         self, device: Any, advertisement: Any
     ) -> DiscoveredDevice | None:
-        address = str(getattr(device, "address", "") or getattr(device, "name", ""))
+        address = str(getattr(device, "address", "") or "").strip()
         if not address:
             return None
         name = (
@@ -95,12 +132,14 @@ class BluetoothRadarScanner:
             or getattr(device, "name", None)
             or None
         )
+        if isinstance(name, str):
+            name = name.strip() or None
         manufacturer = parse_manufacturer_data(
             getattr(advertisement, "manufacturer_data", {}) or {}
         )
         now = time.time()
         current = self.devices.get(address)
-        incoming_rssi = int(getattr(advertisement, "rssi", -127))
+        incoming_rssi = _rssi_from(device, advertisement)
         incoming_services = {
             str(uuid).lower()
             for uuid in (getattr(advertisement, "service_uuids", []) or [])
@@ -111,13 +150,14 @@ class BluetoothRadarScanner:
                 getattr(advertisement, "service_data", {}) or {}
             ).items()
         }
+        tx_power = getattr(advertisement, "tx_power", None)
 
         if current is None:
             current = DiscoveredDevice(
                 address=address,
                 name=name,
                 rssi=incoming_rssi,
-                tx_power=getattr(advertisement, "tx_power", None),
+                tx_power=tx_power,
                 service_uuids=incoming_services,
                 service_data=incoming_service_data,
                 manufacturer_data=manufacturer,
@@ -129,11 +169,8 @@ class BluetoothRadarScanner:
         else:
             current.name = name or current.name
             current.rssi = incoming_rssi
-            current.tx_power = (
-                getattr(advertisement, "tx_power", None)
-                if getattr(advertisement, "tx_power", None) is not None
-                else current.tx_power
-            )
+            if tx_power is not None:
+                current.tx_power = tx_power
             current.service_uuids.update(incoming_services)
             current.service_data.update(incoming_service_data)
             if manufacturer:
@@ -141,18 +178,35 @@ class BluetoothRadarScanner:
             current.last_seen = now
             current.sightings += 1
             current.identity_limited = self._is_identity_limited(current.name)
+
+        self.packet_count += 1
+        self.last_packet_at = now
         return current
 
     def _emit_update(self, record: DiscoveredDevice) -> None:
         if not self.on_update:
             return
-        if self.loop is None:
-            self.on_update(record)
-            return
-        self.loop.call_soon_threadsafe(self.on_update, record)
+        callback = self.on_update
+        loop = self.loop
+        if loop is None:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                callback(record)
+                return
+        try:
+            if loop.is_running():
+                loop.call_soon_threadsafe(callback, record)
+            else:
+                callback(record)
+        except RuntimeError:
+            callback(record)
 
     def _detection_callback(self, device: Any, advertisement: Any) -> None:
-        record = self._build_device(device, advertisement)
+        try:
+            record = self._build_device(device, advertisement)
+        except Exception:
+            return
         if record is not None:
             self._emit_update(record)
 
@@ -161,7 +215,8 @@ class BluetoothRadarScanner:
             "detection_callback": self._detection_callback,
             "scanning_mode": "active" if self.active else "passive",
         }
-        if self.adapter:
+        # Adapter selection is BlueZ-only. CoreBluetooth ignores / rejects it.
+        if self.adapter and platform.system() != "Darwin":
             scanner_args["adapter"] = self.adapter
         return scanner_args
 
@@ -182,6 +237,9 @@ class BluetoothRadarScanner:
         """Keep one scanner session open until cancelled."""
         if self.loop is None:
             self.loop = asyncio.get_running_loop()
+        ready, detail = await probe_bluetooth(adapter=self.adapter, timeout=0.4)
+        if not ready:
+            raise RuntimeError(detail)
         scanner = BleakScanner(**self._scanner_kwargs())
         async with scanner:
             while True:

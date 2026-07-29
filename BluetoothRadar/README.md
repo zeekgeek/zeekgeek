@@ -92,13 +92,15 @@ Continuously updating browser dashboard (live BLE by default):
 ```bash
 python3 main.py --browser --open-browser
 python3 main.py --browser --demo
-python3 main.py --browser --demo-fallback
+python3 main.py --browser --no-demo-fallback
 ```
 
-Live advertisements stream to the browser over `/api/events` (Server-Sent
-Events). The 3D radar and device list update as each packet is observed. On
-macOS, grant Bluetooth access to Terminal in **System Settings → Privacy &
-Security → Bluetooth**.
+On start the dashboard probes for a Bluetooth adapter. If one is available it
+streams live advertisements over `/api/events`. If no adapter is found it falls
+back to simulated devices unless you pass `--no-demo-fallback`.
+
+On macOS, grant Bluetooth access to Terminal in **System Settings → Privacy &
+Security → Bluetooth**, keep Bluetooth on, and leave `--demo` off.
 
 The dashboard defaults to <http://127.0.0.1:8766> and selects the next free
 port when needed. Its source badge always says `SIMULATED LIVE` or `LIVE BLE`.
