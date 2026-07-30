@@ -50,6 +50,14 @@ max_results_per_scrape: 24
 # Use demo scraper (true = offline, no Etsy HTTP). Set false on your Mac for live trends.
 demo: true
 
+# Live scrape backend when demo=false (Mac + BrowserClaw / Chrome CDP)
+# scrape_mode: demo | playwright | browserclaw
+scrape_mode: browserclaw
+# cdp_url: http://127.0.0.1:18800   # OpenClaw default; auto-discover if unset
+reuse_browser_tab: true
+cdp_auto_discover: true
+cdp_fallback_demo: true
+
 # Optional: set via environment variable ANTHROPIC_API_KEY for smarter copy
 use_claude: false
 

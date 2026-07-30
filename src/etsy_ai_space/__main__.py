@@ -25,6 +25,26 @@ from .scraper.etsy_scraper import scrape_niche_to_db
 LOGGER = logging.getLogger(__name__)
 
 
+def _orchestrate_scrape_kwargs(args: argparse.Namespace) -> dict[str, object]:
+    demo = True
+    scrape_mode = "demo"
+    if getattr(args, "browserclaw", False) or getattr(args, "no_demo", False):
+        demo = False
+        scrape_mode = "browserclaw"
+    elif getattr(args, "demo", False):
+        demo = True
+        scrape_mode = "demo"
+    if getattr(args, "scrape_mode", None):
+        scrape_mode = args.scrape_mode
+        demo = scrape_mode == "demo"
+    return {
+        "demo": demo,
+        "scrape_mode": scrape_mode,
+        "cdp_url": getattr(args, "cdp_url", None),
+        "reuse_browser_tab": getattr(args, "reuse_tab", False),
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Etsy AI Space — safe phased swarm for POD trend research and manual rollout",
@@ -74,7 +94,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Scrape → manager (5 concepts) → worker agents → review queue",
     )
     orchestrate.add_argument("niche", help="Niche query, e.g. 'retro cat shirt'")
-    orchestrate.add_argument("--demo", action="store_true")
+    orchestrate.add_argument("--demo", action="store_true", help="Offline demo scrape (default without --browserclaw)")
+    orchestrate.add_argument(
+        "--browserclaw",
+        action="store_true",
+        help="Live scrape via BrowserClaw / Chrome CDP (Mac)",
+    )
+    orchestrate.add_argument("--no-demo", action="store_true", help="Alias for --browserclaw")
+    orchestrate.add_argument("--cdp-url", default=None, help="BrowserClaw CDP URL (auto-discover if omitted)")
+    orchestrate.add_argument("--reuse-tab", action="store_true", help="Reuse active BrowserClaw tab")
+    orchestrate.add_argument(
+        "--scrape-mode",
+        choices=["demo", "playwright", "browserclaw"],
+        default=None,
+        help="Override scrape backend (default: demo, or browserclaw with --browserclaw)",
+    )
     orchestrate.add_argument("--concepts", type=int, default=5)
     orchestrate.add_argument("--skip-scrape", action="store_true")
     orchestrate.add_argument("--export-dir", type=Path, default=None)
@@ -144,6 +178,17 @@ def build_parser() -> argparse.ArgumentParser:
     autopilot.add_argument("--config", type=Path, default=None, help="Path to autopilot.yaml")
     autopilot.add_argument("--once", action="store_true", help="Run one cycle and exit")
     autopilot.add_argument("--demo", action="store_true", help="Override config demo=true")
+    autopilot.add_argument("--no-demo", action="store_true", help="Live BrowserClaw scrape (demo=false)")
+    autopilot.add_argument("--browserclaw", action="store_true", help="Alias for --no-demo")
+    autopilot.add_argument("--cdp-url", default=None, help="BrowserClaw CDP URL")
+    autopilot.add_argument("--reuse-tab", action="store_true", help="Reuse active BrowserClaw tab")
+
+    browserclaw_import = sub.add_parser(
+        "browserclaw-import",
+        help="Import BrowserClaw TS research JSON into SQLite",
+    )
+    browserclaw_import.add_argument("json_path", type=Path)
+    browserclaw_import.add_argument("--min-score", type=float, default=35.0)
 
     approve = sub.add_parser("approve", help="Approve drafts for manual Etsy upload")
     approve.add_argument("--include-needs-revision", action="store_true")
@@ -197,14 +242,15 @@ async def cmd_browserclaw_scrape(args: argparse.Namespace) -> int:
 
 async def cmd_orchestrate(args: argparse.Namespace) -> int:
     db = StoreDatabase(args.db)
+    scrape_kwargs = _orchestrate_scrape_kwargs(args)
     result = await run_orchestrator(
         args.niche,
         db,
-        demo=args.demo,
         max_results=args.max_results,
         concept_count=args.concepts,
         export_dir=args.export_dir,
         scrape_first=not args.skip_scrape,
+        **scrape_kwargs,
     )
     print(json.dumps(result, indent=2))
     return 0
@@ -349,11 +395,28 @@ def cmd_record_upload(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_browserclaw_import(args: argparse.Namespace) -> int:
+    from .scraper.browserclaw_import import import_browserclaw_json
+
+    db = StoreDatabase(args.db)
+    result = import_browserclaw_json(args.json_path, db, min_score=args.min_score)
+    print(json.dumps(result, indent=2))
+    return 0
+
+
 async def cmd_autopilot(args: argparse.Namespace) -> int:
     db = StoreDatabase(args.db)
     config = AutopilotConfig.load(args.config)
     if args.demo:
         config.demo = True
+        config.scrape_mode = "demo"
+    if args.no_demo or args.browserclaw:
+        config.demo = False
+        config.scrape_mode = "browserclaw"
+    if args.cdp_url:
+        config.cdp_url = args.cdp_url
+    if args.reuse_tab:
+        config.reuse_browser_tab = True
     runner = AutopilotRunner(db, config)
     if args.once:
         result = await runner.run_cycle()
@@ -396,6 +459,8 @@ def main() -> None:
         raise SystemExit(asyncio.run(cmd_scrape(args)))
     if args.command == "browserclaw-scrape":
         raise SystemExit(asyncio.run(cmd_browserclaw_scrape(args)))
+    if args.command == "browserclaw-import":
+        raise SystemExit(cmd_browserclaw_import(args))
     if args.command == "cdp-check":
         raise SystemExit(cmd_cdp_check(args))
     if args.command == "orchestrate":

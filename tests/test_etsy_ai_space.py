@@ -131,6 +131,9 @@ class EtsyAiSpaceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("recovery definition shirt", config.niches)
         self.assertIn("soberversary shirt custom date", config.niches)
         self.assertTrue(config.demo)
+        self.assertEqual(config.scrape_mode, "browserclaw")
+        self.assertTrue(config.reuse_browser_tab)
+        self.assertTrue(config.cdp_auto_discover)
 
     async def test_autopilot_single_cycle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

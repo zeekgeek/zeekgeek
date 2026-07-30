@@ -428,8 +428,11 @@ python3 -m etsy_ai_space orchestrate "recovery definition shirt" --demo --concep
 # 1) Launch Chrome with --remote-debugging-port=9222
 # 2) Then:
 python3 -m etsy_ai_space cdp-check
-python3 -m etsy_ai_space scrape "recovery definition shirt" --cdp-url http://127.0.0.1:9222
-python3 -m etsy_ai_space orchestrate "recovery definition shirt" --skip-scrape --concepts 5
+python3 -m etsy_ai_space orchestrate "recovery definition shirt" --browserclaw --reuse-tab
+python3 -m etsy_ai_space autopilot --once --no-demo --reuse-tab
+
+# Or edit etsy_ai_space/autopilot.yaml: demo: false, scrape_mode: browserclaw
+python3 -m etsy_ai_space autopilot --once
 ```
 
 Each draft’s `image_prompt` includes **Canva steps** (recommended for text shirts),
@@ -480,7 +483,10 @@ instead, use `generate-image` (see command reference below).
 
 ```text
 python3 -m etsy_ai_space scrape <query> [--demo] [--cdp-url URL] [--max-results 48] [--min-score 35]
-python3 -m etsy_ai_space orchestrate <niche> [--demo] [--concepts 5] [--skip-scrape]
+python3 -m etsy_ai_space browserclaw-scrape [--all-niches] [--cdp-url URL] [--reuse-tab]
+python3 -m etsy_ai_space browserclaw-import <research.json>
+python3 -m etsy_ai_space orchestrate <niche> [--demo | --browserclaw] [--cdp-url URL] [--reuse-tab]
+python3 -m etsy_ai_space autopilot [--once] [--no-demo | --browserclaw] [--cdp-url URL]
 python3 -m etsy_ai_space pipeline <query> [--demo] [--niche "..."] [--export-dir PATH]
 python3 -m etsy_ai_space queue
 python3 -m etsy_ai_space approve

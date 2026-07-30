@@ -31,6 +31,11 @@ class AutopilotConfig:
     concepts_per_cycle: int = 5
     max_results_per_scrape: int = 24
     demo: bool = True
+    scrape_mode: str = "demo"
+    cdp_url: str | None = None
+    reuse_browser_tab: bool = False
+    cdp_auto_discover: bool = True
+    cdp_fallback_demo: bool = True
     use_claude: bool = False
     require_manual_upload: bool = True
     daily_upload_cap: int = 5
@@ -42,13 +47,20 @@ class AutopilotConfig:
             return cls(niches=["retro cat shirt"], demo=True)
         raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
         niches = raw.get("niches") or ["retro cat shirt"]
+        demo = bool(raw.get("demo", True))
+        scrape_mode = str(raw.get("scrape_mode") or ("demo" if demo else "browserclaw"))
         return cls(
             niches=[str(n) for n in niches],
             cycle_interval_seconds=float(raw.get("cycle_interval_seconds", 21600)),
             max_cycles_per_day=int(raw.get("max_cycles_per_day", 4)),
             concepts_per_cycle=int(raw.get("concepts_per_cycle", 5)),
             max_results_per_scrape=int(raw.get("max_results_per_scrape", 24)),
-            demo=bool(raw.get("demo", True)),
+            demo=demo,
+            scrape_mode=scrape_mode,
+            cdp_url=(str(raw["cdp_url"]).strip() if raw.get("cdp_url") else None),
+            reuse_browser_tab=bool(raw.get("reuse_browser_tab", False)),
+            cdp_auto_discover=bool(raw.get("cdp_auto_discover", True)),
+            cdp_fallback_demo=bool(raw.get("cdp_fallback_demo", True)),
             use_claude=bool(raw.get("use_claude", False)),
             require_manual_upload=bool(raw.get("require_manual_upload", True)),
             daily_upload_cap=int(raw.get("daily_upload_cap", 5)),
@@ -104,6 +116,11 @@ class AutopilotRunner:
             niche,
             self.db,
             demo=self.config.demo,
+            scrape_mode=self.config.scrape_mode,
+            cdp_url=self.config.cdp_url,
+            reuse_browser_tab=self.config.reuse_browser_tab,
+            cdp_auto_discover=self.config.cdp_auto_discover,
+            cdp_fallback_demo=self.config.cdp_fallback_demo,
             max_results=self.config.max_results_per_scrape,
             concept_count=self.config.concepts_per_cycle,
             export_dir=self.export_dir,
@@ -117,6 +134,7 @@ class AutopilotRunner:
         summary = {
             "niche": niche,
             "cycle": self._cycles_today,
+            "scrape_settings": result.get("scrape_settings"),
             "concepts": len(result.get("concepts") or []),
             "drafts": len(result.get("drafts") or []),
             "export": result.get("export"),
@@ -133,7 +151,10 @@ class AutopilotRunner:
         return summary
 
     async def run_forever(self) -> None:
-        self.tracker.log("Autopilot started — autonomous research + draft generation (manual upload gate)")
+        self.tracker.log(
+            "Autopilot started — scrape → concepts → review queue "
+            f"(scrape_mode={self.config.scrape_mode}, demo={self.config.demo})"
+        )
         while True:
             try:
                 await self.run_cycle()

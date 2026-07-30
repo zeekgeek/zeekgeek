@@ -17,6 +17,7 @@ from ..db import StoreDatabase, default_db_path
 from ..export.bundle import export_pending_drafts
 from ..models import ListingDraft, ProductConcept
 from ..scraper.etsy_scraper import scrape_niche_to_db
+from ..scraper.scrape_settings import resolve_scrape_settings
 from ..tools.humanize import humanize_text
 from .state_tracker import SwarmStateTracker
 
@@ -144,6 +145,11 @@ async def run_orchestrator(
     db: StoreDatabase,
     *,
     demo: bool = False,
+    scrape_mode: str = "browserclaw",
+    cdp_url: str | None = None,
+    reuse_browser_tab: bool = False,
+    cdp_auto_discover: bool = True,
+    cdp_fallback_demo: bool = True,
     max_results: int = 48,
     concept_count: int = 5,
     export_dir: Path | None = None,
@@ -153,7 +159,23 @@ async def run_orchestrator(
 ) -> dict[str, Any]:
     """Build drafts and, when explicitly enabled, export an approved bundle."""
     state = tracker or SwarmStateTracker()
-    state.log(f"Orchestrator started for niche: {niche}")
+    scrape_settings = resolve_scrape_settings(
+        demo=demo,
+        scrape_mode=scrape_mode,
+        cdp_url=cdp_url,
+        reuse_browser_tab=reuse_browser_tab,
+        cdp_auto_discover=cdp_auto_discover,
+        cdp_fallback_demo=cdp_fallback_demo,
+    )
+    state.log(
+        f"Orchestrator started for niche: {niche} "
+        f"(scrape={scrape_settings.scrape_mode}, demo={scrape_settings.use_demo})"
+    )
+    if scrape_settings.cdp_fallback:
+        state.log(
+            "BrowserClaw CDP unreachable — falling back to demo scrape for this cycle",
+            level="WARNING",
+        )
 
     research: dict[str, object] | None = None
     if scrape_first:
@@ -161,10 +183,15 @@ async def run_orchestrator(
             research = await scrape_niche_to_db(
                 niche,
                 db,
-                demo=demo,
+                demo=scrape_settings.use_demo,
                 max_results=max_results,
                 tracker=state,
+                cdp_url=scrape_settings.cdp_url,
+                reuse_browser_tab=scrape_settings.reuse_browser_tab,
+                headless=scrape_settings.scrape_mode == "playwright",
             )
+        if research is not None:
+            research = {**research, "scrape_settings": scrape_settings.to_dict()}
         state.bump_metric("scrape_runs", 1)
 
     top = db.top_listings(limit=12)
@@ -236,6 +263,7 @@ async def run_orchestrator(
 
     return {
         "research": research,
+        "scrape_settings": scrape_settings.to_dict(),
         "trend_summary": trend_summary,
         "concepts": saved_concepts,
         "drafts": drafts,
