@@ -11,7 +11,7 @@ from pathlib import Path
 from .agents.researcher.runner import build_scraper, run_researcher
 from .agents.ultron.orchestrator import UltronOrchestrator
 from .db import StoreDatabase, default_db_path
-from .export.bundle import export_pending_drafts
+from .export.bundle import export_design_pack, export_pending_drafts
 from .pipeline.autopilot import (
     AutopilotConfig,
     AutopilotRunner,
@@ -80,8 +80,14 @@ def build_parser() -> argparse.ArgumentParser:
     orchestrate.add_argument("--export-dir", type=Path, default=None)
     orchestrate.add_argument("--max-results", type=int, default=48)
 
-    export = sub.add_parser("export", help="Phase 4 — export pending listing drafts to JSON/CSV")
+    export = sub.add_parser("export", help="Export approved drafts for manual Etsy upload")
     export.add_argument("--export-dir", type=Path, default=None)
+
+    design_pack = sub.add_parser(
+        "design-pack",
+        help="Export Canva design pack from review queue (does not mark drafts exported)",
+    )
+    design_pack.add_argument("--export-dir", type=Path, default=None)
 
     stats = sub.add_parser("stats", help="Show SQLite store statistics")
 
@@ -191,6 +197,14 @@ def cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_design_pack(args: argparse.Namespace) -> int:
+    db = StoreDatabase(args.db)
+    out_dir = args.export_dir or Path.cwd() / "etsy_ai_space" / "exports"
+    paths = export_design_pack(db, out_dir)
+    print(json.dumps(paths, indent=2))
+    return 0
+
+
 def cmd_stats(args: argparse.Namespace) -> int:
     db = StoreDatabase(args.db)
     print(json.dumps(db.stats(), indent=2))
@@ -287,6 +301,8 @@ def main() -> None:
         raise SystemExit(asyncio.run(cmd_pipeline(args)))
     if args.command == "export":
         raise SystemExit(cmd_export(args))
+    if args.command == "design-pack":
+        raise SystemExit(cmd_design_pack(args))
     if args.command == "stats":
         raise SystemExit(cmd_stats(args))
     if args.command == "top":

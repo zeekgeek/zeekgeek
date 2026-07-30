@@ -11,7 +11,7 @@ from etsy_ai_space.agents.designer.workers import expand_listing_copy
 from etsy_ai_space.agents.workers import copywriter_agent, design_agent, seo_agent, workers_build_listing
 from etsy_ai_space.agents.researcher.runner import run_researcher
 from etsy_ai_space.db import StoreDatabase
-from etsy_ai_space.export.bundle import export_pending_drafts
+from etsy_ai_space.export.bundle import export_design_pack, export_pending_drafts
 from etsy_ai_space.models import CreativeBrief, ListingDraft, ProductConcept
 from etsy_ai_space.pipeline.autopilot import (
     AutopilotConfig,
@@ -219,6 +219,32 @@ class EtsyAiSpaceTests(unittest.IsolatedAsyncioTestCase):
             payload = json.loads(Path(paths["json"]).read_text(encoding="utf-8"))
             self.assertEqual(payload["count"], 0)
             self.assertEqual(payload["listings"], [])
+            self.assertEqual(len(db.listing_drafts(status="pending_review")), 1)
+
+    def test_design_pack_exports_pending_without_status_change(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = StoreDatabase(Path(tmp) / "store.db")
+            db.save_listing_draft(
+                ListingDraft(
+                    title="Recovery Definition Shirt, Dictionary Style Sobriety Tee",
+                    description="Original recovery typography tee for sober milestones.",
+                    tags=["recovery shirt", "sobriety gift"],
+                    price=24.99,
+                    image_prompt=(
+                        "=== STYLE: definition ===\n\n"
+                        "SHIRT TEXT (type this exactly in Canva):\n"
+                        "recovery | noun\nchoosing yourself\n\n"
+                        "--- CANVA ---\nType the text."
+                    ),
+                    status="pending_review",
+                )
+            )
+            paths = export_design_pack(db, Path(tmp) / "exports")
+            payload = json.loads(Path(paths["json"]).read_text(encoding="utf-8"))
+            self.assertEqual(payload["count"], 1)
+            self.assertEqual(payload["pack_type"], "design_pack")
+            self.assertIn("choosing yourself", payload["listings"][0]["shirt_text"])
+            self.assertTrue(Path(paths["markdown"]).exists())
             self.assertEqual(len(db.listing_drafts(status="pending_review")), 1)
 
 
