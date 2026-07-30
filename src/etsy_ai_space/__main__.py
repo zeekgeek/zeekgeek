@@ -90,7 +90,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     dashboard = sub.add_parser("dashboard", help="Launch Streamlit swarm status dashboard")
     dashboard.add_argument("--port", type=int, default=8501)
-    dashboard.add_argument("--refresh", type=int, default=3, help="Auto-refresh interval in seconds")
+    dashboard.add_argument(
+        "--refresh",
+        type=int,
+        default=0,
+        help="Auto-refresh interval in seconds (0 = off, use sidebar button instead)",
+    )
 
     autopilot = sub.add_parser("autopilot", help="Autonomous loop: scrape → concepts → export")
     autopilot.add_argument("--config", type=Path, default=None, help="Path to autopilot.yaml")
