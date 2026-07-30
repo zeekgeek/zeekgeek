@@ -443,6 +443,30 @@ readable on Comfort Colors, easy to execute in Canva.
 Avoid AA symbols, Bill W references, medical claims, and copying listing text
 verbatim. Disclose AI-assisted design in the listing description when you publish.
 
+### Generating art without a separate image-generation API key
+
+Cursor's built-in image generation (the same tool available in Cursor chat) is
+included with a Cursor Pro subscription — no OpenAI/Stability key required.
+The Cursor CLI (`cursor-agent`) exposes that same capability headlessly, so you
+can batch-generate shirt art from your design queue straight into a local
+folder (e.g. `~/SwarmAssets`) on your Mac:
+
+```bash
+# One-time setup
+curl https://cursor.com/install -fsS | bash
+cursor-agent login
+
+# Build a script from your current review queue
+python3 -m etsy_ai_space swarm-assets --assets-dir "$HOME/SwarmAssets"
+
+# Run it — generates one image per pending/approved draft and saves it
+# into ~/SwarmAssets/<slug>.png
+bash generate_swarm_assets.sh
+```
+
+If you already have `OPENAI_API_KEY` set and prefer the OpenAI Images API
+instead, use `generate-image` (see command reference below).
+
 ## Safe scaling checklist
 
 1. Run demo orchestrate locally; review drafts with `queue`.
@@ -461,6 +485,8 @@ python3 -m etsy_ai_space pipeline <query> [--demo] [--niche "..."] [--export-dir
 python3 -m etsy_ai_space queue
 python3 -m etsy_ai_space approve
 python3 -m etsy_ai_space design-pack [--export-dir PATH]
+python3 -m etsy_ai_space generate-image <prompt> [--demo] [--from-pack PATH] [--index 0]
+python3 -m etsy_ai_space swarm-assets [pack.json] [--assets-dir PATH] [--out-script PATH]
 python3 -m etsy_ai_space export [--export-dir PATH]
 python3 -m etsy_ai_space dashboard --port 8501
 python3 -m etsy_ai_space stats

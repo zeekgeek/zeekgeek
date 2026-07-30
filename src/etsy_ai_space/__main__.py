@@ -113,6 +113,19 @@ def build_parser() -> argparse.ArgumentParser:
     generate_image.add_argument("--demo", action="store_true", help="Local placeholder PNG (no API key)")
     generate_image.add_argument("--no-transparent", action="store_true")
 
+    swarm_assets = sub.add_parser(
+        "swarm-assets",
+        help=(
+            "Build a Cursor CLI script that generates shirt art with your "
+            "Cursor Pro subscription (no image API key) into a local assets folder"
+        ),
+    )
+    swarm_assets.add_argument("pack", type=Path, nargs="?", default=None, help="design-pack-*.json path")
+    swarm_assets.add_argument("--export-dir", type=Path, default=None, help="Where to write the design pack")
+    swarm_assets.add_argument("--out-script", type=Path, default=Path("generate_swarm_assets.sh"))
+    swarm_assets.add_argument("--assets-dir", default="$HOME/SwarmAssets")
+    swarm_assets.add_argument("--model", default=None)
+
     stats = sub.add_parser("stats", help="Show SQLite store statistics")
 
     top = sub.add_parser("top", help="Print top stored listings by performance score")
@@ -265,6 +278,36 @@ def cmd_generate_image(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_swarm_assets(args: argparse.Namespace) -> int:
+    from .export.bundle import export_design_pack
+    from .tools.swarm_assets import write_run_script
+
+    pack_path = args.pack
+    if pack_path is None:
+        db = StoreDatabase(args.db)
+        out_dir = args.export_dir or Path.cwd() / "etsy_ai_space" / "exports"
+        paths = export_design_pack(db, out_dir)
+        pack_path = Path(paths["json"])
+
+    script_path = write_run_script(
+        pack_path,
+        args.out_script,
+        out_dir=args.assets_dir,
+        model=args.model,
+    )
+    print(
+        json.dumps(
+            {
+                "pack": str(pack_path),
+                "script": str(script_path),
+                "next_step": f"bash {script_path}",
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
 def cmd_stats(args: argparse.Namespace) -> int:
     db = StoreDatabase(args.db)
     print(json.dumps(db.stats(), indent=2))
@@ -365,6 +408,8 @@ def main() -> None:
         raise SystemExit(cmd_design_pack(args))
     if args.command == "generate-image":
         raise SystemExit(cmd_generate_image(args))
+    if args.command == "swarm-assets":
+        raise SystemExit(cmd_swarm_assets(args))
     if args.command == "stats":
         raise SystemExit(cmd_stats(args))
     if args.command == "top":
