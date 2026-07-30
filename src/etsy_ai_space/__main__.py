@@ -62,7 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
     cdp_check = sub.add_parser("cdp-check", help="Verify BrowserClaw/OpenClaw CDP is reachable")
     cdp_check.add_argument("--cdp-url", default=None, help="Optional explicit CDP URL to test")
 
-    pipeline = sub.add_parser("pipeline", help="Run phases 1–4 and export a manual upload bundle")
+    pipeline = sub.add_parser("pipeline", help="Run phases 1–3 and queue a draft for review")
     pipeline.add_argument("query", help="Seed Etsy search query / niche")
     pipeline.add_argument("--niche", default=None, help="Creative niche override")
     pipeline.add_argument("--demo", action="store_true", help="Use demo scraper instead of Playwright")
@@ -71,7 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     orchestrate = sub.add_parser(
         "orchestrate",
-        help="Scrape → manager (5 concepts) → worker agents → export",
+        help="Scrape → manager (5 concepts) → worker agents → review queue",
     )
     orchestrate.add_argument("niche", help="Niche query, e.g. 'retro cat shirt'")
     orchestrate.add_argument("--demo", action="store_true")
@@ -97,7 +97,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Auto-refresh interval in seconds (0 = off, use sidebar button instead)",
     )
 
-    autopilot = sub.add_parser("autopilot", help="Autonomous loop: scrape → concepts → export")
+    autopilot = sub.add_parser("autopilot", help="Autonomous loop: scrape → concepts → review queue")
     autopilot.add_argument("--config", type=Path, default=None, help="Path to autopilot.yaml")
     autopilot.add_argument("--once", action="store_true", help="Run one cycle and exit")
     autopilot.add_argument("--demo", action="store_true", help="Override config demo=true")

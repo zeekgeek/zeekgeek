@@ -84,7 +84,9 @@ def humanize_text(
         if tag in TAG_BANNED:
             issues.append(f"Tag too generic for Etsy SEO: '{tag}'")
             continue
-        if " " in tag and len(tag.split()) > 3:
+        # Etsy's hard limit is 20 chars; multi-word long-tail tags are good SEO,
+        # so only flag sentence-like tags.
+        if " " in tag and len(tag.split()) > 5:
             issues.append(f"Tag too long or phrase-like: '{tag}'")
             continue
         seen.add(tag)

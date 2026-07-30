@@ -14,8 +14,6 @@ def export_pending_drafts(db: StoreDatabase, out_dir: Path) -> dict[str, str]:
     """Write JSON + CSV bundles for approved drafts."""
     out_dir.mkdir(parents=True, exist_ok=True)
     drafts = db.listing_drafts(status="approved_for_export")
-    if not drafts:
-        drafts = db.listing_drafts()
 
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     json_path = out_dir / f"listing-bundle-{stamp}.json"

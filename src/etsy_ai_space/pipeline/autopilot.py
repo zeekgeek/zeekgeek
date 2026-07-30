@@ -108,6 +108,7 @@ class AutopilotRunner:
             concept_count=self.config.concepts_per_cycle,
             export_dir=self.export_dir,
             tracker=self.tracker,
+            require_manual_upload=self.config.require_manual_upload,
         )
         self._cycles_today += 1
 
@@ -121,7 +122,12 @@ class AutopilotRunner:
             "export": result.get("export"),
             "pending_review": pending,
             "approved_for_export": approved,
-            "next_action": "Review exports, then: python3 -m etsy_ai_space approve && upload manually",
+            "next_action": (
+                "Review drafts, then run: python3 -m etsy_ai_space approve && "
+                "python3 -m etsy_ai_space export"
+                if self.config.require_manual_upload
+                else "Review the exported bundle before uploading manually"
+            ),
         }
         self.tracker.log(f"Autopilot cycle done: {json.dumps(summary, default=str)}")
         return summary

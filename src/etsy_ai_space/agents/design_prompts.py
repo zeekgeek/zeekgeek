@@ -6,6 +6,8 @@ from dataclasses import dataclass
 
 from ..models import ProductConcept
 
+RECOVERY_KEYWORDS = ("recovery", "sober", "sobriety", "odaat", "soberversary", "namastay")
+
 # Original wording only — do not copy competitor listing text verbatim.
 ORIGINAL_PHRASES = {
     "definition": (
@@ -46,26 +48,37 @@ class DesignBrief:
         )
 
 
+_STYLE_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("namastay", ("namastay", "yoga")),
+    ("varsity", ("crew", "varsity")),
+    ("soberversary", ("soberversary", "milestone", "anniversary", "custom date", "date stamp")),
+    ("odaat", ("one day", "odaat")),
+    ("advocacy", ("loudly", "advocacy", "out loud")),
+    ("journey", ("journey", "peace")),
+    ("reason", ("reason", "possible")),
+    ("minimal", ("minimal", "script", "we do recover")),
+    ("definition", ("definition", "dictionary")),
+)
+
+
+def _match_style(text: str) -> str | None:
+    for style, keywords in _STYLE_KEYWORDS:
+        if any(keyword in text for keyword in keywords):
+            return style
+    return None
+
+
 def _pick_style(concept: ProductConcept) -> str:
-    blob = f"{concept.concept_name} {concept.hook} {concept.angle} {concept.trend_summary}".lower()
-    if any(k in blob for k in ("definition", "dictionary")):
-        return "definition"
-    if any(k in blob for k in ("namastay", "yoga")):
-        return "namastay"
-    if any(k in blob for k in ("crew", "varsity")):
-        return "varsity"
-    if any(k in blob for k in ("soberversary", "milestone", "anniversary", "custom date")):
-        return "soberversary"
-    if any(k in blob for k in ("one day", "odaat", "time")):
-        return "odaat"
-    if any(k in blob for k in ("loudly", "advocacy", "out loud")):
-        return "advocacy"
-    if any(k in blob for k in ("journey", "peace")):
-        return "journey"
-    if any(k in blob for k in ("reason", "possible")):
-        return "reason"
-    if any(k in blob for k in ("minimal", "script", "we do recover")):
-        return "minimal"
+    # The angle carries the intended art direction, so it wins over niche words
+    # that leak into every concept name (e.g. "definition" in a definition-niche
+    # run must not force all five concepts into the same design).
+    style = _match_style(concept.angle.lower())
+    if style:
+        return style
+    blob = f"{concept.concept_name} {concept.hook} {concept.trend_summary}".lower()
+    style = _match_style(blob)
+    if style:
+        return style
     if "typographic" in blob or "bold" in blob:
         return "minimal"
     return "definition"

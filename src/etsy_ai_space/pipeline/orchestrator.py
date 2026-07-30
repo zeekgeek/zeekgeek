@@ -149,8 +149,9 @@ async def run_orchestrator(
     export_dir: Path | None = None,
     scrape_first: bool = True,
     tracker: SwarmStateTracker | None = None,
+    require_manual_upload: bool = True,
 ) -> dict[str, Any]:
-    """Full pipeline: scrape → manager concepts → worker drafts → export bundle."""
+    """Build drafts and, when explicitly enabled, export an approved bundle."""
     state = tracker or SwarmStateTracker()
     state.log(f"Orchestrator started for niche: {niche}")
 
@@ -188,7 +189,7 @@ async def run_orchestrator(
         with state.agent_activity("Designer", "Creating Midjourney prompt"):
             design = design_agent(concept)
         with state.agent_activity("SEO", "Writing SEO tags"):
-            seo = seo_agent(concept, copy.title)
+            seo = seo_agent(concept, copy.title, design_style=design.design_style)
 
         draft = ListingDraft(
             concept_id=concept.id,
@@ -202,7 +203,7 @@ async def run_orchestrator(
         report = humanize_text(draft.title, draft.description, draft.tags)
         if report.passed:
             draft.tags = report.cleaned_tags
-            draft.status = "approved_for_export"
+            draft.status = "pending_review" if require_manual_upload else "approved_for_export"
         else:
             draft.status = "needs_revision"
             state.log(f"Humanization flagged {concept.concept_name}: {report.issues}", level="WARNING")
@@ -219,11 +220,17 @@ async def run_orchestrator(
             }
         )
 
-    with state.agent_activity("Manager", "Exporting bundle"):
-        out_dir = export_dir or Path.cwd() / "etsy_ai_space" / "exports"
-        export_paths = export_pending_drafts(db, out_dir)
+    export_paths: dict[str, str] | None = None
+    if require_manual_upload:
+        state.log(
+            f"Orchestrator finished — {len(drafts)} drafts awaiting manual review"
+        )
+    else:
+        with state.agent_activity("Manager", "Exporting bundle"):
+            out_dir = export_dir or Path.cwd() / "etsy_ai_space" / "exports"
+            export_paths = export_pending_drafts(db, out_dir)
+        state.log(f"Orchestrator finished — {len(drafts)} drafts exported")
 
-    state.log(f"Orchestrator finished — {len(drafts)} drafts exported")
     for agent_name in ("Scraper", "Manager", "Copywriter", "Designer", "SEO"):
         state.set_agent(agent_name, "Idle")
 
@@ -252,7 +259,9 @@ async def _cli(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Orchestrate scrape → concepts → worker drafts → export")
+    parser = argparse.ArgumentParser(
+        description="Orchestrate scrape → concepts → worker drafts → review queue"
+    )
     parser.add_argument("niche", help="Niche query, e.g. 'retro cat shirt'")
     parser.add_argument("--db", type=Path, default=None, help=f"SQLite path (default: {default_db_path()})")
     parser.add_argument("--demo", action="store_true", help="Use demo scraper data")
