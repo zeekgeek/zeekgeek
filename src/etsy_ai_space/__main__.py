@@ -89,6 +89,30 @@ def build_parser() -> argparse.ArgumentParser:
     )
     design_pack.add_argument("--export-dir", type=Path, default=None)
 
+    generate_image = sub.add_parser(
+        "generate-image",
+        help="Generate shirt art via OpenAI Images API (or --demo placeholder)",
+    )
+    generate_image.add_argument("prompt", nargs="?", default=None, help="Image prompt text")
+    generate_image.add_argument(
+        "--from-pack",
+        type=Path,
+        default=None,
+        help="Path to design-pack-*.json",
+    )
+    generate_image.add_argument("--index", type=int, default=0, help="Listing index in design pack")
+    generate_image.add_argument(
+        "--prefer",
+        default="ideogram",
+        choices=["ideogram", "midjourney", "shirt_text"],
+    )
+    generate_image.add_argument("--out-dir", type=Path, default=None)
+    generate_image.add_argument("--filename", default=None)
+    generate_image.add_argument("--model", default="gpt-image-1")
+    generate_image.add_argument("--size", default="1024x1536")
+    generate_image.add_argument("--demo", action="store_true", help="Local placeholder PNG (no API key)")
+    generate_image.add_argument("--no-transparent", action="store_true")
+
     stats = sub.add_parser("stats", help="Show SQLite store statistics")
 
     top = sub.add_parser("top", help="Print top stored listings by performance score")
@@ -205,6 +229,42 @@ def cmd_design_pack(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_generate_image(args: argparse.Namespace) -> int:
+    from .tools.image_gen import (
+        extract_api_prompt,
+        generate_image,
+        load_prompt_from_design_pack,
+    )
+
+    listing = None
+    if args.from_pack:
+        prompt, listing = load_prompt_from_design_pack(args.from_pack, index=args.index)
+        prompt = extract_api_prompt(
+            str(listing.get("image_prompt") or prompt),
+            prefer=args.prefer,
+        )
+    elif args.prompt:
+        prompt = args.prompt
+    else:
+        raise SystemExit("Provide a prompt or --from-pack PATH")
+
+    result = generate_image(
+        prompt,
+        out_dir=args.out_dir,
+        filename=args.filename,
+        demo=args.demo,
+        model=args.model,
+        size=args.size,
+        transparent=not args.no_transparent,
+    )
+    payload = result.to_dict()
+    if listing:
+        payload["source_title"] = listing.get("title")
+        payload["source_status"] = listing.get("status")
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
 def cmd_stats(args: argparse.Namespace) -> int:
     db = StoreDatabase(args.db)
     print(json.dumps(db.stats(), indent=2))
@@ -303,6 +363,8 @@ def main() -> None:
         raise SystemExit(cmd_export(args))
     if args.command == "design-pack":
         raise SystemExit(cmd_design_pack(args))
+    if args.command == "generate-image":
+        raise SystemExit(cmd_generate_image(args))
     if args.command == "stats":
         raise SystemExit(cmd_stats(args))
     if args.command == "top":
