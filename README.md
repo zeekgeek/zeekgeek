@@ -358,17 +358,28 @@ src/etsy_ai_space/
 
 ```bash
 source .venv/bin/activate
-pip install -e .
+pip install -e ".[etsy]"
 
 # Phase 1 only — scrape + SQLite
-python3 -m etsy_ai_space scrape "retro cat shirt" --demo
+python3 -m etsy_ai_space scrape "recovery definition shirt" --demo
 
-# Full swarm — scrape, 5 concepts, worker drafts, export
-python3 -m etsy_ai_space orchestrate "retro cat shirt" --demo
+# Full swarm — scrape → 5 concepts → drafts in the review queue
+python3 -m etsy_ai_space orchestrate "recovery definition shirt" --demo
+
+# After you review drafts:
+python3 -m etsy_ai_space queue
+python3 -m etsy_ai_space approve
+python3 -m etsy_ai_space export
+
+# Optional: Canva design pack (does not mark drafts exported)
+python3 -m etsy_ai_space design-pack
 
 # Legacy single-brief pipeline
-python3 -m etsy_ai_space pipeline "retro cat shirt" --demo
+python3 -m etsy_ai_space pipeline "recovery definition shirt" --demo
 ```
+
+Drafts stay in `pending_review` until you approve them. Export only writes
+`approved_for_export` listings (manual upload — nothing posts to Etsy).
 
 Inspect stored trends:
 
@@ -404,30 +415,91 @@ python3 -m etsy_ai_space pipeline "retro cat shirt"
 Without the key, Ultron falls back to deterministic templates so you can test
 the full export flow offline.
 
+## Recovery niche: scrape → design → upload
+
+While Etsy ID verification is pending, use demo scrape to practice, or live
+scrape from your Mac (Cloud Agents cannot reach your local BrowserClaw/Chrome).
+
+```bash
+# Demo (works anywhere)
+python3 -m etsy_ai_space orchestrate "recovery definition shirt" --demo --concepts 5
+
+# Live on your Mac with Chrome CDP
+# 1) Launch Chrome with --remote-debugging-port=9222
+# 2) Then:
+python3 -m etsy_ai_space cdp-check
+python3 -m etsy_ai_space orchestrate "recovery definition shirt" --browserclaw --reuse-tab
+python3 -m etsy_ai_space autopilot --once --no-demo --reuse-tab
+
+# Or edit etsy_ai_space/autopilot.yaml: demo: false, scrape_mode: browserclaw
+python3 -m etsy_ai_space autopilot --once
+```
+
+Each draft’s `image_prompt` includes **Canva steps** (recommended for text shirts),
+plus Ideogram / Midjourney sections. Open the export JSON, type the shirt text in
+Canva at 4500×5400, mock up on Printful/Printify, then upload manually.
+
+**Recommended first design:** dictionary-style **Recovery Definition** tee
+(serif blocks, original wording — not competitor copy). Strong gift search demand,
+readable on Comfort Colors, easy to execute in Canva.
+
+Avoid AA symbols, Bill W references, medical claims, and copying listing text
+verbatim. Disclose AI-assisted design in the listing description when you publish.
+
+### Generating art without a separate image-generation API key
+
+Cursor's built-in image generation (the same tool available in Cursor chat) is
+included with a Cursor Pro subscription — no OpenAI/Stability key required.
+The Cursor CLI (`cursor-agent`) exposes that same capability headlessly, so you
+can batch-generate shirt art from your design queue straight into a local
+folder (e.g. `~/SwarmAssets`) on your Mac:
+
+```bash
+# One-time setup
+curl https://cursor.com/install -fsS | bash
+cursor-agent login
+
+# Build a script from your current review queue
+python3 -m etsy_ai_space swarm-assets --assets-dir "$HOME/SwarmAssets"
+
+# Run it — generates one image per pending/approved draft and saves it
+# into ~/SwarmAssets/<slug>.png
+bash generate_swarm_assets.sh
+```
+
+If you already have `OPENAI_API_KEY` set and prefer the OpenAI Images API
+instead, use `generate-image` (see command reference below).
+
 ## Safe scaling checklist
 
-1. Run demo pipeline locally and review `etsy_ai_space/exports/listing-bundle-*.json`.
-2. Generate artwork from `image_prompt` in your tool of choice; save paths into the bundle.
-3. Upload listings **manually** in Etsy Seller Manager (3–5/day for new shops).
-4. Only after the shop is established, consider Etsy Open API or browser assist tools.
-5. Never auto-delete listings — warroom outputs recommendations only.
+1. Run demo orchestrate locally; review drafts with `queue`.
+2. `approve` then `export` → open `etsy_ai_space/exports/listing-bundle-*.json`.
+3. Build artwork from `image_prompt` (Canva first); attach mockups before upload.
+4. Upload listings **manually** in Etsy Seller Manager (3–5/day for new shops).
+5. Only after the shop is established, consider Etsy Open API or browser assist tools.
+6. Never auto-delete listings — warroom outputs recommendations only.
 
 ## Command reference
 
 ```text
-python3 -m etsy_ai_space scrape <query> [--demo] [--max-results 48] [--min-score 35]
-python3 -m etsy_ai_space orchestrate <niche> [--demo] [--concepts 5] [--skip-scrape]
+python3 -m etsy_ai_space scrape <query> [--demo] [--cdp-url URL] [--max-results 48] [--min-score 35]
+python3 -m etsy_ai_space browserclaw-scrape [--all-niches] [--cdp-url URL] [--reuse-tab]
+python3 -m etsy_ai_space browserclaw-import <research.json>
+python3 -m etsy_ai_space orchestrate <niche> [--demo | --browserclaw] [--cdp-url URL] [--reuse-tab]
+python3 -m etsy_ai_space autopilot [--once] [--no-demo | --browserclaw] [--cdp-url URL]
 python3 -m etsy_ai_space pipeline <query> [--demo] [--niche "..."] [--export-dir PATH]
+python3 -m etsy_ai_space queue
+python3 -m etsy_ai_space approve
+python3 -m etsy_ai_space design-pack [--export-dir PATH]
+python3 -m etsy_ai_space generate-image <prompt> [--demo] [--from-pack PATH] [--index 0]
+python3 -m etsy_ai_space swarm-assets [pack.json] [--assets-dir PATH] [--out-script PATH]
 python3 -m etsy_ai_space export [--export-dir PATH]
+python3 -m etsy_ai_space dashboard --port 8501
 python3 -m etsy_ai_space stats
 python3 -m etsy_ai_space top [--limit 10]
-
-# Live Streamlit dashboard (auto-refreshes from pipeline/state.json)
-pip install -e ".[etsy]"
-python -m dashboard.app --port 8501
-# or: python3 -m etsy_ai_space dashboard --port 8501
+python3 -m etsy_ai_space cdp-check
 
 # Standalone module entry points
-python3 -m etsy_ai_space.scraper.etsy_scraper "retro cat shirt" --demo
-python3 -m etsy_ai_space.pipeline.orchestrator "retro cat shirt" --demo
+python3 -m etsy_ai_space.scraper.etsy_scraper "recovery definition shirt" --demo
+python3 -m etsy_ai_space.pipeline.orchestrator "recovery definition shirt" --demo
 ```

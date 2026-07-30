@@ -26,15 +26,22 @@ def _status_badge(agent: dict) -> str:
 
 
 def _load_dashboard_state(tracker: SwarmStateTracker) -> dict:
+    db_stats: dict = {}
+    top_listings: list = []
     try:
         db = StoreDatabase(default_db_path())
-        tracker.sync_metrics_from_db(db.stats())
+        db_stats = db.stats()
+        tracker.sync_metrics_from_db(db_stats)
+        top_listings = db.top_listings(limit=15, min_score=0.0)
     except Exception:
         pass
-    return tracker.load()
+    state = tracker.load()
+    state["_db_stats"] = db_stats
+    state["_top_listings"] = top_listings
+    return state
 
 
-def run_dashboard(*, refresh_seconds: int = 3) -> None:
+def run_dashboard(*, refresh_seconds: int = 0) -> None:
     try:
         import os
         import streamlit as st
@@ -49,67 +56,121 @@ def run_dashboard(*, refresh_seconds: int = 3) -> None:
         page_title="Etsy AI Swarm",
         page_icon="🛰️",
         layout="wide",
-        initial_sidebar_state="collapsed",
+        initial_sidebar_state="expanded",
     )
 
-    if refresh_seconds > 0:
-        st.markdown(
-            f'<meta http-equiv="refresh" content="{refresh_seconds}">',
-            unsafe_allow_html=True,
+    with st.sidebar:
+        st.header("Dashboard")
+        if st.button("Refresh now", use_container_width=True):
+            st.rerun()
+        auto_refresh = st.number_input(
+            "Auto-refresh (seconds, 0 = off)",
+            min_value=0,
+            max_value=300,
+            value=refresh_seconds,
+            step=5,
+            help="Uses Streamlit fragment updates — no full page reload.",
         )
 
     tracker = SwarmStateTracker()
-    state = _load_dashboard_state(tracker)
-    metrics = state.get("metrics") or {}
-    agents = state.get("agents") or []
 
-    st.title("Etsy AI Swarm — Live Status")
-    st.caption(f"State file: `{default_state_path()}` · auto-refresh every {refresh_seconds}s")
+    def _render() -> None:
+        state = _load_dashboard_state(tracker)
+        metrics = state.get("metrics") or {}
+        agents = state.get("agents") or []
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Listings generated", int(metrics.get("listings_generated") or 0))
-    c2.metric("Successful uploads", int(metrics.get("successful_uploads") or 0))
-    c3.metric("Revenue (USD)", f"${float(metrics.get('revenue_usd') or 0):.2f}")
-    c4.metric("Scrape runs", int(metrics.get("scrape_runs") or 0))
-    c5.metric("Compute cost (USD)", f"${float(metrics.get('compute_cost_usd') or 0):.4f}")
-    success = int(metrics.get("successes") or 0)
-    errors = int(metrics.get("errors") or 0)
-    rate = (success / (success + errors) * 100) if (success + errors) else 100.0
-    st.sidebar.metric("Agent success rate", f"{rate:.0f}%")
-
-    st.subheader("Agent cards")
-    cards = st.columns(min(len(agents) or 1, 5))
-    for index, agent in enumerate(agents[:5]):
-        with cards[index]:
-            badge = _status_badge(agent)
-            st.markdown(f"### {agent.get('name', 'Agent')}")
-            st.markdown(f"**{badge}**")
-            st.write(f"Status: `{agent.get('status', 'Idle')}`")
-            st.write(f"Last active: `{agent.get('last_active', 'n/a')}`")
-            st.progress(
-                min(
-                    1.0,
-                    (int(agent.get("success_count") or 0))
-                    / max(int(agent.get("success_count") or 0) + int(agent.get("error_count") or 0), 1),
-                )
-            )
+        st.title("Etsy AI Swarm — Live Status")
+        if auto_refresh > 0:
             st.caption(
-                f"✓ {agent.get('success_count', 0)} · ✗ {agent.get('error_count', 0)} · "
-                f"health: {agent.get('health', 'idle')}"
+                f"State file: `{default_state_path()}` · auto-refresh every {auto_refresh}s"
+            )
+        else:
+            st.caption(
+                f"State file: `{default_state_path()}` · manual refresh (use sidebar button)"
             )
 
-    st.subheader("Live log feed")
-    log_text = tracker.tail_log_file(lines=100)
-    st.text_area(
-        "System log",
-        value=log_text,
-        height=260,
-        disabled=True,
-        label_visibility="collapsed",
-    )
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        c1.metric(
+            "Scraped listings",
+            int(metrics.get("scraped_listings") or state.get("_db_stats", {}).get("listings") or 0),
+        )
+        c2.metric("Listing drafts", int(metrics.get("listings_generated") or 0))
+        c3.metric("Scrape runs", int(metrics.get("scrape_runs") or 0))
+        c4.metric("Successful uploads", int(metrics.get("successful_uploads") or 0))
+        c5.metric("Revenue (USD)", f"${float(metrics.get('revenue_usd') or 0):.2f}")
+        c6.metric("Compute cost (USD)", f"${float(metrics.get('compute_cost_usd') or 0):.4f}")
+        success = int(metrics.get("successes") or 0)
+        errors = int(metrics.get("errors") or 0)
+        rate = (success / (success + errors) * 100) if (success + errors) else 100.0
+        st.sidebar.metric("Agent success rate", f"{rate:.0f}%")
 
-    with st.expander("Raw state.json"):
-        st.code(json.dumps(state, indent=2), language="json")
+        st.subheader("Agent cards")
+        cards = st.columns(min(len(agents) or 1, 5))
+        for index, agent in enumerate(agents[:5]):
+            with cards[index]:
+                badge = _status_badge(agent)
+                st.markdown(f"### {agent.get('name', 'Agent')}")
+                st.markdown(f"**{badge}**")
+                st.write(f"Status: `{agent.get('status', 'Idle')}`")
+                st.write(f"Last active: `{agent.get('last_active', 'n/a')}`")
+                st.progress(
+                    min(
+                        1.0,
+                        (int(agent.get("success_count") or 0))
+                        / max(
+                            int(agent.get("success_count") or 0) + int(agent.get("error_count") or 0),
+                            1,
+                        ),
+                    )
+                )
+                st.caption(
+                    f"✓ {agent.get('success_count', 0)} · ✗ {agent.get('error_count', 0)} · "
+                    f"health: {agent.get('health', 'idle')}"
+                )
+
+        top = state.get("_top_listings") or []
+        if top:
+            st.subheader("Top scraped listings (SQLite)")
+            rows = [
+                {
+                    "title": (row.get("title") or "")[:70],
+                    "score": row.get("performance_score"),
+                    "price": row.get("price_amount"),
+                    "reviews": row.get("review_count"),
+                    "shop": row.get("shop_name"),
+                }
+                for row in top
+            ]
+            st.dataframe(rows, use_container_width=True, hide_index=True)
+        else:
+            st.info(
+                "No scraped listings yet. Run: "
+                '`python3 -m etsy_ai_space scrape "recovery definition shirt" --demo`'
+            )
+
+        st.subheader("Live log feed")
+        log_text = tracker.tail_log_file(lines=100)
+        st.text_area(
+            "System log",
+            value=log_text,
+            height=260,
+            disabled=True,
+            label_visibility="collapsed",
+        )
+
+        with st.expander("Raw state.json"):
+            st.code(json.dumps(state, indent=2), language="json")
+
+    if auto_refresh > 0:
+        from datetime import timedelta
+
+        @st.fragment(run_every=timedelta(seconds=auto_refresh))
+        def _live_view() -> None:
+            _render()
+
+        _live_view()
+    else:
+        _render()
 
 
 def main() -> None:

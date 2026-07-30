@@ -26,12 +26,14 @@ class UltronOrchestrator:
         model: str = "claude-sonnet-4-20250514",
         demo: bool = True,
         export_dir: str | None = None,
+        require_manual_upload: bool = True,
     ) -> None:
         self.db = db
         self.anthropic_api_key = anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY")
         self.model = model
         self.demo = demo
         self.export_dir = export_dir
+        self.require_manual_upload = require_manual_upload
 
     async def run_pipeline(
         self,
@@ -66,9 +68,15 @@ class UltronOrchestrator:
             LOGGER.warning("Humanization failed: %s", report.issues)
         else:
             draft.tags = report.cleaned_tags
-            draft.status = "approved_for_export"
+            draft.status = (
+                "pending_review"
+                if self.require_manual_upload
+                else "approved_for_export"
+            )
         saved = self.db.save_listing_draft(draft)
-        export_paths = run_phase4_export(self.db, export_dir=self.export_dir)
+        export_paths = None
+        if not self.require_manual_upload:
+            export_paths = run_phase4_export(self.db, export_dir=self.export_dir)
         return {
             "research": research,
             "brief": brief.to_dict(),

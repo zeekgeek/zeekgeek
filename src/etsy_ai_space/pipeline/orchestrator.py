@@ -17,17 +17,18 @@ from ..db import StoreDatabase, default_db_path
 from ..export.bundle import export_pending_drafts
 from ..models import ListingDraft, ProductConcept
 from ..scraper.etsy_scraper import scrape_niche_to_db
+from ..scraper.scrape_settings import resolve_scrape_settings
 from ..tools.humanize import humanize_text
 from .state_tracker import SwarmStateTracker
 
 LOGGER = logging.getLogger(__name__)
 
 CONCEPT_ANGLES = (
-    "minimal line-art variant with a single bold silhouette",
-    "retro sunset palette with distressed texture",
-    "humor-forward quote layout with hand-lettered feel",
-    "cottagecore nature motif with soft organic shapes",
-    "bold typographic statement with high contrast",
+    "dictionary definition layout — serif blocks, original recovery wording",
+    "minimal script quote — small centered text, lots of whitespace",
+    "soberversary date stamp — custom EST date placeholder for buyers",
+    "varsity crew typography — arched RECOVERY over CREW",
+    "one day at a time — bold number motif with time words",
 )
 
 
@@ -144,15 +145,37 @@ async def run_orchestrator(
     db: StoreDatabase,
     *,
     demo: bool = False,
+    scrape_mode: str = "browserclaw",
+    cdp_url: str | None = None,
+    reuse_browser_tab: bool = False,
+    cdp_auto_discover: bool = True,
+    cdp_fallback_demo: bool = True,
     max_results: int = 48,
     concept_count: int = 5,
     export_dir: Path | None = None,
     scrape_first: bool = True,
     tracker: SwarmStateTracker | None = None,
+    require_manual_upload: bool = True,
 ) -> dict[str, Any]:
-    """Full pipeline: scrape → manager concepts → worker drafts → export bundle."""
+    """Build drafts and, when explicitly enabled, export an approved bundle."""
     state = tracker or SwarmStateTracker()
-    state.log(f"Orchestrator started for niche: {niche}")
+    scrape_settings = resolve_scrape_settings(
+        demo=demo,
+        scrape_mode=scrape_mode,
+        cdp_url=cdp_url,
+        reuse_browser_tab=reuse_browser_tab,
+        cdp_auto_discover=cdp_auto_discover,
+        cdp_fallback_demo=cdp_fallback_demo,
+    )
+    state.log(
+        f"Orchestrator started for niche: {niche} "
+        f"(scrape={scrape_settings.scrape_mode}, demo={scrape_settings.use_demo})"
+    )
+    if scrape_settings.cdp_fallback:
+        state.log(
+            "BrowserClaw CDP unreachable — falling back to demo scrape for this cycle",
+            level="WARNING",
+        )
 
     research: dict[str, object] | None = None
     if scrape_first:
@@ -160,10 +183,15 @@ async def run_orchestrator(
             research = await scrape_niche_to_db(
                 niche,
                 db,
-                demo=demo,
+                demo=scrape_settings.use_demo,
                 max_results=max_results,
                 tracker=state,
+                cdp_url=scrape_settings.cdp_url,
+                reuse_browser_tab=scrape_settings.reuse_browser_tab,
+                headless=scrape_settings.scrape_mode == "playwright",
             )
+        if research is not None:
+            research = {**research, "scrape_settings": scrape_settings.to_dict()}
         state.bump_metric("scrape_runs", 1)
 
     top = db.top_listings(limit=12)
@@ -188,7 +216,7 @@ async def run_orchestrator(
         with state.agent_activity("Designer", "Creating Midjourney prompt"):
             design = design_agent(concept)
         with state.agent_activity("SEO", "Writing SEO tags"):
-            seo = seo_agent(concept, copy.title)
+            seo = seo_agent(concept, copy.title, design_style=design.design_style)
 
         draft = ListingDraft(
             concept_id=concept.id,
@@ -202,7 +230,7 @@ async def run_orchestrator(
         report = humanize_text(draft.title, draft.description, draft.tags)
         if report.passed:
             draft.tags = report.cleaned_tags
-            draft.status = "approved_for_export"
+            draft.status = "pending_review" if require_manual_upload else "approved_for_export"
         else:
             draft.status = "needs_revision"
             state.log(f"Humanization flagged {concept.concept_name}: {report.issues}", level="WARNING")
@@ -219,16 +247,23 @@ async def run_orchestrator(
             }
         )
 
-    with state.agent_activity("Manager", "Exporting bundle"):
-        out_dir = export_dir or Path.cwd() / "etsy_ai_space" / "exports"
-        export_paths = export_pending_drafts(db, out_dir)
+    export_paths: dict[str, str] | None = None
+    if require_manual_upload:
+        state.log(
+            f"Orchestrator finished — {len(drafts)} drafts awaiting manual review"
+        )
+    else:
+        with state.agent_activity("Manager", "Exporting bundle"):
+            out_dir = export_dir or Path.cwd() / "etsy_ai_space" / "exports"
+            export_paths = export_pending_drafts(db, out_dir)
+        state.log(f"Orchestrator finished — {len(drafts)} drafts exported")
 
-    state.log(f"Orchestrator finished — {len(drafts)} drafts exported")
     for agent_name in ("Scraper", "Manager", "Copywriter", "Designer", "SEO"):
         state.set_agent(agent_name, "Idle")
 
     return {
         "research": research,
+        "scrape_settings": scrape_settings.to_dict(),
         "trend_summary": trend_summary,
         "concepts": saved_concepts,
         "drafts": drafts,
@@ -252,7 +287,9 @@ async def _cli(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Orchestrate scrape → concepts → worker drafts → export")
+    parser = argparse.ArgumentParser(
+        description="Orchestrate scrape → concepts → worker drafts → review queue"
+    )
     parser.add_argument("niche", help="Niche query, e.g. 'retro cat shirt'")
     parser.add_argument("--db", type=Path, default=None, help=f"SQLite path (default: {default_db_path()})")
     parser.add_argument("--demo", action="store_true", help="Use demo scraper data")

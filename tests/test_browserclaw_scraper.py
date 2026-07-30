@@ -6,7 +6,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from etsy_ai_space.scraper.browser_connect import normalize_cdp_url, resolve_cdp_url
+from etsy_ai_space.scraper.browser_connect import (
+    discover_cdp_url,
+    normalize_cdp_url,
+    probe_cdp_url,
+    resolve_cdp_url,
+)
 from etsy_ai_space.scraper.browserclaw_scraper import load_niches
 from etsy_ai_space.scraper.playwright import PlaywrightScraperBackend
 
@@ -14,6 +19,7 @@ from etsy_ai_space.scraper.playwright import PlaywrightScraperBackend
 class BrowserClawScraperTests(unittest.TestCase):
     def test_normalize_http_and_ws_urls(self) -> None:
         self.assertEqual(normalize_cdp_url("9222"), "http://127.0.0.1:9222")
+        self.assertEqual(normalize_cdp_url("18800"), "http://127.0.0.1:18800")
         self.assertEqual(normalize_cdp_url("127.0.0.1:9222"), "http://127.0.0.1:9222")
         self.assertEqual(
             normalize_cdp_url("http://127.0.0.1:9222"),
@@ -42,6 +48,12 @@ class BrowserClawScraperTests(unittest.TestCase):
     def test_playwright_backend_source_when_cdp(self) -> None:
         backend = PlaywrightScraperBackend(cdp_url="http://127.0.0.1:9222")
         self.assertEqual(backend.source, "browserclaw")
+
+    def test_probe_cdp_returns_none_when_offline(self) -> None:
+        self.assertIsNone(probe_cdp_url("http://127.0.0.1:1", timeout=0.2))
+
+    def test_discover_cdp_returns_none_when_offline(self) -> None:
+        self.assertIsNone(discover_cdp_url(ports=(1, 2)))
 
     def test_parse_signals_extracts_reviews_rating(self) -> None:
         text = "Custom Tee 4.9 (352 reviews) $24.99 Bestseller"

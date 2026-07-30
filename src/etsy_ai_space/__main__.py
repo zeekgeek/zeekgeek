@@ -11,7 +11,7 @@ from pathlib import Path
 from .agents.researcher.runner import build_scraper, run_researcher
 from .agents.ultron.orchestrator import UltronOrchestrator
 from .db import StoreDatabase, default_db_path
-from .export.bundle import export_pending_drafts
+from .export.bundle import export_design_pack, export_pending_drafts
 from .pipeline.autopilot import (
     AutopilotConfig,
     AutopilotRunner,
@@ -23,6 +23,26 @@ from .pipeline.orchestrator import run_orchestrator
 from .scraper.etsy_scraper import scrape_niche_to_db
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _orchestrate_scrape_kwargs(args: argparse.Namespace) -> dict[str, object]:
+    demo = True
+    scrape_mode = "demo"
+    if getattr(args, "browserclaw", False) or getattr(args, "no_demo", False):
+        demo = False
+        scrape_mode = "browserclaw"
+    elif getattr(args, "demo", False):
+        demo = True
+        scrape_mode = "demo"
+    if getattr(args, "scrape_mode", None):
+        scrape_mode = args.scrape_mode
+        demo = scrape_mode == "demo"
+    return {
+        "demo": demo,
+        "scrape_mode": scrape_mode,
+        "cdp_url": getattr(args, "cdp_url", None),
+        "reuse_browser_tab": getattr(args, "reuse_tab", False),
+    }
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -59,7 +79,10 @@ def build_parser() -> argparse.ArgumentParser:
     browserclaw.add_argument("--reuse-tab", action="store_true")
     browserclaw.add_argument("--db", type=Path, default=None)
 
-    pipeline = sub.add_parser("pipeline", help="Run phases 1–4 and export a manual upload bundle")
+    cdp_check = sub.add_parser("cdp-check", help="Verify BrowserClaw/OpenClaw CDP is reachable")
+    cdp_check.add_argument("--cdp-url", default=None, help="Optional explicit CDP URL to test")
+
+    pipeline = sub.add_parser("pipeline", help="Run phases 1–3 and queue a draft for review")
     pipeline.add_argument("query", help="Seed Etsy search query / niche")
     pipeline.add_argument("--niche", default=None, help="Creative niche override")
     pipeline.add_argument("--demo", action="store_true", help="Use demo scraper instead of Playwright")
@@ -68,17 +91,74 @@ def build_parser() -> argparse.ArgumentParser:
 
     orchestrate = sub.add_parser(
         "orchestrate",
-        help="Scrape → manager (5 concepts) → worker agents → export",
+        help="Scrape → manager (5 concepts) → worker agents → review queue",
     )
     orchestrate.add_argument("niche", help="Niche query, e.g. 'retro cat shirt'")
-    orchestrate.add_argument("--demo", action="store_true")
+    orchestrate.add_argument("--demo", action="store_true", help="Offline demo scrape (default without --browserclaw)")
+    orchestrate.add_argument(
+        "--browserclaw",
+        action="store_true",
+        help="Live scrape via BrowserClaw / Chrome CDP (Mac)",
+    )
+    orchestrate.add_argument("--no-demo", action="store_true", help="Alias for --browserclaw")
+    orchestrate.add_argument("--cdp-url", default=None, help="BrowserClaw CDP URL (auto-discover if omitted)")
+    orchestrate.add_argument("--reuse-tab", action="store_true", help="Reuse active BrowserClaw tab")
+    orchestrate.add_argument(
+        "--scrape-mode",
+        choices=["demo", "playwright", "browserclaw"],
+        default=None,
+        help="Override scrape backend (default: demo, or browserclaw with --browserclaw)",
+    )
     orchestrate.add_argument("--concepts", type=int, default=5)
     orchestrate.add_argument("--skip-scrape", action="store_true")
     orchestrate.add_argument("--export-dir", type=Path, default=None)
     orchestrate.add_argument("--max-results", type=int, default=48)
 
-    export = sub.add_parser("export", help="Phase 4 — export pending listing drafts to JSON/CSV")
+    export = sub.add_parser("export", help="Export approved drafts for manual Etsy upload")
     export.add_argument("--export-dir", type=Path, default=None)
+
+    design_pack = sub.add_parser(
+        "design-pack",
+        help="Export Canva design pack from review queue (does not mark drafts exported)",
+    )
+    design_pack.add_argument("--export-dir", type=Path, default=None)
+
+    generate_image = sub.add_parser(
+        "generate-image",
+        help="Generate shirt art via OpenAI Images API (or --demo placeholder)",
+    )
+    generate_image.add_argument("prompt", nargs="?", default=None, help="Image prompt text")
+    generate_image.add_argument(
+        "--from-pack",
+        type=Path,
+        default=None,
+        help="Path to design-pack-*.json",
+    )
+    generate_image.add_argument("--index", type=int, default=0, help="Listing index in design pack")
+    generate_image.add_argument(
+        "--prefer",
+        default="ideogram",
+        choices=["ideogram", "midjourney", "shirt_text"],
+    )
+    generate_image.add_argument("--out-dir", type=Path, default=None)
+    generate_image.add_argument("--filename", default=None)
+    generate_image.add_argument("--model", default="gpt-image-1")
+    generate_image.add_argument("--size", default="1024x1536")
+    generate_image.add_argument("--demo", action="store_true", help="Local placeholder PNG (no API key)")
+    generate_image.add_argument("--no-transparent", action="store_true")
+
+    swarm_assets = sub.add_parser(
+        "swarm-assets",
+        help=(
+            "Build a Cursor CLI script that generates shirt art with your "
+            "Cursor Pro subscription (no image API key) into a local assets folder"
+        ),
+    )
+    swarm_assets.add_argument("pack", type=Path, nargs="?", default=None, help="design-pack-*.json path")
+    swarm_assets.add_argument("--export-dir", type=Path, default=None, help="Where to write the design pack")
+    swarm_assets.add_argument("--out-script", type=Path, default=Path("generate_swarm_assets.sh"))
+    swarm_assets.add_argument("--assets-dir", default="$HOME/SwarmAssets")
+    swarm_assets.add_argument("--model", default=None)
 
     stats = sub.add_parser("stats", help="Show SQLite store statistics")
 
@@ -87,12 +167,28 @@ def build_parser() -> argparse.ArgumentParser:
 
     dashboard = sub.add_parser("dashboard", help="Launch Streamlit swarm status dashboard")
     dashboard.add_argument("--port", type=int, default=8501)
-    dashboard.add_argument("--refresh", type=int, default=3, help="Auto-refresh interval in seconds")
+    dashboard.add_argument(
+        "--refresh",
+        type=int,
+        default=0,
+        help="Auto-refresh interval in seconds (0 = off, use sidebar button instead)",
+    )
 
-    autopilot = sub.add_parser("autopilot", help="Autonomous loop: scrape → concepts → export")
+    autopilot = sub.add_parser("autopilot", help="Autonomous loop: scrape → concepts → review queue")
     autopilot.add_argument("--config", type=Path, default=None, help="Path to autopilot.yaml")
     autopilot.add_argument("--once", action="store_true", help="Run one cycle and exit")
     autopilot.add_argument("--demo", action="store_true", help="Override config demo=true")
+    autopilot.add_argument("--no-demo", action="store_true", help="Live BrowserClaw scrape (demo=false)")
+    autopilot.add_argument("--browserclaw", action="store_true", help="Alias for --no-demo")
+    autopilot.add_argument("--cdp-url", default=None, help="BrowserClaw CDP URL")
+    autopilot.add_argument("--reuse-tab", action="store_true", help="Reuse active BrowserClaw tab")
+
+    browserclaw_import = sub.add_parser(
+        "browserclaw-import",
+        help="Import BrowserClaw TS research JSON into SQLite",
+    )
+    browserclaw_import.add_argument("json_path", type=Path)
+    browserclaw_import.add_argument("--min-score", type=float, default=35.0)
 
     approve = sub.add_parser("approve", help="Approve drafts for manual Etsy upload")
     approve.add_argument("--include-needs-revision", action="store_true")
@@ -132,6 +228,12 @@ async def cmd_scrape(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_cdp_check(args: argparse.Namespace) -> int:
+    from .scraper.cdp_screenshot import cmd_check
+
+    return cmd_check(args.cdp_url)
+
+
 async def cmd_browserclaw_scrape(args: argparse.Namespace) -> int:
     from .scraper.browserclaw_scraper import _cli as browserclaw_cli
 
@@ -140,14 +242,15 @@ async def cmd_browserclaw_scrape(args: argparse.Namespace) -> int:
 
 async def cmd_orchestrate(args: argparse.Namespace) -> int:
     db = StoreDatabase(args.db)
+    scrape_kwargs = _orchestrate_scrape_kwargs(args)
     result = await run_orchestrator(
         args.niche,
         db,
-        demo=args.demo,
         max_results=args.max_results,
         concept_count=args.concepts,
         export_dir=args.export_dir,
         scrape_first=not args.skip_scrape,
+        **scrape_kwargs,
     )
     print(json.dumps(result, indent=2))
     return 0
@@ -174,6 +277,80 @@ def cmd_export(args: argparse.Namespace) -> int:
     out_dir = args.export_dir or Path.cwd() / "etsy_ai_space" / "exports"
     paths = export_pending_drafts(db, out_dir)
     print(json.dumps(paths, indent=2))
+    return 0
+
+
+def cmd_design_pack(args: argparse.Namespace) -> int:
+    db = StoreDatabase(args.db)
+    out_dir = args.export_dir or Path.cwd() / "etsy_ai_space" / "exports"
+    paths = export_design_pack(db, out_dir)
+    print(json.dumps(paths, indent=2))
+    return 0
+
+
+def cmd_generate_image(args: argparse.Namespace) -> int:
+    from .tools.image_gen import (
+        extract_api_prompt,
+        generate_image,
+        load_prompt_from_design_pack,
+    )
+
+    listing = None
+    if args.from_pack:
+        prompt, listing = load_prompt_from_design_pack(args.from_pack, index=args.index)
+        prompt = extract_api_prompt(
+            str(listing.get("image_prompt") or prompt),
+            prefer=args.prefer,
+        )
+    elif args.prompt:
+        prompt = args.prompt
+    else:
+        raise SystemExit("Provide a prompt or --from-pack PATH")
+
+    result = generate_image(
+        prompt,
+        out_dir=args.out_dir,
+        filename=args.filename,
+        demo=args.demo,
+        model=args.model,
+        size=args.size,
+        transparent=not args.no_transparent,
+    )
+    payload = result.to_dict()
+    if listing:
+        payload["source_title"] = listing.get("title")
+        payload["source_status"] = listing.get("status")
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+def cmd_swarm_assets(args: argparse.Namespace) -> int:
+    from .export.bundle import export_design_pack
+    from .tools.swarm_assets import write_run_script
+
+    pack_path = args.pack
+    if pack_path is None:
+        db = StoreDatabase(args.db)
+        out_dir = args.export_dir or Path.cwd() / "etsy_ai_space" / "exports"
+        paths = export_design_pack(db, out_dir)
+        pack_path = Path(paths["json"])
+
+    script_path = write_run_script(
+        pack_path,
+        args.out_script,
+        out_dir=args.assets_dir,
+        model=args.model,
+    )
+    print(
+        json.dumps(
+            {
+                "pack": str(pack_path),
+                "script": str(script_path),
+                "next_step": f"bash {script_path}",
+            },
+            indent=2,
+        )
+    )
     return 0
 
 
@@ -218,11 +395,28 @@ def cmd_record_upload(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_browserclaw_import(args: argparse.Namespace) -> int:
+    from .scraper.browserclaw_import import import_browserclaw_json
+
+    db = StoreDatabase(args.db)
+    result = import_browserclaw_json(args.json_path, db, min_score=args.min_score)
+    print(json.dumps(result, indent=2))
+    return 0
+
+
 async def cmd_autopilot(args: argparse.Namespace) -> int:
     db = StoreDatabase(args.db)
     config = AutopilotConfig.load(args.config)
     if args.demo:
         config.demo = True
+        config.scrape_mode = "demo"
+    if args.no_demo or args.browserclaw:
+        config.demo = False
+        config.scrape_mode = "browserclaw"
+    if args.cdp_url:
+        config.cdp_url = args.cdp_url
+    if args.reuse_tab:
+        config.reuse_browser_tab = True
     runner = AutopilotRunner(db, config)
     if args.once:
         result = await runner.run_cycle()
@@ -265,12 +459,22 @@ def main() -> None:
         raise SystemExit(asyncio.run(cmd_scrape(args)))
     if args.command == "browserclaw-scrape":
         raise SystemExit(asyncio.run(cmd_browserclaw_scrape(args)))
+    if args.command == "browserclaw-import":
+        raise SystemExit(cmd_browserclaw_import(args))
+    if args.command == "cdp-check":
+        raise SystemExit(cmd_cdp_check(args))
     if args.command == "orchestrate":
         raise SystemExit(asyncio.run(cmd_orchestrate(args)))
     if args.command == "pipeline":
         raise SystemExit(asyncio.run(cmd_pipeline(args)))
     if args.command == "export":
         raise SystemExit(cmd_export(args))
+    if args.command == "design-pack":
+        raise SystemExit(cmd_design_pack(args))
+    if args.command == "generate-image":
+        raise SystemExit(cmd_generate_image(args))
+    if args.command == "swarm-assets":
+        raise SystemExit(cmd_swarm_assets(args))
     if args.command == "stats":
         raise SystemExit(cmd_stats(args))
     if args.command == "top":

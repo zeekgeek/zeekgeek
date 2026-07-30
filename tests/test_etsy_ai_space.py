@@ -11,9 +11,13 @@ from etsy_ai_space.agents.designer.workers import expand_listing_copy
 from etsy_ai_space.agents.workers import copywriter_agent, design_agent, seo_agent, workers_build_listing
 from etsy_ai_space.agents.researcher.runner import run_researcher
 from etsy_ai_space.db import StoreDatabase
-from etsy_ai_space.export.bundle import export_pending_drafts
+from etsy_ai_space.export.bundle import export_design_pack, export_pending_drafts
 from etsy_ai_space.models import CreativeBrief, ListingDraft, ProductConcept
-from etsy_ai_space.pipeline.autopilot import AutopilotConfig, AutopilotRunner
+from etsy_ai_space.pipeline.autopilot import (
+    AutopilotConfig,
+    AutopilotRunner,
+    approve_ready_drafts,
+)
 from etsy_ai_space.pipeline.orchestrator import ManagerAgent, run_orchestrator
 from etsy_ai_space.pipeline.state_tracker import SwarmStateTracker, default_state
 from etsy_ai_space.scraper.demo import DemoScraperBackend
@@ -56,7 +60,8 @@ class EtsyAiSpaceTests(unittest.IsolatedAsyncioTestCase):
         design = design_agent(concept)
         seo = seo_agent(concept, copy.title)
         self.assertIn("Retro Cat", copy.title)
-        self.assertIn("--ar 1:1", design.midjourney_prompt)
+        self.assertIn("CANVA", design.midjourney_prompt)
+        self.assertTrue(design.shirt_text)
         self.assertGreaterEqual(len(seo.tags), 5)
 
         draft = workers_build_listing(concept)
@@ -93,7 +98,9 @@ class EtsyAiSpaceTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(len(result["concepts"]), 5)
             self.assertEqual(len(result["drafts"]), 5)
-            self.assertTrue(Path(result["export"]["json"]).exists())
+            self.assertIsNone(result["export"])
+            self.assertEqual(len(db.listing_drafts(status="pending_review")), 5)
+            self.assertFalse((Path(tmp) / "exports").exists())
             loaded = tracker.load()
             self.assertGreater(len(loaded["logs"]), 2)
             self.assertEqual(len(loaded["agents"]), 5)
@@ -121,8 +128,12 @@ class EtsyAiSpaceTests(unittest.IsolatedAsyncioTestCase):
     def test_autopilot_config_loads(self) -> None:
         config = AutopilotConfig.load(Path("/workspace/etsy_ai_space/autopilot.yaml"))
         self.assertGreaterEqual(len(config.niches), 5)
-        self.assertIn("soberversary shirt gift", config.niches)
+        self.assertIn("recovery definition shirt", config.niches)
+        self.assertIn("soberversary shirt custom date", config.niches)
         self.assertTrue(config.demo)
+        self.assertEqual(config.scrape_mode, "browserclaw")
+        self.assertTrue(config.reuse_browser_tab)
+        self.assertTrue(config.cdp_auto_discover)
 
     async def test_autopilot_single_cycle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -131,7 +142,26 @@ class EtsyAiSpaceTests(unittest.IsolatedAsyncioTestCase):
             runner = AutopilotRunner(db, config, export_dir=Path(tmp) / "exports")
             result = await runner.run_cycle()
             self.assertEqual(result["concepts"], 5)
-            self.assertIn("export", result)
+            self.assertIsNone(result["export"])
+            self.assertEqual(result["pending_review"], 5)
+            self.assertFalse((Path(tmp) / "exports").exists())
+
+    async def test_approval_gate_allows_review_then_export(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = StoreDatabase(Path(tmp) / "store.db")
+            await run_orchestrator(
+                "retro cat shirt",
+                db,
+                demo=True,
+                concept_count=2,
+                export_dir=Path(tmp) / "exports",
+            )
+
+            self.assertEqual(approve_ready_drafts(db), 2)
+            paths = export_pending_drafts(db, Path(tmp) / "exports")
+            payload = json.loads(Path(paths["json"]).read_text(encoding="utf-8"))
+            self.assertEqual(payload["count"], 2)
+            self.assertTrue(all(row["status"] == "approved_for_export" for row in payload["listings"]))
 
     def test_designer_worker_builds_listing(self) -> None:
         brief = CreativeBrief(
@@ -173,6 +203,52 @@ class EtsyAiSpaceTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(Path(paths["csv"]).exists())
             payload = json.loads(Path(paths["json"]).read_text(encoding="utf-8"))
             self.assertEqual(payload["count"], 1)
+
+    def test_export_never_falls_back_to_unapproved_drafts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = StoreDatabase(Path(tmp) / "store.db")
+            db.save_listing_draft(
+                ListingDraft(
+                    title="Unreviewed Listing Title",
+                    description="This draft must not be included in an export bundle.",
+                    tags=["recovery shirt"],
+                    price=24.99,
+                    image_prompt="Typography design",
+                    status="pending_review",
+                )
+            )
+
+            paths = export_pending_drafts(db, Path(tmp) / "exports")
+            payload = json.loads(Path(paths["json"]).read_text(encoding="utf-8"))
+            self.assertEqual(payload["count"], 0)
+            self.assertEqual(payload["listings"], [])
+            self.assertEqual(len(db.listing_drafts(status="pending_review")), 1)
+
+    def test_design_pack_exports_pending_without_status_change(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = StoreDatabase(Path(tmp) / "store.db")
+            db.save_listing_draft(
+                ListingDraft(
+                    title="Recovery Definition Shirt, Dictionary Style Sobriety Tee",
+                    description="Original recovery typography tee for sober milestones.",
+                    tags=["recovery shirt", "sobriety gift"],
+                    price=24.99,
+                    image_prompt=(
+                        "=== STYLE: definition ===\n\n"
+                        "SHIRT TEXT (type this exactly in Canva):\n"
+                        "recovery | noun\nchoosing yourself\n\n"
+                        "--- CANVA ---\nType the text."
+                    ),
+                    status="pending_review",
+                )
+            )
+            paths = export_design_pack(db, Path(tmp) / "exports")
+            payload = json.loads(Path(paths["json"]).read_text(encoding="utf-8"))
+            self.assertEqual(payload["count"], 1)
+            self.assertEqual(payload["pack_type"], "design_pack")
+            self.assertIn("choosing yourself", payload["listings"][0]["shirt_text"])
+            self.assertTrue(Path(paths["markdown"]).exists())
+            self.assertEqual(len(db.listing_drafts(status="pending_review")), 1)
 
 
 if __name__ == "__main__":

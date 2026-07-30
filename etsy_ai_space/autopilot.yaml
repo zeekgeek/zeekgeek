@@ -1,15 +1,42 @@
 # Autopilot configuration — edit niches and schedule here
 #
-# Focus: sobriety / addiction recovery POD (not medical/surgery recovery).
-# Add more search phrases below as you validate winners from manual Etsy browsing.
+# Focus: sobriety / addiction recovery POD (NOT medical/surgery/chemo recovery).
+# Niches below match manual Etsy research (Jul 2026).
+#
+# Winning styles observed:
+#   - Dictionary definition tees (7k–10k+ reviews — highest volume)
+#   - Minimal "we do recover" script/sans text
+#   - "One day at a time" + time/number motifs
+#   - "When we recover loudly" advocacy quotes
+#   - Soberversary custom date + Comfort Colors mockups
+#   - Varsity "Recovery Crew" typography
+#   - Namastay Sober yoga crossover
+#   - Teal ribbon addiction awareness (support squad / warrior)
+#   - Christian celebrate recovery (broken chains + cross — original art only)
+#
+# AVOID in original designs (trademark / community sensitivity):
+#   - AA symbol (triangle in circle), "Bill W", official 12-step logos
+#   - Copying exact competitor phrases verbatim
+#   - Medical recovery (knee surgery, mastectomy, chemo, vasectomy, back PT)
 
 niches:
-  - soberversary shirt gift
-  - sobriety recovery shirt
-  - sober anniversary t shirt
+  # Tier 1 — proven high review counts from your browse
   - recovery definition shirt
-  - one day at a time shirt
-  - sober milestone gift shirt
+  - we do recover shirt sobriety
+  - one day at a time recovery shirt
+  - when we recover loudly shirt
+  - soberversary shirt custom date
+  - namastay sober shirt
+  - recovery crew shirt
+  - addiction recovery awareness shirt
+
+  # Tier 2 — strong performers / gift angles
+  - soberversary comfort colors shirt
+  - sobriety milestone gift shirt
+  - recovery is a journey shirt
+  - be the reason recovery is possible shirt
+  - broken chains celebrate recovery shirt
+  - still sober funny shirt
   - addiction recovery support gift
 
 # How long to sleep between full pipeline cycles (seconds)
@@ -23,6 +50,14 @@ max_results_per_scrape: 24
 # Use demo scraper (true = offline, no Etsy HTTP). Set false on your Mac for live trends.
 demo: true
 
+# Live scrape backend when demo=false (Mac + BrowserClaw / Chrome CDP)
+# scrape_mode: demo | playwright | browserclaw
+scrape_mode: browserclaw
+# cdp_url: http://127.0.0.1:18800   # OpenClaw default; auto-discover if unset
+reuse_browser_tab: true
+cdp_auto_discover: true
+cdp_fallback_demo: true
+
 # Optional: set via environment variable ANTHROPIC_API_KEY for smarter copy
 use_claude: false
 
@@ -30,6 +65,6 @@ use_claude: false
 require_manual_upload: true
 daily_upload_cap: 5
 
-# Suggested price band for recovery niche (reference for workers; listings use ~24.99 default)
+# Price band — competitors run 40–60% sales; list ~$24.99–$28.99, use Etsy sales strategically
 target_price_min: 22.99
 target_price_max: 28.99
