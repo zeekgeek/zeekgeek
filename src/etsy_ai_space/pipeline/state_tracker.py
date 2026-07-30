@@ -184,6 +184,7 @@ class SwarmStateTracker:
         metrics = state.setdefault("metrics", default_state()["metrics"])
         metrics["listings_generated"] = int(db_stats.get("listing_drafts") or 0)
         metrics["scrape_runs"] = int(db_stats.get("scrape_runs") or 0)
+        metrics["scraped_listings"] = int(db_stats.get("listings") or 0)
         self.save(state)
 
     @contextmanager

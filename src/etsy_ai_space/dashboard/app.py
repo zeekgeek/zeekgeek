@@ -26,12 +26,19 @@ def _status_badge(agent: dict) -> str:
 
 
 def _load_dashboard_state(tracker: SwarmStateTracker) -> dict:
+    db_stats: dict = {}
+    top_listings: list = []
     try:
         db = StoreDatabase(default_db_path())
-        tracker.sync_metrics_from_db(db.stats())
+        db_stats = db.stats()
+        tracker.sync_metrics_from_db(db_stats)
+        top_listings = db.top_listings(limit=15, min_score=0.0)
     except Exception:
         pass
-    return tracker.load()
+    state = tracker.load()
+    state["_db_stats"] = db_stats
+    state["_top_listings"] = top_listings
+    return state
 
 
 def run_dashboard(*, refresh_seconds: int = 3) -> None:
@@ -66,12 +73,13 @@ def run_dashboard(*, refresh_seconds: int = 3) -> None:
     st.title("Etsy AI Swarm — Live Status")
     st.caption(f"State file: `{default_state_path()}` · auto-refresh every {refresh_seconds}s")
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Listings generated", int(metrics.get("listings_generated") or 0))
-    c2.metric("Successful uploads", int(metrics.get("successful_uploads") or 0))
-    c3.metric("Revenue (USD)", f"${float(metrics.get('revenue_usd') or 0):.2f}")
-    c4.metric("Scrape runs", int(metrics.get("scrape_runs") or 0))
-    c5.metric("Compute cost (USD)", f"${float(metrics.get('compute_cost_usd') or 0):.4f}")
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1.metric("Scraped listings", int(metrics.get("scraped_listings") or state.get("_db_stats", {}).get("listings") or 0))
+    c2.metric("Listing drafts", int(metrics.get("listings_generated") or 0))
+    c3.metric("Scrape runs", int(metrics.get("scrape_runs") or 0))
+    c4.metric("Successful uploads", int(metrics.get("successful_uploads") or 0))
+    c5.metric("Revenue (USD)", f"${float(metrics.get('revenue_usd') or 0):.2f}")
+    c6.metric("Compute cost (USD)", f"${float(metrics.get('compute_cost_usd') or 0):.4f}")
     success = int(metrics.get("successes") or 0)
     errors = int(metrics.get("errors") or 0)
     rate = (success / (success + errors) * 100) if (success + errors) else 100.0
@@ -97,6 +105,26 @@ def run_dashboard(*, refresh_seconds: int = 3) -> None:
                 f"✓ {agent.get('success_count', 0)} · ✗ {agent.get('error_count', 0)} · "
                 f"health: {agent.get('health', 'idle')}"
             )
+
+    top = state.get("_top_listings") or []
+    if top:
+        st.subheader("Top scraped listings (SQLite)")
+        rows = [
+            {
+                "title": (row.get("title") or "")[:70],
+                "score": row.get("performance_score"),
+                "price": row.get("price_amount"),
+                "reviews": row.get("review_count"),
+                "shop": row.get("shop_name"),
+            }
+            for row in top
+        ]
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+    else:
+        st.info(
+            "No scraped listings yet. Run: "
+            "`python3 -m etsy_ai_space scrape \"recovery definition shirt\" --demo`"
+        )
 
     st.subheader("Live log feed")
     log_text = tracker.tail_log_file(lines=100)
