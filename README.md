@@ -370,6 +370,12 @@ python3 -m etsy_ai_space orchestrate "recovery definition shirt" --demo
 python3 -m etsy_ai_space queue
 python3 -m etsy_ai_space approve
 python3 -m etsy_ai_space export
+
+# Optional: Canva design pack (does not mark drafts exported)
+python3 -m etsy_ai_space design-pack
+
+# Legacy single-brief pipeline
+python3 -m etsy_ai_space pipeline "recovery definition shirt" --demo
 ```
 
 Drafts stay in `pending_review` until you approve them. Export only writes
@@ -444,17 +450,24 @@ verbatim. Disclose AI-assisted design in the listing description when you publis
 3. Build artwork from `image_prompt` (Canva first); attach mockups before upload.
 4. Upload listings **manually** in Etsy Seller Manager (3–5/day for new shops).
 5. Only after the shop is established, consider Etsy Open API or browser assist tools.
+6. Never auto-delete listings — warroom outputs recommendations only.
 
 ## Command reference
 
 ```text
-python3 -m etsy_ai_space scrape <query> [--demo] [--cdp-url URL] [--max-results 48]
+python3 -m etsy_ai_space scrape <query> [--demo] [--cdp-url URL] [--max-results 48] [--min-score 35]
 python3 -m etsy_ai_space orchestrate <niche> [--demo] [--concepts 5] [--skip-scrape]
+python3 -m etsy_ai_space pipeline <query> [--demo] [--niche "..."] [--export-dir PATH]
 python3 -m etsy_ai_space queue
 python3 -m etsy_ai_space approve
+python3 -m etsy_ai_space design-pack [--export-dir PATH]
 python3 -m etsy_ai_space export [--export-dir PATH]
 python3 -m etsy_ai_space dashboard --port 8501
 python3 -m etsy_ai_space stats
 python3 -m etsy_ai_space top [--limit 10]
 python3 -m etsy_ai_space cdp-check
+
+# Standalone module entry points
+python3 -m etsy_ai_space.scraper.etsy_scraper "recovery definition shirt" --demo
+python3 -m etsy_ai_space.pipeline.orchestrator "recovery definition shirt" --demo
 ```

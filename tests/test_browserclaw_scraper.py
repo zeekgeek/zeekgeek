@@ -55,6 +55,7 @@ class BrowserClawScraperTests(unittest.TestCase):
     def test_discover_cdp_returns_none_when_offline(self) -> None:
         self.assertIsNone(discover_cdp_url(ports=(1, 2)))
 
+    def test_parse_signals_extracts_reviews_rating(self) -> None:
         text = "Custom Tee 4.9 (352 reviews) $24.99 Bestseller"
         reviews, rating, favorites = PlaywrightScraperBackend._parse_signals(text)
         self.assertEqual(reviews, 352)
