@@ -110,21 +110,19 @@ async def run(args: argparse.Namespace) -> None:
     else:
         print("Running live traceroute with GeoIP + RDAP WHOIS; auto demo fallback if unavailable.")
 
-    speed_task: asyncio.Task | None = None
+    # Fire-and-forget: must not be in the wait set or a finished speed test
+    # would tear down the dashboard (asyncio.wait FIRST_COMPLETED).
     if args.speedtest_on_start:
-        speed_task = asyncio.create_task(_delayed_speedtest(state), name="startup-speedtest")
+        asyncio.create_task(_delayed_speedtest(state), name="startup-speedtest")
 
-    watched = {tracer_task, server_task, stop_task}
-    if speed_task is not None:
-        watched.add(speed_task)
-
-    done, pending = await asyncio.wait(watched, return_when=asyncio.FIRST_COMPLETED)
+    done, pending = await asyncio.wait(
+        {tracer_task, server_task, stop_task},
+        return_when=asyncio.FIRST_COMPLETED,
+    )
 
     failure: Exception | None = None
     for task in done:
         if task is stop_task:
-            continue
-        if task is speed_task:
             continue
         exception = task.exception()
         if exception is not None:
