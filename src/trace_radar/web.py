@@ -279,17 +279,66 @@ DASHBOARD_HTML = """
     const canvas = document.getElementById("globe");
     const ctx = canvas.getContext("2d");
 
-    document.getElementById("trace-btn").onclick = async () => {
-      const target = document.getElementById("target-input").value.trim();
-      if (!target) return;
-      const res = await fetch("/api/trace", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target }),
-      });
-      const body = await res.json();
-      if (body.ok) selectedTarget = target;
-    };
+    const targetInput = document.getElementById("target-input");
+    const traceBtn = document.getElementById("trace-btn");
+    let tracingTarget = null;
+
+    async function startTraceFromInput() {
+      const target = targetInput.value.trim();
+      if (!target) {
+        targetInput.focus();
+        targetInput.placeholder = "Enter a host or IP to trace";
+        return;
+      }
+      if (traceBtn.disabled) return;
+
+      const previousLabel = traceBtn.textContent;
+      traceBtn.disabled = true;
+      traceBtn.textContent = "Tracing…";
+      tracingTarget = target;
+      selectedTarget = target;
+      selectedTtl = null;
+
+      try {
+        const res = await fetch("/api/trace", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ target }),
+        });
+        const body = await res.json();
+        if (!res.ok || !body.ok) {
+          throw new Error(body.error || `Trace failed (${res.status})`);
+        }
+        // Hop feed + globe update via SSE once the tracer emits a route.
+        renderPanels();
+      } catch (err) {
+        tracingTarget = null;
+        alert(err.message || "Could not start traceroute");
+      } finally {
+        // Keep "Tracing…" until hops arrive (or after a short grace period).
+        const started = Date.now();
+        const unlock = () => {
+          const route = (snapshot && snapshot.routes || []).find((r) => r.target === target);
+          const ready = route && route.hop_count > 0;
+          if (ready || Date.now() - started > 8000) {
+            traceBtn.disabled = false;
+            traceBtn.textContent = previousLabel;
+            tracingTarget = null;
+            return;
+          }
+          setTimeout(unlock, 250);
+        };
+        setTimeout(unlock, 250);
+      }
+    }
+
+    traceBtn.onclick = () => { void startTraceFromInput(); };
+    targetInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        void startTraceFromInput();
+      }
+    });
 
     document.getElementById("speed-btn").onclick = async (event) => {
       event.target.disabled = true;
