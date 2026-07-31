@@ -15,8 +15,11 @@ import asyncio
 import logging
 import random
 import re
+import select
 import shutil
 import socket
+import struct
+import time
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -275,6 +278,140 @@ DEMO_ROUTES: list[_DemoRouteSpec] = [
 ]
 
 
+def python_udp_traceroute(
+    target: str,
+    *,
+    probes: int = DEFAULT_PROBES,
+    max_hops: int = 30,
+    timeout: float = 1.2,
+) -> list[ParsedHop]:
+    """UDP traceroute using ``IP_TTL`` + ``IP_RECVERR`` (Linux).
+
+    Works without the system ``traceroute`` binary. Requires the ability to
+    receive ICMP errors on a datagram socket (``IP_RECVERR``). Raises
+    ``RuntimeError`` when the platform cannot support this path.
+    """
+    try:
+        dest_ip = socket.gethostbyname(target)
+    except OSError as exc:
+        raise RuntimeError(f"DNS lookup failed for {target}: {exc}") from exc
+
+    hops: list[ParsedHop] = []
+    destination_reached = False
+
+    # Linux defines IP_RECVERR as 11; some Python builds omit the constant.
+    recv_err = getattr(socket, "IP_RECVERR", 11)
+
+    for ttl in range(1, max_hops + 1):
+        rtts: list[float] = []
+        hop_ip: str | None = None
+        for probe_index in range(probes):
+            ip, rtt = _udp_probe_once(
+                dest_ip,
+                ttl=ttl,
+                probe_index=probe_index,
+                timeout=timeout,
+                recv_err=recv_err,
+            )
+            if ip is not None:
+                hop_ip = ip
+            if rtt is not None:
+                rtts.append(rtt)
+            if ip == dest_ip:
+                destination_reached = True
+        hops.append(
+            ParsedHop(
+                ttl=ttl,
+                ip=hop_ip,
+                hostname=None,
+                rtts_ms=rtts,
+                probes=probes,
+            )
+        )
+        if destination_reached:
+            break
+
+    if not hops:
+        raise RuntimeError("UDP traceroute produced no hops")
+    # If every hop timed out, the platform likely cannot surface ICMP errors.
+    if all(h.ip is None for h in hops):
+        raise RuntimeError("UDP traceroute received no ICMP replies (need CAP_NET_RAW or traceroute)")
+    return hops
+
+
+def _udp_probe_once(
+    dest_ip: str,
+    *,
+    ttl: int,
+    probe_index: int,
+    timeout: float,
+    recv_err: int = 11,
+) -> tuple[str | None, float | None]:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_TTL, ttl)
+        try:
+            sock.setsockopt(socket.IPPROTO_IP, recv_err, 1)
+        except OSError as exc:
+            raise RuntimeError(f"IP_RECVERR unsupported: {exc}") from exc
+        sock.setblocking(False)
+        port = 33434 + (ttl * 10 + probe_index) % 20000
+        payload = f"TR{ttl}-{probe_index}".encode("ascii")
+        start = time.perf_counter()
+        try:
+            sock.sendto(payload, (dest_ip, port))
+        except OSError:
+            return None, None
+
+        deadline = start + timeout
+        while time.perf_counter() < deadline:
+            remaining = max(0.0, deadline - time.perf_counter())
+            # On Linux, ICMP errors surface as exceptional conditions (POLLERR).
+            readable, _, errored = select.select([sock], [], [sock], remaining)
+            if not readable and not errored:
+                break
+            try:
+                errqueue = getattr(socket, "MSG_ERRQUEUE", 0x2000)
+                _data, ancdata, _flags, addr = sock.recvmsg(512, 512, errqueue)
+                hop_ip = _parse_recverr_ip(ancdata, recv_err=recv_err) or (addr[0] if addr else None)
+                rtt = (time.perf_counter() - start) * 1000.0
+                return hop_ip, rtt
+            except BlockingIOError:
+                continue
+            except OSError:
+                try:
+                    _data, addr = sock.recvfrom(512)
+                    rtt = (time.perf_counter() - start) * 1000.0
+                    return addr[0] if addr else None, rtt
+                except OSError:
+                    break
+        return None, None
+    finally:
+        sock.close()
+
+
+def _parse_recverr_ip(ancdata: list, *, recv_err: int = 11) -> str | None:
+    for level, typ, data in ancdata:
+        if level != getattr(socket, "SOL_IP", 0):
+            continue
+        if typ != recv_err or len(data) < 20:
+            continue
+        # sock_extended_err is 16 bytes; sockaddr_in follows.
+        try:
+            family = struct.unpack_from("@H", data, 16)[0]
+            if family == socket.AF_INET and len(data) >= 24:
+                return socket.inet_ntoa(data[20:24])
+        except (struct.error, OSError, ValueError):
+            pass
+        if len(data) >= 4:
+            try:
+                return socket.inet_ntoa(data[-4:])
+            except OSError:
+                pass
+    return None
+
+
 @dataclass
 class LiveTracerBackend:
     """Run system traceroute against configured targets on an interval."""
@@ -292,12 +429,25 @@ class LiveTracerBackend:
             await self.state.request_trace(target)
         origin = await self.geo.lookup_self()
         await self.state.set_origin(origin)
-        await self.state.add_system_event("tracer-live", "Live traceroute backend started")
 
-        # Prove the binary exists up front so __main__ can fall back to demo.
-        if not self._find_traceroute_cmd() and not shutil.which("tracepath"):
-            raise RuntimeError("Neither traceroute nor tracepath is available on PATH")
+        mode = "system"
+        if self._find_traceroute_cmd() or shutil.which("tracepath"):
+            await self.state.add_system_event("tracer-live", "Live traceroute backend started (system binary)")
+        else:
+            # Prove the Python UDP path works before committing to the live loop.
+            try:
+                await asyncio.to_thread(python_udp_traceroute, "1.1.1.1", probes=1, max_hops=3, timeout=1.0)
+                mode = "python-udp"
+                await self.state.add_system_event(
+                    "tracer-live",
+                    "Live traceroute backend started (Python UDP — no system traceroute binary)",
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    f"No traceroute/tracepath binary and Python UDP probe failed ({exc})"
+                ) from exc
 
+        self._mode = mode
         while True:
             new_target = await self.state.next_new_target(timeout=0.1)
             if new_target:
@@ -364,7 +514,6 @@ class LiveTracerBackend:
         cmd = self._find_traceroute_cmd()
         if cmd:
             args = [cmd, "-n", "-q", str(self.probes), "-m", str(self.max_hops), "-w", "2", target]
-            # Some BSD traceroute use -q differently; still best-effort.
             proc = await asyncio.create_subprocess_exec(
                 *args,
                 stdout=asyncio.subprocess.PIPE,
@@ -379,7 +528,9 @@ class LiveTracerBackend:
                 return hops
         if shutil.which("tracepath"):
             proc = await asyncio.create_subprocess_exec(
-                "tracepath", "-n", target,
+                "tracepath",
+                "-n",
+                target,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -389,7 +540,15 @@ class LiveTracerBackend:
             if hops:
                 return hops
             raise RuntimeError(stderr.decode("utf-8", errors="replace") or "tracepath produced no hops")
-        raise RuntimeError("No traceroute binary available")
+
+        # No system binary — use the pure-Python UDP / IP_RECVERR path.
+        return await asyncio.to_thread(
+            python_udp_traceroute,
+            target,
+            probes=self.probes,
+            max_hops=self.max_hops,
+            timeout=1.2,
+        )
 
     def _find_traceroute_cmd(self) -> str | None:
         for name in ("traceroute", "traceroute6"):

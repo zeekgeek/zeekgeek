@@ -148,6 +148,29 @@ class WhoisTests(unittest.TestCase):
         self.assertFalse(results["9.9.9.9"].found)
 
 
+class RequestTraceTests(unittest.TestCase):
+    def test_retrace_queues_existing_target(self) -> None:
+        async def _run() -> tuple[bool, bool, str | None]:
+            state = RadarState(demo_mode=True)
+            first = await state.request_trace("example.com")
+            second = await state.request_trace("example.com")
+            queued = await state.next_new_target(timeout=0.1)
+            # Drain the first queued item from the initial create, then the re-trace.
+            # After create+retrace the queue has two entries; pull until empty.
+            seen = [queued]
+            while True:
+                item = await state.next_new_target(timeout=0.05)
+                if item is None:
+                    break
+                seen.append(item)
+            return first, second, seen
+
+        first, second, seen = asyncio.run(_run())
+        self.assertTrue(first)
+        self.assertFalse(second)
+        self.assertEqual(seen.count("example.com"), 2)
+
+
 class StateTests(unittest.TestCase):
     def test_ingest_accumulates_packet_loss_and_whois(self) -> None:
         async def _run() -> dict:

@@ -188,18 +188,29 @@ class RadarState:
         self._lock = asyncio.Lock()
 
     async def request_trace(self, target: str) -> bool:
-        """Register a new target; returns False if already tracked."""
+        """Register a target and queue a probe.
+
+        Returns True when the target is newly added, False when it was already
+        tracked (a re-trace is still queued so Trace route always refreshes).
+        """
         target = target.strip()
         if not target:
             return False
+        created = False
         async with self._lock:
-            if target in self._routes:
-                return False
-            self._routes[target] = RouteTrace(target=target)
-            self._order.append(target)
-            self._events.append(self._system_event("trace-requested", f"Tracing route to {target}…", target=target))
+            if target not in self._routes:
+                self._routes[target] = RouteTrace(target=target)
+                self._order.append(target)
+                created = True
+            self._events.append(
+                self._system_event(
+                    "trace-requested",
+                    f"{'Tracing' if created else 'Re-tracing'} route to {target}…",
+                    target=target,
+                )
+            )
         await self._new_targets.put(target)
-        return True
+        return created
 
     async def next_new_target(self, timeout: float) -> str | None:
         """Backends poll this to pick up user-requested targets promptly."""
@@ -287,7 +298,9 @@ class RadarState:
 
     async def update_speedtest(self, *, finished: bool = False, **fields: Any) -> dict[str, Any]:
         async with self._lock:
-            if fields.get("status") == "running" and self._speedtest["status"] != "running":
+            # Fresh run (or live→demo restart): reset gauges when latency phase begins.
+            starting = fields.get("status") == "running" and fields.get("phase") == "latency"
+            if starting:
                 self._speedtest = _idle_speedtest()
                 self._speedtest["started_at"] = iso_time(utc_now())
             self._speedtest.update(fields)

@@ -341,11 +341,32 @@ DASHBOARD_HTML = """
     });
 
     document.getElementById("speed-btn").onclick = async (event) => {
-      event.target.disabled = true;
+      const btn = event.currentTarget;
+      const previous = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "Running…";
       try {
-        await fetch("/api/speedtest", { method: "POST" });
-      } finally {
-        setTimeout(() => { event.target.disabled = false; }, 1500);
+        const res = await fetch("/api/speedtest", { method: "POST" });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(body.error || `Speed test failed (${res.status})`);
+        }
+        // Stay disabled until the SSE snapshot reports complete/failed.
+        const started = Date.now();
+        const unlock = () => {
+          const st = (snapshot && snapshot.speedtest) || {};
+          if (st.status === "complete" || st.status === "failed" || Date.now() - started > 45000) {
+            btn.disabled = false;
+            btn.textContent = previous;
+            return;
+          }
+          setTimeout(unlock, 300);
+        };
+        setTimeout(unlock, 300);
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = previous;
+        alert(err.message || "Could not start speed test");
       }
     };
 
@@ -399,9 +420,16 @@ DASHBOARD_HTML = """
       setGauge("g-down", st.download_mbps != null ? st.download_mbps : (st.phase === "download" ? live : null));
       setGauge("g-up", st.upload_mbps != null ? st.upload_mbps : (st.phase === "upload" ? live : null));
       document.getElementById("speed-bar").style.width = `${st.progress || 0}%`;
-      const msg = st.message || (st.status === "complete"
-        ? `Done · loss ${fmt(st.packet_loss_pct)}% · ${st.server || ""}`
-        : st.status === "running" ? `Running ${st.phase || ""}…` : "Idle — click Run speed test.");
+      let msg = "Idle — click Run speed test.";
+      if (st.status === "running") {
+        msg = st.message || `Running ${st.phase || ""}…`;
+      } else if (st.status === "complete") {
+        msg = `Done · ↓ ${fmt(st.download_mbps)} / ↑ ${fmt(st.upload_mbps)} Mbps · `
+          + `${fmt(st.latency_ms)} ms · loss ${fmt(st.packet_loss_pct)}%`
+          + (st.server ? ` · ${st.server}` : "");
+      } else if (st.status === "failed") {
+        msg = st.message || "Speed test failed.";
+      }
       document.getElementById("speed-msg").textContent = msg;
 
       const tabs = document.getElementById("route-tabs");

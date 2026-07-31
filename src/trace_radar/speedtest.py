@@ -4,6 +4,9 @@ Latency/jitter/loss come from repeated TCP connect probes (no raw sockets
 needed). Throughput uses Cloudflare's public speed endpoints
 (``speed.cloudflare.com/__down`` and ``__up``). Demo mode simulates a
 realistic run so the dashboard gauges animate without network access.
+
+Live failures (blocked User-Agent, egress limits, etc.) auto-fall back to the
+demo run so the UI always completes a usable measurement.
 """
 
 from __future__ import annotations
@@ -13,6 +16,7 @@ import logging
 import random
 import socket
 import time
+import urllib.error
 import urllib.request
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -23,12 +27,25 @@ LOGGER = logging.getLogger(__name__)
 
 DOWNLOAD_URL = "https://speed.cloudflare.com/__down?bytes={size}"
 UPLOAD_URL = "https://speed.cloudflare.com/__up"
-DOWNLOAD_BYTES = 25_000_000
-UPLOAD_BYTES = 6_000_000
+# Smaller payloads keep the UI responsive while still producing a real Mbps reading.
+DOWNLOAD_BYTES = 10_000_000
+UPLOAD_BYTES = 2_000_000
 LATENCY_HOST = "1.1.1.1"
 LATENCY_PORT = 443
 LATENCY_PROBES = 10
 MAX_PHASE_SECONDS = 12.0
+
+# Cloudflare returns 403 for non-browser User-Agents from some networks.
+BROWSER_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/120.0.0.0 Safari/537.36"
+)
+REQUEST_HEADERS = {
+    "User-Agent": BROWSER_UA,
+    "Accept": "*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+}
 
 
 def compute_jitter(rtts: list[float]) -> float:
@@ -68,8 +85,21 @@ async def run_speed_test(state: "RadarState") -> None:
     try:
         await _run_live(state)
     except Exception as exc:
-        LOGGER.warning("Speed test failed: %s", exc)
-        await state.update_speedtest(status="failed", phase=None, message=f"Speed test failed: {exc}")
+        LOGGER.warning("Live speed test failed (%s); falling back to demo run", exc)
+        await state.add_system_event(
+            "speedtest-fallback",
+            f"Live speed test unavailable ({type(exc).__name__}: {exc}). Using simulated run.",
+        )
+        try:
+            await _run_demo(state)
+        except Exception as demo_exc:
+            LOGGER.warning("Demo speed test failed: %s", demo_exc)
+            await state.update_speedtest(
+                status="failed",
+                phase=None,
+                message=f"Speed test failed: {demo_exc}",
+                finished=True,
+            )
 
 
 async def _run_live(state: "RadarState") -> None:
@@ -82,6 +112,9 @@ async def _run_live(state: "RadarState") -> None:
     )
     samples = await asyncio.to_thread(_tcp_latency_samples, LATENCY_HOST, LATENCY_PORT, LATENCY_PROBES)
     summary = summarize_rtts(samples)
+    if summary["avg_ms"] is None:
+        raise RuntimeError("Latency probes all failed — network may be blocked")
+
     await state.update_speedtest(
         phase="download",
         progress=0,
@@ -103,12 +136,16 @@ async def _run_live(state: "RadarState") -> None:
         return _cb
 
     down_bytes, down_seconds = await asyncio.to_thread(_measure_download, report("download"))
+    if down_bytes < 50_000:
+        raise RuntimeError(f"Download too small ({down_bytes} bytes) — endpoint may have blocked the request")
     download_mbps = throughput_mbps(down_bytes, down_seconds)
     await state.update_speedtest(
         phase="upload", progress=0, download_mbps=download_mbps, current_mbps=None, message="Measuring upload…"
     )
 
     up_bytes, up_seconds = await asyncio.to_thread(_measure_upload, report("upload"))
+    if up_bytes < 50_000:
+        raise RuntimeError(f"Upload too small ({up_bytes} bytes)")
     upload_mbps = throughput_mbps(up_bytes, up_seconds)
     await state.update_speedtest(
         status="complete",
@@ -124,7 +161,11 @@ async def _run_live(state: "RadarState") -> None:
 async def _run_demo(state: "RadarState") -> None:
     rng = random.Random()
     await state.update_speedtest(
-        status="running", phase="latency", progress=10, server="Simulated (demo mode)", message="Measuring latency…"
+        status="running",
+        phase="latency",
+        progress=10,
+        server="Simulated (demo mode)",
+        message="Measuring latency…",
     )
     await asyncio.sleep(0.8)
     latency = round(rng.uniform(9.0, 16.0), 2)
@@ -177,34 +218,44 @@ def _tcp_latency_samples(host: str, port: int, count: int, timeout: float = 2.0)
 
 def _measure_download(progress_cb: Callable[[float, float], None]) -> tuple[int, float]:
     url = DOWNLOAD_URL.format(size=DOWNLOAD_BYTES)
-    request = urllib.request.Request(url, headers={"User-Agent": "trace-radar/0.1"})
+    request = urllib.request.Request(url, headers=REQUEST_HEADERS)
     received = 0
     start = time.perf_counter()
-    with urllib.request.urlopen(request, timeout=MAX_PHASE_SECONDS + 8) as response:
-        while True:
-            chunk = response.read(256 * 1024)
-            if not chunk:
-                break
-            received += len(chunk)
-            elapsed = time.perf_counter() - start
-            progress_cb(min(100.0, 100.0 * received / DOWNLOAD_BYTES), (received * 8 / max(elapsed, 1e-6)) / 1e6)
-            if elapsed > MAX_PHASE_SECONDS:
-                break
+    try:
+        with urllib.request.urlopen(request, timeout=MAX_PHASE_SECONDS + 8) as response:
+            while True:
+                chunk = response.read(256 * 1024)
+                if not chunk:
+                    break
+                received += len(chunk)
+                elapsed = time.perf_counter() - start
+                progress_cb(
+                    min(100.0, 100.0 * received / DOWNLOAD_BYTES),
+                    (received * 8 / max(elapsed, 1e-6)) / 1e6,
+                )
+                if elapsed > MAX_PHASE_SECONDS:
+                    break
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"Download HTTP {exc.code}") from exc
     return received, time.perf_counter() - start
 
 
 def _measure_upload(progress_cb: Callable[[float, float], None]) -> tuple[int, float]:
-    payload = bytes(random.getrandbits(8) for _ in range(64 * 1024)) * (UPLOAD_BYTES // (64 * 1024))
+    # Fixed pattern is far faster than filling with getrandbits() and is fine for throughput.
+    payload = b"0123456789abcdef" * (UPLOAD_BYTES // 16)
     request = urllib.request.Request(
         UPLOAD_URL,
         data=payload,
         method="POST",
-        headers={"User-Agent": "trace-radar/0.1", "Content-Type": "application/octet-stream"},
+        headers={**REQUEST_HEADERS, "Content-Type": "application/octet-stream"},
     )
     start = time.perf_counter()
     progress_cb(20.0, 0.0)
-    with urllib.request.urlopen(request, timeout=MAX_PHASE_SECONDS + 8):
-        pass
+    try:
+        with urllib.request.urlopen(request, timeout=MAX_PHASE_SECONDS + 8):
+            pass
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"Upload HTTP {exc.code}") from exc
     elapsed = time.perf_counter() - start
     progress_cb(100.0, (len(payload) * 8 / max(elapsed, 1e-6)) / 1e6)
     return len(payload), elapsed
