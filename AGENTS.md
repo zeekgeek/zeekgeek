@@ -33,6 +33,10 @@ Running the apps:
  Image generation: `python3 -m etsy_ai_space cursor-generate --list` to list pending prompts,
  then ask the Cursor agent to generate images and attach them with `cursor-generate --attach <draft-id> <file>`.
  Images are copied to `etsy_ai_space/exports/images/` and referenced in the export bundle.
+ BrowserClaw upload: `python3 -m etsy_ai_space browserclaw-upload --dry-run` then
+ `browserclaw-upload --package etsy_ai_space/exports/listing-02-we-do-recover --reuse-tab`
+ (saves as Etsy draft by default; needs BrowserClaw CDP + seller login).
+ `--publish` is blocked while `require_manual_upload: true` unless `--force-publish`.
 - Dashboards bind to `http://127.0.0.1:<port>` by default. If the port is busy the app
  auto-increments to the next free port and prints the chosen URL, so read the startup log
  rather than assuming the default. Pass `--port <n>` for deterministic binding.

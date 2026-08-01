@@ -98,7 +98,7 @@ class EtsyAiSpaceTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(Path(result["export"]["json"]).exists())
             loaded = tracker.load()
             self.assertGreater(len(loaded["logs"]), 2)
-            self.assertEqual(len(loaded["agents"]), 6)
+            self.assertEqual(len(loaded["agents"]), 7)
 
     def test_state_tracker_writes_json_and_logs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -117,7 +117,7 @@ class EtsyAiSpaceTests(unittest.IsolatedAsyncioTestCase):
     def test_default_state_schema(self) -> None:
         state = default_state()
         self.assertIn("metrics", state)
-        self.assertEqual(len(state["agents"]), 6)
+        self.assertEqual(len(state["agents"]), 7)
         self.assertIn("listings_generated", state["metrics"])
 
     def test_autopilot_config_loads(self) -> None:

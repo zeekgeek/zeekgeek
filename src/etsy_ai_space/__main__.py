@@ -65,6 +65,31 @@ def build_parser() -> argparse.ArgumentParser:
     browserclaw.add_argument("--reuse-tab", action="store_true")
     browserclaw.add_argument("--db", type=Path, default=None)
 
+    browserclaw_upload = sub.add_parser(
+        "browserclaw-upload",
+        help="Upload listing drafts to Etsy Seller Manager via BrowserClaw (saves as draft by default)",
+    )
+    browserclaw_upload.add_argument("--cdp-url", default=None, help="BrowserClaw CDP URL")
+    browserclaw_upload.add_argument("--config", type=Path, default=None, help="autopilot.yaml path")
+    browserclaw_upload.add_argument("--list", action="store_true", help="List uploadable drafts")
+    browserclaw_upload.add_argument("--draft-id", action="append", help="Draft id to upload (repeatable)")
+    browserclaw_upload.add_argument(
+        "--package",
+        type=Path,
+        default=None,
+        help="Upload from a listing package folder (e.g. etsy_ai_space/exports/listing-02-we-do-recover)",
+    )
+    browserclaw_upload.add_argument("--images-dir", action="append", help="Extra images directory")
+    browserclaw_upload.add_argument("--limit", type=int, default=None)
+    browserclaw_upload.add_argument("--publish", action="store_true", help="Publish instead of save draft")
+    browserclaw_upload.add_argument(
+        "--force-publish",
+        action="store_true",
+        help="Allow publish even when require_manual_upload=true",
+    )
+    browserclaw_upload.add_argument("--dry-run", action="store_true", help="Preview queue only")
+    browserclaw_upload.add_argument("--reuse-tab", action="store_true")
+
     pipeline = sub.add_parser("pipeline", help="Run phases 1–4 and export a manual upload bundle")
     pipeline.add_argument("query", help="Seed Etsy search query / niche")
     pipeline.add_argument("--niche", default=None, help="Creative niche override")
@@ -184,6 +209,12 @@ async def cmd_browserclaw_scrape(args: argparse.Namespace) -> int:
     from .scraper.browserclaw_scraper import _cli as browserclaw_cli
 
     return await browserclaw_cli(args)
+
+
+async def cmd_browserclaw_upload(args: argparse.Namespace) -> int:
+    from .scraper.browserclaw_uploader import _cli as browserclaw_upload_cli
+
+    return await browserclaw_upload_cli(args)
 
 
 async def cmd_orchestrate(args: argparse.Namespace) -> int:
@@ -339,6 +370,8 @@ def main() -> None:
         raise SystemExit(asyncio.run(cmd_scrape(args)))
     if args.command == "browserclaw-scrape":
         raise SystemExit(asyncio.run(cmd_browserclaw_scrape(args)))
+    if args.command == "browserclaw-upload":
+        raise SystemExit(asyncio.run(cmd_browserclaw_upload(args)))
     if args.command == "orchestrate":
         raise SystemExit(asyncio.run(cmd_orchestrate(args)))
     if args.command == "pipeline":
