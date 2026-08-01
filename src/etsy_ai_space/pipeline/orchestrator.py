@@ -197,6 +197,7 @@ async def run_orchestrator(
             tags=seo.tags,
             price=24.99,
             image_prompt=design.midjourney_prompt,
+            cursor_image_prompt=design.cursor_image_prompt,
             taxonomy_hint=concept.concept_name,
         )
         report = humanize_text(draft.title, draft.description, draft.tags)

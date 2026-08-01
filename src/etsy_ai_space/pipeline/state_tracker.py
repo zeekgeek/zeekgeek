@@ -10,7 +10,7 @@ from typing import Any, Iterator
 
 from ..models import iso_time
 
-DEFAULT_AGENTS = ("Scraper", "Manager", "Copywriter", "Designer", "SEO")
+DEFAULT_AGENTS = ("Scraper", "Manager", "Copywriter", "Designer", "SEO", "ImageGenerator")
 
 
 def default_pipeline_dir() -> Path:

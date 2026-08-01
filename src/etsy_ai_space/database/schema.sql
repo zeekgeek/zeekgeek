@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS listing_drafts (
     tags_json TEXT NOT NULL,
     price REAL NOT NULL,
     image_prompt TEXT NOT NULL,
+    cursor_image_prompt TEXT,
     image_path TEXT,
     taxonomy_hint TEXT,
     created_at TEXT NOT NULL,

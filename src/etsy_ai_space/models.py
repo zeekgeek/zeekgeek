@@ -138,6 +138,7 @@ class ListingDraft:
     tags: list[str]
     price: float
     image_prompt: str
+    cursor_image_prompt: str | None = None
     image_path: str | None = None
     taxonomy_hint: str | None = None
     brief_id: int | None = None
@@ -153,6 +154,7 @@ class ListingDraft:
             "tags": "|".join(self.tags),
             "price": self.price,
             "image_prompt": self.image_prompt,
+            "cursor_image_prompt": self.cursor_image_prompt or "",
             "image_path": self.image_path or "",
             "taxonomy_hint": self.taxonomy_hint or "",
             "status": self.status,

@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import json
 import logging
+import sys
 from pathlib import Path
 
 from .agents.researcher.runner import build_scraper, run_researcher
@@ -19,6 +20,11 @@ from .pipeline.autopilot import (
     record_manual_upload,
 )
 from .pipeline.state_tracker import SwarmStateTracker
+from .agents.cursor_image_generator import (
+    default_images_dir,
+    list_pending_image_jobs,
+    save_generated_image,
+)
 from .pipeline.orchestrator import run_orchestrator
 from .scraper.etsy_scraper import scrape_niche_to_db
 
@@ -88,6 +94,48 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard = sub.add_parser("dashboard", help="Launch Streamlit swarm status dashboard")
     dashboard.add_argument("--port", type=int, default=8501)
     dashboard.add_argument("--refresh", type=int, default=3, help="Auto-refresh interval in seconds")
+
+    cursor_generate = sub.add_parser(
+        "cursor-generate",
+        help="List or attach Cursor-agent-generated images for listing drafts",
+    )
+    cursor_generate.add_argument(
+        "--list",
+        action="store_true",
+        help="List pending image generation jobs (drafts with image_prompt but no image_path)",
+    )
+    cursor_generate.add_argument(
+        "--all",
+        action="store_true",
+        help="Agent-friendly alias for --list: emit all pending jobs as JSON",
+    )
+    cursor_generate.add_argument(
+        "--attach",
+        nargs=2,
+        metavar=("DRAFT_ID", "IMAGE_FILE"),
+        help="Attach a generated image file to a listing draft",
+    )
+    cursor_generate.add_argument(
+        "--status",
+        default="approved_for_export",
+        help="Only consider drafts with this status (default: approved_for_export)",
+    )
+    cursor_generate.add_argument(
+        "--include-needs-revision",
+        action="store_true",
+        help="Also include drafts that need revision",
+    )
+    cursor_generate.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite an existing image for the same draft",
+    )
+    cursor_generate.add_argument(
+        "--images-dir",
+        type=Path,
+        default=None,
+        help=f"Directory to store generated images (default: {default_images_dir()})",
+    )
 
     autopilot = sub.add_parser("autopilot", help="Autonomous loop: scrape → concepts → export")
     autopilot.add_argument("--config", type=Path, default=None, help="Path to autopilot.yaml")
@@ -232,6 +280,32 @@ async def cmd_autopilot(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_cursor_generate(args: argparse.Namespace) -> int:
+    db = StoreDatabase(args.db)
+    if args.list or args.all:
+        jobs = list_pending_image_jobs(
+            db,
+            status=args.status,
+            include_needs_revision=args.include_needs_revision,
+        )
+        print(json.dumps(jobs, indent=2))
+        return 0
+    if args.attach:
+        draft_id = int(args.attach[0])
+        image_file = Path(args.attach[1])
+        dest = save_generated_image(
+            draft_id,
+            image_file,
+            db,
+            images_dir=args.images_dir,
+            force=args.force,
+        )
+        print(json.dumps({"draft_id": draft_id, "image_path": str(dest)}, indent=2))
+        return 0
+    print("Use --list, --all, or --attach <draft-id> <image-file>", file=sys.stderr)
+    return 1
+
+
 def cmd_dashboard(args: argparse.Namespace) -> int:
     import subprocess
     import sys
@@ -275,6 +349,8 @@ def main() -> None:
         raise SystemExit(cmd_stats(args))
     if args.command == "top":
         raise SystemExit(cmd_top(args))
+    if args.command == "cursor-generate":
+        raise SystemExit(cmd_cursor_generate(args))
     if args.command == "dashboard":
         raise SystemExit(cmd_dashboard(args))
     if args.command == "autopilot":

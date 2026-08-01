@@ -30,6 +30,9 @@ Running the apps:
  Phase 4 exports JSON/CSV for **manual** listing upload — no Etsy API publish in this flow.
  Dashboard: `python3 -m etsy_ai_space dashboard` (Streamlit; reads `etsy_ai_space/pipeline/state.json`).
  Autopilot: `python3 -m etsy_ai_space autopilot --once --demo` (loop with `autopilot.yaml`; manual upload gate).
+ Image generation: `python3 -m etsy_ai_space cursor-generate --list` to list pending prompts,
+ then ask the Cursor agent to generate images and attach them with `cursor-generate --attach <draft-id> <file>`.
+ Images are copied to `etsy_ai_space/exports/images/` and referenced in the export bundle.
 - Dashboards bind to `http://127.0.0.1:<port>` by default. If the port is busy the app
  auto-increments to the next free port and prints the chosen URL, so read the startup log
  rather than assuming the default. Pass `--port <n>` for deterministic binding.
