@@ -25,13 +25,15 @@ def list_pending_image_jobs(
     include_needs_revision: bool = False,
 ) -> list[dict[str, Any]]:
     """Return drafts that have an image prompt but no image path yet."""
-    statuses = [status] if status else []
-    if include_needs_revision and status != "needs_revision":
-        statuses.append("needs_revision")
-
-    drafts: list[dict[str, Any]] = []
-    for target_status in statuses:
-        drafts.extend(db.listing_drafts(status=target_status))
+    if status is None:
+        drafts = db.listing_drafts()
+    else:
+        statuses = [status]
+        if include_needs_revision and status != "needs_revision":
+            statuses.append("needs_revision")
+        drafts = []
+        for target_status in statuses:
+            drafts.extend(db.listing_drafts(status=target_status))
 
     pending: list[dict[str, Any]] = []
     for draft in drafts:

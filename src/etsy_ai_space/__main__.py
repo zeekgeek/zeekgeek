@@ -117,8 +117,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     cursor_generate.add_argument(
         "--status",
-        default="approved_for_export",
-        help="Only consider drafts with this status (default: approved_for_export)",
+        default=None,
+        help="Only consider drafts with this status (default: any status)",
     )
     cursor_generate.add_argument(
         "--include-needs-revision",
