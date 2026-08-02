@@ -472,6 +472,33 @@ Typical flow:
 
 This keeps the manual-upload safety gate: the pipeline never publishes to Etsy automatically, and image generation is agent-driven rather than fully autonomous.
 
+## Printify draft push (then wait for you to submit)
+
+Push listing packages into Printify as **drafts only**. The workflow never auto-publishes;
+it waits for you to submit/publish in the Printify UI.
+
+```bash
+# 1) Set token + fill shop/provider IDs
+export PRINTIFY_API_TOKEN=your_token
+# edit etsy_ai_space/printify.yaml → shop_id + print_provider_id
+python3 -m etsy_ai_space printify discover --shops
+python3 -m etsy_ai_space printify discover --providers
+
+# 2) Preview push for Listing #3
+python3 -m etsy_ai_space printify push \
+  --package etsy_ai_space/exports/listing-03-recover-loudly-phoenix \
+  --dry-run
+
+# 3) Create Printify drafts (no publish)
+python3 -m etsy_ai_space printify push --all-listings
+
+# 4) Wait for you to submit in Printify, then mark done
+python3 -m etsy_ai_space printify pending
+python3 -m etsy_ai_space printify wait
+# After you publish/submit each draft in Printify:
+python3 -m etsy_ai_space printify mark-submitted --all
+```
+
 ## BrowserClaw listing upload (assisted posting)
 
 BrowserClaw can fill the Etsy Seller Manager create-listing form for you. By default it

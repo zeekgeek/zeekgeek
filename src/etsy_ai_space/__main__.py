@@ -176,6 +176,44 @@ def build_parser() -> argparse.ArgumentParser:
 
     queue = sub.add_parser("queue", help="Show listing drafts by status")
 
+    printify = sub.add_parser(
+        "printify",
+        help="Push listing packages to Printify as drafts, then wait for human submit",
+    )
+    printify.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="Path to printify.yaml (default: etsy_ai_space/printify.yaml)",
+    )
+    printify.add_argument(
+        "--queue",
+        type=Path,
+        default=None,
+        help="Path to printify_queue.json",
+    )
+    printify_sub = printify.add_subparsers(dest="printify_command", required=True)
+
+    discover = printify_sub.add_parser("discover", help="List shops / providers / variants")
+    discover.add_argument("--shops", action="store_true")
+    discover.add_argument("--providers", action="store_true")
+    discover.add_argument("--variants", action="store_true")
+
+    push = printify_sub.add_parser("push", help="Create Printify drafts from listing packages")
+    push.add_argument("--package", action="append", help="Listing package folder (repeatable)")
+    push.add_argument("--all-listings", action="store_true", help="Push all etsy_ai_space/exports/listing-*")
+    push.add_argument("--dry-run", action="store_true", help="Preview without calling Printify API")
+
+    printify_sub.add_parser("pending", help="List drafts awaiting your submit in Printify")
+
+    wait = printify_sub.add_parser("wait", help="Wait until you submit all pending Printify drafts")
+    wait.add_argument("--timeout", type=float, default=None, help="Seconds to wait (default: forever)")
+    wait.add_argument("--poll", type=float, default=None, help="Poll interval seconds")
+
+    mark = printify_sub.add_parser("mark-submitted", help="Mark a Printify draft as submitted by you")
+    mark.add_argument("product_id", nargs="?", default=None, help="Printify product id")
+    mark.add_argument("--all", action="store_true", help="Mark all pending items submitted")
+
     return parser
 
 
@@ -337,6 +375,12 @@ def cmd_cursor_generate(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_printify(args: argparse.Namespace) -> int:
+    from .printify.workflow import cmd_printify as printify_cmd
+
+    return printify_cmd(args)
+
+
 def cmd_dashboard(args: argparse.Namespace) -> int:
     import subprocess
     import sys
@@ -394,6 +438,8 @@ def main() -> None:
         raise SystemExit(cmd_record_upload(args))
     if args.command == "queue":
         raise SystemExit(cmd_queue(args))
+    if args.command == "printify":
+        raise SystemExit(cmd_printify(args))
     parser.error(f"Unknown command: {args.command}")
 
 

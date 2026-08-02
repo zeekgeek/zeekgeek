@@ -37,6 +37,9 @@ Running the apps:
  `browserclaw-upload --package etsy_ai_space/exports/listing-02-we-do-recover --reuse-tab`
  (saves as Etsy draft by default; needs BrowserClaw CDP + seller login).
  `--publish` is blocked while `require_manual_upload: true` unless `--force-publish`.
+ Printify drafts: set `PRINTIFY_API_TOKEN` + `etsy_ai_space/printify.yaml` shop/provider IDs,
+ then `python3 -m etsy_ai_space printify push --all-listings` (creates drafts only),
+ `printify wait` until human submits, then `printify mark-submitted --all`.
 - Dashboards bind to `http://127.0.0.1:<port>` by default. If the port is busy the app
  auto-increments to the next free port and prints the chosen URL, so read the startup log
  rather than assuming the default. Pass `--port <n>` for deterministic binding.
