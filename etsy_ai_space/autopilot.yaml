@@ -11,6 +11,11 @@ niches:
   - one day at a time shirt
   - sober milestone gift shirt
   - addiction recovery support gift
+  - recovery squad sweatshirt
+  - sober sister gift shirt
+  - recovery aesthetic sweatshirt
+  - recover loudly sobriety tee
+  - when we recover loudly shirt
 
 # How long to sleep between full pipeline cycles (seconds)
 cycle_interval_seconds: 21600  # 6 hours
