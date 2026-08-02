@@ -65,6 +65,26 @@ def build_parser() -> argparse.ArgumentParser:
     browserclaw.add_argument("--reuse-tab", action="store_true")
     browserclaw.add_argument("--db", type=Path, default=None)
 
+    browserclaw_printify = sub.add_parser(
+        "browserclaw-printify",
+        help="Stage Printify product drafts via BrowserClaw for Etsy publish (human submits)",
+    )
+    browserclaw_printify.add_argument("--cdp-url", default=None, help="BrowserClaw CDP URL")
+    browserclaw_printify.add_argument("--reuse-tab", action="store_true")
+    browserclaw_printify.add_argument("--package", action="append", help="Listing package folder")
+    browserclaw_printify.add_argument("--all-listings", action="store_true")
+    browserclaw_printify.add_argument("--dry-run", action="store_true")
+    browserclaw_printify.add_argument(
+        "--publish",
+        action="store_true",
+        help="Attempt Publish click (default: stage draft only)",
+    )
+    browserclaw_printify.add_argument(
+        "--wait",
+        action="store_true",
+        help="Wait until you mark products submitted",
+    )
+
     browserclaw_upload = sub.add_parser(
         "browserclaw-upload",
         help="Upload listing drafts to Etsy Seller Manager via BrowserClaw (saves as draft by default)",
@@ -255,6 +275,12 @@ async def cmd_browserclaw_upload(args: argparse.Namespace) -> int:
     return await browserclaw_upload_cli(args)
 
 
+async def cmd_browserclaw_printify(args: argparse.Namespace) -> int:
+    from .scraper.browserclaw_printify import _cli as browserclaw_printify_cli
+
+    return await browserclaw_printify_cli(args)
+
+
 async def cmd_orchestrate(args: argparse.Namespace) -> int:
     db = StoreDatabase(args.db)
     result = await run_orchestrator(
@@ -416,6 +442,8 @@ def main() -> None:
         raise SystemExit(asyncio.run(cmd_browserclaw_scrape(args)))
     if args.command == "browserclaw-upload":
         raise SystemExit(asyncio.run(cmd_browserclaw_upload(args)))
+    if args.command == "browserclaw-printify":
+        raise SystemExit(asyncio.run(cmd_browserclaw_printify(args)))
     if args.command == "orchestrate":
         raise SystemExit(asyncio.run(cmd_orchestrate(args)))
     if args.command == "pipeline":

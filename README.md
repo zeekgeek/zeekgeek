@@ -472,6 +472,28 @@ Typical flow:
 
 This keeps the manual-upload safety gate: the pipeline never publishes to Etsy automatically, and image generation is agent-driven rather than fully autonomous.
 
+## BrowserClaw → Printify → Etsy (stage drafts, you publish)
+
+Requires BrowserClaw Chromium with CDP and an active Printify login (Etsy shop connected).
+
+```bash
+# Preview
+python3 -m etsy_ai_space browserclaw-printify --all-listings --dry-run
+
+# Open Printify in BrowserClaw and stage drafts (does not publish)
+python3 -m etsy_ai_space browserclaw-printify \
+  --all-listings \
+  --cdp-url 9222 \
+  --reuse-tab \
+  --wait
+```
+
+Then in Printify: review each product → **Publish to Etsy**. When finished:
+
+```bash
+python3 -m etsy_ai_space printify mark-submitted --all
+```
+
 ## Printify draft push (then wait for you to submit)
 
 Push listing packages into Printify as **drafts only**. The workflow never auto-publishes;
