@@ -419,6 +419,10 @@ python3 -m etsy_ai_space scrape <query> [--demo] [--max-results 48] [--min-score
 python3 -m etsy_ai_space orchestrate <niche> [--demo] [--concepts 5] [--skip-scrape]
 python3 -m etsy_ai_space pipeline <query> [--demo] [--niche "..."] [--export-dir PATH]
 python3 -m etsy_ai_space export [--export-dir PATH]
+python3 -m etsy_ai_space cursor-generate --list
+python3 -m etsy_ai_space cursor-generate --attach <draft-id> <image-file>
+python3 -m etsy_ai_space browserclaw-upload --dry-run
+python3 -m etsy_ai_space browserclaw-upload --package etsy_ai_space/exports/listing-02-we-do-recover --reuse-tab
 python3 -m etsy_ai_space stats
 python3 -m etsy_ai_space top [--limit 10]
 
@@ -431,3 +435,70 @@ python -m dashboard.app --port 8501
 python3 -m etsy_ai_space.scraper.etsy_scraper "retro cat shirt" --demo
 python3 -m etsy_ai_space.pipeline.orchestrator "retro cat shirt" --demo
 ```
+
+## Image generation with the Cursor agent
+
+Each listing draft now carries a `cursor_image_prompt` optimized for the Cursor image generator. The Python pipeline does not generate images itself; it prepares the prompts and attaches the assets once the Cursor agent creates them.
+
+Typical flow:
+
+1. Run the pipeline to create drafts with prompts:
+
+   ```bash
+   python3 -m etsy_ai_space orchestrate "retro cat shirt" --demo
+   ```
+
+2. Ask the Cursor agent to generate the images. The agent can list pending jobs:
+
+   ```bash
+   python3 -m etsy_ai_space cursor-generate --list
+   ```
+
+   Then, for each draft, the agent calls `GenerateImage` with the `cursor_prompt` and saves the resulting image to a file.
+
+3. Attach the generated image to the draft:
+
+   ```bash
+   python3 -m etsy_ai_space cursor-generate --attach <draft-id> ./generated-image.png
+   ```
+
+   The image is copied into `etsy_ai_space/exports/images/` and the draft's `image_path` is updated.
+
+4. Re-export the bundle so the CSV/JSON includes the image path:
+
+   ```bash
+   python3 -m etsy_ai_space export
+   ```
+
+This keeps the manual-upload safety gate: the pipeline never publishes to Etsy automatically, and image generation is agent-driven rather than fully autonomous.
+
+## BrowserClaw listing upload (assisted posting)
+
+BrowserClaw can fill the Etsy Seller Manager create-listing form for you. By default it
+**saves as Draft** so you review before publish. Requires BrowserClaw Chromium running
+with CDP enabled and an active Etsy seller login.
+
+```bash
+# Preview what would upload (no browser actions)
+python3 -m etsy_ai_space browserclaw-upload --dry-run
+
+# List uploadable drafts
+python3 -m etsy_ai_space browserclaw-upload --list
+
+# Upload Listing #2 package as an Etsy draft
+python3 -m etsy_ai_space browserclaw-upload \
+  --package etsy_ai_space/exports/listing-02-we-do-recover \
+  --cdp-url 9222 \
+  --reuse-tab
+
+# Upload a specific draft id from SQLite
+python3 -m etsy_ai_space browserclaw-upload --draft-id 1 --reuse-tab
+
+# Publish instead of draft (blocked while require_manual_upload=true unless --force-publish)
+python3 -m etsy_ai_space browserclaw-upload --draft-id 1 --publish --force-publish
+```
+
+Safety:
+- `require_manual_upload: true` in `etsy_ai_space/autopilot.yaml` blocks `--publish` unless you pass `--force-publish`
+- `daily_upload_cap` limits how many assisted uploads can run per day
+- Prefer draft-first for new shops (3–5/day)

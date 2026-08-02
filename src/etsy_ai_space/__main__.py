@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import json
 import logging
+import sys
 from pathlib import Path
 
 from .agents.researcher.runner import build_scraper, run_researcher
@@ -19,6 +20,11 @@ from .pipeline.autopilot import (
     record_manual_upload,
 )
 from .pipeline.state_tracker import SwarmStateTracker
+from .agents.cursor_image_generator import (
+    default_images_dir,
+    list_pending_image_jobs,
+    save_generated_image,
+)
 from .pipeline.orchestrator import run_orchestrator
 from .scraper.etsy_scraper import scrape_niche_to_db
 
@@ -59,6 +65,31 @@ def build_parser() -> argparse.ArgumentParser:
     browserclaw.add_argument("--reuse-tab", action="store_true")
     browserclaw.add_argument("--db", type=Path, default=None)
 
+    browserclaw_upload = sub.add_parser(
+        "browserclaw-upload",
+        help="Upload listing drafts to Etsy Seller Manager via BrowserClaw (saves as draft by default)",
+    )
+    browserclaw_upload.add_argument("--cdp-url", default=None, help="BrowserClaw CDP URL")
+    browserclaw_upload.add_argument("--config", type=Path, default=None, help="autopilot.yaml path")
+    browserclaw_upload.add_argument("--list", action="store_true", help="List uploadable drafts")
+    browserclaw_upload.add_argument("--draft-id", action="append", help="Draft id to upload (repeatable)")
+    browserclaw_upload.add_argument(
+        "--package",
+        type=Path,
+        default=None,
+        help="Upload from a listing package folder (e.g. etsy_ai_space/exports/listing-02-we-do-recover)",
+    )
+    browserclaw_upload.add_argument("--images-dir", action="append", help="Extra images directory")
+    browserclaw_upload.add_argument("--limit", type=int, default=None)
+    browserclaw_upload.add_argument("--publish", action="store_true", help="Publish instead of save draft")
+    browserclaw_upload.add_argument(
+        "--force-publish",
+        action="store_true",
+        help="Allow publish even when require_manual_upload=true",
+    )
+    browserclaw_upload.add_argument("--dry-run", action="store_true", help="Preview queue only")
+    browserclaw_upload.add_argument("--reuse-tab", action="store_true")
+
     pipeline = sub.add_parser("pipeline", help="Run phases 1–4 and export a manual upload bundle")
     pipeline.add_argument("query", help="Seed Etsy search query / niche")
     pipeline.add_argument("--niche", default=None, help="Creative niche override")
@@ -88,6 +119,48 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard = sub.add_parser("dashboard", help="Launch Streamlit swarm status dashboard")
     dashboard.add_argument("--port", type=int, default=8501)
     dashboard.add_argument("--refresh", type=int, default=3, help="Auto-refresh interval in seconds")
+
+    cursor_generate = sub.add_parser(
+        "cursor-generate",
+        help="List or attach Cursor-agent-generated images for listing drafts",
+    )
+    cursor_generate.add_argument(
+        "--list",
+        action="store_true",
+        help="List pending image generation jobs (drafts with image_prompt but no image_path)",
+    )
+    cursor_generate.add_argument(
+        "--all",
+        action="store_true",
+        help="Agent-friendly alias for --list: emit all pending jobs as JSON",
+    )
+    cursor_generate.add_argument(
+        "--attach",
+        nargs=2,
+        metavar=("DRAFT_ID", "IMAGE_FILE"),
+        help="Attach a generated image file to a listing draft",
+    )
+    cursor_generate.add_argument(
+        "--status",
+        default=None,
+        help="Only consider drafts with this status (default: any status)",
+    )
+    cursor_generate.add_argument(
+        "--include-needs-revision",
+        action="store_true",
+        help="Also include drafts that need revision",
+    )
+    cursor_generate.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite an existing image for the same draft",
+    )
+    cursor_generate.add_argument(
+        "--images-dir",
+        type=Path,
+        default=None,
+        help=f"Directory to store generated images (default: {default_images_dir()})",
+    )
 
     autopilot = sub.add_parser("autopilot", help="Autonomous loop: scrape → concepts → export")
     autopilot.add_argument("--config", type=Path, default=None, help="Path to autopilot.yaml")
@@ -136,6 +209,12 @@ async def cmd_browserclaw_scrape(args: argparse.Namespace) -> int:
     from .scraper.browserclaw_scraper import _cli as browserclaw_cli
 
     return await browserclaw_cli(args)
+
+
+async def cmd_browserclaw_upload(args: argparse.Namespace) -> int:
+    from .scraper.browserclaw_uploader import _cli as browserclaw_upload_cli
+
+    return await browserclaw_upload_cli(args)
 
 
 async def cmd_orchestrate(args: argparse.Namespace) -> int:
@@ -232,6 +311,32 @@ async def cmd_autopilot(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_cursor_generate(args: argparse.Namespace) -> int:
+    db = StoreDatabase(args.db)
+    if args.list or args.all:
+        jobs = list_pending_image_jobs(
+            db,
+            status=args.status,
+            include_needs_revision=args.include_needs_revision,
+        )
+        print(json.dumps(jobs, indent=2))
+        return 0
+    if args.attach:
+        draft_id = int(args.attach[0])
+        image_file = Path(args.attach[1])
+        dest = save_generated_image(
+            draft_id,
+            image_file,
+            db,
+            images_dir=args.images_dir,
+            force=args.force,
+        )
+        print(json.dumps({"draft_id": draft_id, "image_path": str(dest)}, indent=2))
+        return 0
+    print("Use --list, --all, or --attach <draft-id> <image-file>", file=sys.stderr)
+    return 1
+
+
 def cmd_dashboard(args: argparse.Namespace) -> int:
     import subprocess
     import sys
@@ -265,6 +370,8 @@ def main() -> None:
         raise SystemExit(asyncio.run(cmd_scrape(args)))
     if args.command == "browserclaw-scrape":
         raise SystemExit(asyncio.run(cmd_browserclaw_scrape(args)))
+    if args.command == "browserclaw-upload":
+        raise SystemExit(asyncio.run(cmd_browserclaw_upload(args)))
     if args.command == "orchestrate":
         raise SystemExit(asyncio.run(cmd_orchestrate(args)))
     if args.command == "pipeline":
@@ -275,6 +382,8 @@ def main() -> None:
         raise SystemExit(cmd_stats(args))
     if args.command == "top":
         raise SystemExit(cmd_top(args))
+    if args.command == "cursor-generate":
+        raise SystemExit(cmd_cursor_generate(args))
     if args.command == "dashboard":
         raise SystemExit(cmd_dashboard(args))
     if args.command == "autopilot":

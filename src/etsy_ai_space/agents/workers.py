@@ -17,6 +17,7 @@ class CopyOutput:
 @dataclass
 class DesignOutput:
     midjourney_prompt: str
+    cursor_image_prompt: str
 
 
 @dataclass
@@ -42,14 +43,20 @@ def copywriter_agent(concept: ProductConcept, *, price: float = 24.99) -> CopyOu
 
 
 def design_agent(concept: ProductConcept) -> DesignOutput:
-    """Create a Midjourney-ready prompt from a product concept."""
+    """Create a Midjourney-ready prompt and a Cursor-generator prompt from a product concept."""
     palette = "warm retro tones, cream, burnt orange"
-    prompt = (
+    midjourney = (
         f"Print-ready flat t-shirt graphic, {concept.concept_name.lower()}, {concept.angle.lower()}, "
         f"{concept.hook.lower()}, {palette}, centered composition, clean vector style, "
         f"no text, no logos, no copyrighted characters, transparent background --ar 1:1 --style raw"
     )
-    return DesignOutput(midjourney_prompt=prompt)
+    cursor = (
+        f"A print-ready flat t-shirt graphic design for '{concept.concept_name}', "
+        f"showing {concept.angle.lower()}. The style is clean vector art with {palette}, "
+        f"centered composition, no text, no logos, no copyrighted characters, "
+        f"and a transparent background."
+    )
+    return DesignOutput(midjourney_prompt=midjourney, cursor_image_prompt=cursor)
 
 
 def seo_agent(concept: ProductConcept, title: str) -> SeoOutput:
@@ -93,6 +100,7 @@ def workers_build_listing(concept: ProductConcept, *, price: float = 24.99) -> L
         tags=seo.tags,
         price=price,
         image_prompt=design.midjourney_prompt,
+        cursor_image_prompt=design.cursor_image_prompt,
         taxonomy_hint=concept.concept_name,
     )
 

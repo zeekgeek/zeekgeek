@@ -56,6 +56,8 @@ class StoreDatabase:
         listing_cols = {row[1] for row in conn.execute("PRAGMA table_info(listing_drafts)")}
         if listing_cols and "concept_id" not in listing_cols:
             conn.execute("ALTER TABLE listing_drafts ADD COLUMN concept_id INTEGER REFERENCES product_concepts(id)")
+        if listing_cols and "cursor_image_prompt" not in listing_cols:
+            conn.execute("ALTER TABLE listing_drafts ADD COLUMN cursor_image_prompt TEXT")
 
     def start_scrape_run(self, query: str, source: str) -> ScrapeRun:
         run = ScrapeRun(query=query, source=source)
@@ -198,8 +200,8 @@ class StoreDatabase:
                 """
                 INSERT INTO listing_drafts (
                     concept_id, brief_id, title, description, tags_json, price, image_prompt,
-                    image_path, taxonomy_hint, created_at, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    cursor_image_prompt, image_path, taxonomy_hint, created_at, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     draft.concept_id,
@@ -209,6 +211,7 @@ class StoreDatabase:
                     json.dumps(draft.tags),
                     draft.price,
                     draft.image_prompt,
+                    draft.cursor_image_prompt,
                     draft.image_path,
                     draft.taxonomy_hint,
                     iso_time(draft.created_at),

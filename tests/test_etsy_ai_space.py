@@ -57,6 +57,8 @@ class EtsyAiSpaceTests(unittest.IsolatedAsyncioTestCase):
         seo = seo_agent(concept, copy.title)
         self.assertIn("Retro Cat", copy.title)
         self.assertIn("--ar 1:1", design.midjourney_prompt)
+        self.assertNotIn("--ar", design.cursor_image_prompt)
+        self.assertIn("transparent background", design.cursor_image_prompt.lower())
         self.assertGreaterEqual(len(seo.tags), 5)
 
         draft = workers_build_listing(concept)
@@ -96,7 +98,7 @@ class EtsyAiSpaceTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(Path(result["export"]["json"]).exists())
             loaded = tracker.load()
             self.assertGreater(len(loaded["logs"]), 2)
-            self.assertEqual(len(loaded["agents"]), 5)
+            self.assertEqual(len(loaded["agents"]), 7)
 
     def test_state_tracker_writes_json_and_logs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -115,7 +117,7 @@ class EtsyAiSpaceTests(unittest.IsolatedAsyncioTestCase):
     def test_default_state_schema(self) -> None:
         state = default_state()
         self.assertIn("metrics", state)
-        self.assertEqual(len(state["agents"]), 5)
+        self.assertEqual(len(state["agents"]), 7)
         self.assertIn("listings_generated", state["metrics"])
 
     def test_autopilot_config_loads(self) -> None:
