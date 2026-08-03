@@ -329,6 +329,61 @@ python3 -m jet_radar --host 127.0.0.1 --port 8790 --sigma 3 --trigger-threshold 
 
 ---
 
+# Trace Radar (3D Visual Traceroute)
+
+Diagnoses internet paths the way Speedtest.net and Scanny-style tools do —
+**per-hop RTT**, **packet-loss percentage**, **WHOIS/RDAP ownership**, and a
+**speed test** — then draws the route as animated great-circle arcs on a
+CDN-free **3D globe**.
+
+## Quick start
+
+```bash
+source .venv/bin/activate
+pip install -e .
+python3 -m trace_radar --demo
+```
+
+Open the printed dashboard URL (default <http://127.0.0.1:8800>). Drag the
+globe to rotate, click hops for WHOIS (org, CIDR, abuse contact), and run a
+speed test from the header.
+
+Live traceroute (needs `traceroute` or `tracepath` on `PATH`):
+
+```bash
+python3 -m trace_radar one.one.one.one google.com
+```
+
+## What you get
+
+- Detailed traceroute with **N probes per hop** (default 5) and **loss %**
+  (last cycle + cumulative)
+- **WHOIS / RDAP** ownership: network name, org, CIDR, ASN, abuse email
+- GeoIP city/country for the 3D map
+- Speedtest-style latency, jitter, packet loss, download/upload
+- Interactive orthographic globe with continent outlines and pulse arcs
+
+## Command options
+
+```text
+python3 -m trace_radar --host 127.0.0.1 --port 8800 --probes 5 --demo
+```
+
+- `--demo`: scripted multi-hop routes with loss and WHOIS
+- `--interval`: seconds between re-traces (default `45` live / `3` demo)
+- `--probes`: probes per hop for packet-loss percentage (default `5`)
+- `--speedtest-on-start`: run a speed test after the dashboard binds
+- `--no-auto-demo-fallback` / `--host` / `--port` / `--log-level`
+
+## API
+
+- `GET /api/state`: snapshot (routes, hops with loss/WHOIS/geo, speedtest, events)
+- `POST /api/trace`: body `{"target": "example.com"}`
+- `POST /api/speedtest`: start a speed run
+- `GET /api/events`: Server-Sent Events stream
+
+---
+
 # Etsy AI Space
 
 Phased agent swarm for **safe** print-on-demand store research. It follows a
