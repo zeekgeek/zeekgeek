@@ -38,13 +38,26 @@ curl http://127.0.0.1:9222/json/version
 ## Run the staging script
 
 ```bash
+# All packages
 ./scripts/local-browserclaw-printify.sh
+
+# Listing #4 only — Brought Back By Each Other
+./scripts/local-browserclaw-printify.sh . listing-04-brought-back-by-each-other
 ```
 
 Or manually:
 
 ```bash
 source .venv/bin/activate
+
+# Listing #4 only
+python3 -m etsy_ai_space browserclaw-printify \
+  --package etsy_ai_space/exports/listing-04-brought-back-by-each-other \
+  --cdp-url 9222 \
+  --reuse-tab \
+  --wait
+
+# Or all packages
 python3 -m etsy_ai_space browserclaw-printify \
   --all-listings \
   --cdp-url 9222 \

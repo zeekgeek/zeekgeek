@@ -1,10 +1,16 @@
 #!/bin/bash
 # Local BrowserClaw → Printify → Etsy staging workflow
 # Run this on your Mac after cloning the repo and starting BrowserClaw with CDP.
+#
+# Usage:
+#   ./scripts/local-browserclaw-printify.sh
+#   ./scripts/local-browserclaw-printify.sh . listing-04-brought-back-by-each-other
+#   PACKAGE=listing-04-brought-back-by-each-other ./scripts/local-browserclaw-printify.sh
 
 set -euo pipefail
 
 REPO_DIR="${1:-$(pwd)}"
+PACKAGE_NAME="${2:-${PACKAGE:-}}"
 CDP_URL="${BROWSERCLAW_CDP_URL:-9222}"
 
 cd "$REPO_DIR"
@@ -29,12 +35,38 @@ if ! curl -sS "http://127.0.0.1:9222/json/version" >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "Previewing packages..."
-python3 -m etsy_ai_space browserclaw-printify --all-listings --dry-run
+PACKAGE_ARGS=()
+if [ -n "$PACKAGE_NAME" ]; then
+  PACKAGE_DIR="etsy_ai_space/exports/${PACKAGE_NAME}"
+  if [ ! -d "$PACKAGE_DIR" ]; then
+    # Allow full path or bare folder already under exports/
+    if [ -d "$PACKAGE_NAME" ]; then
+      PACKAGE_DIR="$PACKAGE_NAME"
+    elif [ -d "etsy_ai_space/exports/listing-${PACKAGE_NAME}" ]; then
+      PACKAGE_DIR="etsy_ai_space/exports/listing-${PACKAGE_NAME}"
+    else
+      echo "Error: listing package not found: $PACKAGE_NAME"
+      echo "Expected e.g. etsy_ai_space/exports/listing-04-brought-back-by-each-other"
+      exit 1
+    fi
+  fi
+  if [ ! -f "$PACKAGE_DIR/listing.json" ]; then
+    echo "Error: no listing.json in $PACKAGE_DIR"
+    exit 1
+  fi
+  PACKAGE_ARGS=(--package "$PACKAGE_DIR")
+  echo "Target package: $PACKAGE_DIR"
+else
+  PACKAGE_ARGS=(--all-listings)
+  echo "Target: all listing packages under etsy_ai_space/exports/"
+fi
 
-echo "Staging Printify drafts (you will publish to Etsy manually)..."
+echo "Previewing..."
+python3 -m etsy_ai_space browserclaw-printify "${PACKAGE_ARGS[@]}" --dry-run
+
+echo "Staging Printify draft(s) via BrowserClaw (you will publish to Etsy manually)..."
 python3 -m etsy_ai_space browserclaw-printify \
-  --all-listings \
+  "${PACKAGE_ARGS[@]}" \
   --cdp-url "$CDP_URL" \
   --reuse-tab \
   --wait
