@@ -19,7 +19,21 @@ The generated images are in `etsy_ai_space/exports/` (gitignored). From the clou
 1. Copy the whole `etsy_ai_space/exports/` folder to your local machine, OR
 2. Regenerate images locally with the `cursor-generate` / `GenerateImage` workflow.
 
-## Start BrowserClaw with CDP
+## One-shot: Listing #4 (Brought Back By Each Other)
+
+Quit Chrome fully (Cmd+Q), then:
+
+```bash
+cd ~/zeekgeek
+git pull origin cursor/etsy-cursor-image-generation-0214
+chmod +x scripts/mac-publish-listing-04.sh
+./scripts/mac-publish-listing-04.sh
+```
+
+This starts Chrome with CDP on port 9222, waits for you to log into Printify,
+then stages the listing (with `--publish`). Confirm Publish to Etsy in Printify if prompted.
+
+## Start BrowserClaw with CDP (manual)
 
 ```bash
 mkdir -p ~/chrome-cdp-profile
