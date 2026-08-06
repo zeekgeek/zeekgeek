@@ -715,7 +715,12 @@ DASHBOARD_HTML = """
     }
     function fmt(v) { return v == null || Number.isNaN(Number(v)) ? "—" : Number(v).toFixed(1); }
     function esc(s) {
-      return String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+      return String(s ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
     }
 
     // ---------- PingPlotter-style timeline ----------
