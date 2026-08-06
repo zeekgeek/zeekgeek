@@ -65,8 +65,10 @@ class Hop:
     last_rtts: list[float] = field(default_factory=list)
     rtt_history: deque[float] = field(default_factory=lambda: deque(maxlen=120))
     loss_history: deque[float] = field(default_factory=lambda: deque(maxlen=60))
+    # PingPlotter-style per-cycle samples: {at, rtt_avg_ms, loss_pct, answered, probes}
+    timeline: deque[dict[str, Any]] = field(default_factory=lambda: deque(maxlen=120))
 
-    def update(self, obs: HopObservation) -> None:
+    def update(self, obs: HopObservation, *, at: datetime | None = None) -> None:
         self.ip = obs.ip
         if obs.hostname:
             self.hostname = obs.hostname
@@ -82,17 +84,42 @@ class Hop:
         self.last_rtts = list(obs.rtts_ms)
         self.rtt_history.extend(obs.rtts_ms)
         self.loss_history.append(obs.loss_pct)
+        avg = round(sum(obs.rtts_ms) / len(obs.rtts_ms), 2) if obs.rtts_ms else None
+        self.timeline.append(
+            {
+                "at": iso_time(at or utc_now()),
+                "rtt_avg_ms": avg,
+                "rtt_min_ms": round(min(obs.rtts_ms), 2) if obs.rtts_ms else None,
+                "rtt_max_ms": round(max(obs.rtts_ms), 2) if obs.rtts_ms else None,
+                "loss_pct": obs.loss_pct,
+                "answered": len(obs.rtts_ms),
+                "probes": obs.probes,
+                "ip": obs.ip,
+            }
+        )
 
     def snapshot(self) -> dict[str, Any]:
         history = list(self.rtt_history)
         cumulative_loss = loss_percent(self.probes_sent, self.probes_answered)
         geo = self.geo.to_dict() if self.geo is not None else None
         whois = self.whois.to_dict() if self.whois is not None else None
+        # Health label for the live hop view (green / amber / red).
+        if self.ip is None and self.probes_sent > 0:
+            health = "down"
+        elif self.last_loss_pct >= 20 or (history and history[-1] > 200):
+            health = "poor"
+        elif self.last_loss_pct > 0 or (history and max(history[-5:] or [0]) > 100):
+            health = "degraded"
+        elif self.ip is None:
+            health = "unknown"
+        else:
+            health = "good"
         return {
             "ttl": self.ttl,
             "ip": self.ip,
             "hostname": self.hostname,
             "responded": self.ip is not None,
+            "health": health,
             "geo": geo,
             "whois": whois,
             "located": bool(self.geo is not None and self.geo.located),
@@ -109,6 +136,7 @@ class Hop:
             "loss_pct": cumulative_loss,
             "loss_history": [round(value, 1) for value in self.loss_history],
             "rtt_history": [round(value, 2) for value in history[-40:]],
+            "timeline": list(self.timeline),
         }
 
 
@@ -185,6 +213,7 @@ class RadarState:
         self._speedtest: dict[str, Any] = _idle_speedtest()
         self._events: deque[dict[str, Any]] = deque(maxlen=max_events)
         self._new_targets: asyncio.Queue[str] = asyncio.Queue()
+        self._tool_results: deque[dict[str, Any]] = deque(maxlen=40)
         self._lock = asyncio.Lock()
 
     async def request_trace(self, target: str) -> bool:
@@ -275,7 +304,7 @@ class RadarState:
                 if hop.ip is not None and obs.ip is not None and hop.ip != obs.ip:
                     # Path changed at this TTL: reset accumulated stats for the new router.
                     route.hops[index] = hop = Hop(ttl=obs.ttl, ip=obs.ip)
-                hop.update(obs)
+                hop.update(obs, at=now)
             del route.hops[len(hops):]
 
             if previous_signature is None:
@@ -332,6 +361,20 @@ class RadarState:
             self._events.append(event)
             return event
 
+    async def record_tool_result(self, tool: str, target: str, result: dict[str, Any]) -> dict[str, Any]:
+        """Store a Scanny-style tool result and emit an event for the live feed."""
+        async with self._lock:
+            entry = {
+                "tool": tool,
+                "target": target,
+                "at": iso_time(utc_now()),
+                "result": result,
+            }
+            self._tool_results.appendleft(entry)
+            summary = _tool_summary(tool, target, result)
+            self._events.append(self._system_event(f"tool:{tool}", summary, target=target))
+            return entry
+
     async def snapshot(self) -> dict[str, Any]:
         async with self._lock:
             now = utc_now()
@@ -347,6 +390,7 @@ class RadarState:
                 "located_count": located_hops,
                 "routes": routes,
                 "speedtest": dict(self._speedtest),
+                "tool_results": list(self._tool_results),
                 "events": list(self._events),
             }
 
@@ -357,3 +401,23 @@ class RadarState:
             "message": message,
             "at": iso_time(utc_now()),
         }
+
+
+def _tool_summary(tool: str, target: str, result: dict[str, Any]) -> str:
+    if tool == "dns":
+        records = result.get("records") or {}
+        kinds = ", ".join(f"{k}:{len(v)}" for k, v in records.items()) or "no records"
+        return f"DNS {target}: {kinds}"
+    if tool == "whois":
+        if result.get("found"):
+            return f"WHOIS {target}: {result.get('org') or result.get('name') or result.get('handle')}"
+        return f"WHOIS {target}: {result.get('error') or 'no record'}"
+    if tool == "ports":
+        open_ports = result.get("open_ports") or []
+        return f"Port scan {target}: {len(open_ports)} open ({', '.join(map(str, open_ports[:8])) or 'none'})"
+    if tool == "ping":
+        return (
+            f"Ping {target}: {result.get('avg_ms')} ms avg · "
+            f"{result.get('answered')}/{result.get('sent')} · loss {result.get('loss_pct')}%"
+        )
+    return f"{tool} {target} complete"

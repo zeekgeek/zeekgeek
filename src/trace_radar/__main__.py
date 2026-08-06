@@ -23,7 +23,7 @@ DEFAULT_TARGETS = ["one.one.one.one", "google.com"]
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Visual 3D traceroute radar with packet-loss %, WHOIS, and speed tests"
+        description="PingPlotter-style hop health radar with WHOIS, DNS, port scan, and speed tests"
     )
     parser.add_argument(
         "targets",

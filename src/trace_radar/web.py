@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections.abc import AsyncIterator
 
 from fastapi import FastAPI
@@ -12,14 +13,25 @@ from pydantic import BaseModel, Field
 
 from .speedtest import run_speed_test
 from .state import RadarState
+from .tools import COMMON_PORTS, lookup_dns, ping_host, scan_ports
+from .whois import WhoisResolver
+
+_HOST_RE = re.compile(r"^[A-Za-z0-9._:-]{1,253}$")
 
 
 class TraceRequest(BaseModel):
     target: str = Field(min_length=1, max_length=253)
 
 
+class ToolRequest(BaseModel):
+    target: str = Field(min_length=1, max_length=253)
+    ports: list[int] | None = None
+    count: int | None = Field(default=None, ge=1, le=20)
+
+
 def create_app(state: RadarState) -> FastAPI:
-    app = FastAPI(title="Visual Trace Radar")
+    app = FastAPI(title="Trace Radar — PingPlotter + Scanny tools")
+    whois_resolver = WhoisResolver(demo=state.demo_mode)
 
     @app.get("/", response_class=HTMLResponse)
     async def index() -> str:
@@ -32,8 +44,8 @@ def create_app(state: RadarState) -> FastAPI:
     @app.post("/api/trace")
     async def api_trace(request: TraceRequest) -> JSONResponse:
         target = request.target.strip()
-        if not target:
-            return JSONResponse({"ok": False, "error": "Empty target"}, status_code=400)
+        if not target or not _HOST_RE.match(target):
+            return JSONResponse({"ok": False, "error": "Invalid target"}, status_code=400)
         created = await state.request_trace(target)
         return JSONResponse({"ok": True, "created": created, "target": target})
 
@@ -44,11 +56,74 @@ def create_app(state: RadarState) -> FastAPI:
         asyncio.create_task(run_speed_test(state), name="speedtest")
         return JSONResponse({"ok": True, "status": "started"})
 
+    @app.post("/api/whois")
+    async def api_whois(request: ToolRequest) -> JSONResponse:
+        target = request.target.strip()
+        if not target or not _HOST_RE.match(target):
+            return JSONResponse({"ok": False, "error": "Invalid target"}, status_code=400)
+        # Resolve hostname → IP when needed so RDAP can look it up.
+        ip = target
+        if not _looks_like_ipv4(target):
+            dns = await lookup_dns(target, demo=state.demo_mode)
+            addrs = (dns.records or {}).get("A") or []
+            if not addrs:
+                return JSONResponse({"ok": False, "error": dns.error or "No A record"}, status_code=400)
+            ip = addrs[0]
+        whois_resolver.demo = state.demo_mode
+        info = await whois_resolver.lookup(ip)
+        payload = info.to_dict()
+        await state.record_tool_result("whois", target, payload)
+        return JSONResponse({"ok": True, "result": payload})
+
+    @app.post("/api/dns")
+    async def api_dns(request: ToolRequest) -> JSONResponse:
+        target = request.target.strip()
+        if not target or not _HOST_RE.match(target):
+            return JSONResponse({"ok": False, "error": "Invalid target"}, status_code=400)
+        result = await lookup_dns(target, demo=state.demo_mode)
+        payload = result.to_dict()
+        await state.record_tool_result("dns", target, payload)
+        return JSONResponse({"ok": True, "result": payload})
+
+    @app.post("/api/ports")
+    async def api_ports(request: ToolRequest) -> JSONResponse:
+        target = request.target.strip()
+        if not target or not _HOST_RE.match(target):
+            return JSONResponse({"ok": False, "error": "Invalid target"}, status_code=400)
+        ports = request.ports or list(COMMON_PORTS)
+        # Cap to keep scans polite.
+        ports = [int(p) for p in ports if 1 <= int(p) <= 65535][:64]
+        result = await scan_ports(target, ports=ports, demo=state.demo_mode)
+        payload = result.to_dict()
+        await state.record_tool_result("ports", target, payload)
+        return JSONResponse({"ok": True, "result": payload})
+
+    @app.post("/api/ping")
+    async def api_ping(request: ToolRequest) -> JSONResponse:
+        target = request.target.strip()
+        if not target or not _HOST_RE.match(target):
+            return JSONResponse({"ok": False, "error": "Invalid target"}, status_code=400)
+        count = request.count or 4
+        result = await ping_host(target, count=count, demo=state.demo_mode)
+        payload = result.to_dict()
+        await state.record_tool_result("ping", target, payload)
+        return JSONResponse({"ok": True, "result": payload})
+
     @app.get("/api/events")
     async def events() -> StreamingResponse:
         return StreamingResponse(_event_stream(state), media_type="text/event-stream")
 
     return app
+
+
+def _looks_like_ipv4(value: str) -> bool:
+    parts = value.split(".")
+    if len(parts) != 4:
+        return False
+    try:
+        return all(0 <= int(part) <= 255 for part in parts)
+    except ValueError:
+        return False
 
 
 async def _event_stream(state: RadarState) -> AsyncIterator[str]:
@@ -68,7 +143,7 @@ DASHBOARD_HTML = """
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Trace Radar — 3D Route Map</title>
+  <title>Trace Radar — Live Hop Health</title>
   <style>
     :root {
       --bg0: #071018;
@@ -83,8 +158,8 @@ DASHBOARD_HTML = """
       --red: #f07178;
       --green: #4ade80;
       --violet: #a78bfa;
-      --font-display: "Segoe UI", "Helvetica Neue", sans-serif;
-      --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      --font-display: "IBM Plex Sans", "Segoe UI", "Helvetica Neue", sans-serif;
+      --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, Menlo, monospace;
     }
     * { box-sizing: border-box; }
     body {
@@ -180,7 +255,27 @@ DASHBOARD_HTML = """
     .events .whois { color: var(--violet); }
     .events .loss { color: var(--amber); }
     .hint { font-size: 11px; color: var(--muted); margin-top: 6px; }
-    .hop-scroll { max-height: min(58vh, 520px); overflow: auto; }
+    .hop-scroll { max-height: min(42vh, 420px); overflow: auto; }
+    #timeline {
+      width: 100%; height: 220px; display: block;
+      border-radius: 12px; border: 1px solid var(--line); background: #02080f;
+    }
+    .health {
+      display: inline-block; border-radius: 999px; padding: 2px 7px; font-size: 10px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: .04em;
+    }
+    .health.good { background: rgba(74,222,128,.15); color: var(--green); }
+    .health.degraded { background: rgba(245,185,66,.15); color: var(--amber); }
+    .health.poor, .health.down { background: rgba(240,113,120,.18); color: var(--red); }
+    .health.unknown { background: rgba(138,160,181,.15); color: var(--muted); }
+    .tools { display: grid; grid-template-columns: 1fr; gap: 8px; }
+    .tool-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    .tool-row button { font-size: 12px; padding: 7px 10px; }
+    #tool-out {
+      margin-top: 8px; padding: 10px; border-radius: 10px; border: 1px solid var(--line);
+      background: #0a1622; font-size: 12px; min-height: 72px; white-space: pre-wrap; font-family: var(--font-mono);
+      max-height: 200px; overflow: auto; color: var(--muted);
+    }
     @media (max-width: 980px) {
       main { grid-template-columns: 1fr; }
       .gauges { grid-template-columns: repeat(2, 1fr); }
@@ -191,7 +286,7 @@ DASHBOARD_HTML = """
 <body>
   <header>
     <div>
-      <h1><span>Trace Radar</span> — 3D Internet Routes</h1>
+      <h1><span>Trace Radar</span> — Live Hop Health</h1>
       <div class="stats">
         <span id="counts">Waiting for traceroute…</span>
         <span id="updated"></span>
@@ -219,7 +314,7 @@ DASHBOARD_HTML = """
       </section>
 
       <section class="panel">
-        <h2>Detailed hops · packet loss · WHOIS</h2>
+        <h2>Live hops · health · packet loss · WHOIS</h2>
         <div id="route-tabs" class="route-tabs"></div>
         <div class="hop-scroll">
           <table class="hop-table">
@@ -227,6 +322,7 @@ DASHBOARD_HTML = """
               <tr>
                 <th>#</th>
                 <th>Host / IP</th>
+                <th>Health</th>
                 <th>RTT</th>
                 <th>Loss %</th>
                 <th>Place</th>
@@ -239,12 +335,40 @@ DASHBOARD_HTML = """
       </section>
 
       <section class="panel">
+        <h2>Scanny tools · WHOIS · DNS · Ports · Ping</h2>
+        <div class="tools">
+          <div class="tool-row">
+            <input id="tool-input" type="text" placeholder="host or IP" value="1.1.1.1" style="flex:1;min-width:140px">
+          </div>
+          <div class="tool-row">
+            <button id="tool-whois" class="secondary">WHOIS</button>
+            <button id="tool-dns" class="secondary">DNS</button>
+            <button id="tool-ports" class="secondary">Port scan</button>
+            <button id="tool-ping" class="secondary">Ping</button>
+          </div>
+          <div id="tool-out">Run WHOIS, DNS, port scan, or ping — results also land in the event feed.</div>
+        </div>
+      </section>
+
+      <section class="panel">
         <h2>Events</h2>
         <div id="events" class="events"></div>
       </section>
     </section>
 
     <section class="stack">
+      <section class="panel">
+        <h2>PingPlotter timeline · RTT per hop over time</h2>
+        <canvas id="timeline" width="980" height="220"></canvas>
+        <div class="legend">
+          <span><i style="background:var(--green)"></i>Good</span>
+          <span><i style="background:var(--amber)"></i>Loss / spike</span>
+          <span><i style="background:var(--red)"></i>Timeout</span>
+          <span><i style="background:var(--cyan)"></i>Selected hop</span>
+        </div>
+        <p class="hint">Each row is a hop. Dots are probe cycles (height = RTT). Red ticks are 100% loss.</p>
+      </section>
+
       <section class="panel">
         <h2>3D route globe</h2>
         <canvas id="globe" width="980" height="560"></canvas>
@@ -370,6 +494,77 @@ DASHBOARD_HTML = """
       }
     };
 
+    async function runTool(path, label) {
+      const target = document.getElementById("tool-input").value.trim()
+        || (currentRoute() && currentRoute().target)
+        || "";
+      const out = document.getElementById("tool-out");
+      if (!target) { out.textContent = "Enter a host or IP first."; return; }
+      out.textContent = `${label} ${target}…`;
+      try {
+        const res = await fetch(path, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ target }),
+        });
+        const body = await res.json();
+        if (!res.ok || !body.ok) throw new Error(body.error || `${label} failed`);
+        out.textContent = formatToolResult(label, body.result);
+      } catch (err) {
+        out.textContent = err.message || `${label} failed`;
+      }
+    }
+
+    function formatToolResult(label, result) {
+      if (!result) return `${label}: no result`;
+      if (label === "WHOIS") {
+        if (result.is_private) return `WHOIS ${result.ip}: private / reserved`;
+        if (!result.found) return `WHOIS ${result.ip}: ${result.error || "no record"}`;
+        return [
+          `WHOIS ${result.ip}`,
+          `  name: ${result.name || "—"}`,
+          `  org:  ${result.org || result.registrant || "—"}`,
+          `  cidr: ${result.cidr || "—"}`,
+          `  asn:  ${result.asn || "—"}`,
+          `  abuse:${result.abuse_email || "—"}`,
+          `  country: ${result.country || "—"}`,
+        ].join("\\n");
+      }
+      if (label === "DNS") {
+        const lines = [`DNS ${result.host}`];
+        for (const [kind, values] of Object.entries(result.records || {})) {
+          lines.push(`  ${kind}: ${(values || []).join(", ")}`);
+        }
+        if (result.reverse) lines.push(`  PTR: ${result.reverse}`);
+        if (result.error) lines.push(`  note: ${result.error}`);
+        return lines.join("\\n");
+      }
+      if (label === "Ports") {
+        return [
+          `Port scan ${result.host} (${result.resolved_ip || "?"}) · ${result.duration_ms} ms`,
+          `  open:     ${(result.open_ports || []).join(", ") || "none"}`,
+          `  closed:   ${(result.closed_ports || []).length}`,
+          `  filtered: ${(result.filtered_ports || []).length}`,
+          `  scanned:  ${(result.scanned || []).length} ports`,
+        ].join("\\n");
+      }
+      if (label === "Ping") {
+        return [
+          `Ping ${result.host} (${result.resolved_ip || "?"})`,
+          `  ${result.answered}/${result.sent} replies · loss ${result.loss_pct}%`,
+          `  rtt min/avg/max: ${fmt(result.min_ms)} / ${fmt(result.avg_ms)} / ${fmt(result.max_ms)} ms`,
+          `  samples: ${(result.rtts_ms || []).join(", ") || "—"}`,
+          result.error ? `  note: ${result.error}` : "",
+        ].filter(Boolean).join("\\n");
+      }
+      return JSON.stringify(result, null, 2);
+    }
+
+    document.getElementById("tool-whois").onclick = () => { void runTool("/api/whois", "WHOIS"); };
+    document.getElementById("tool-dns").onclick = () => { void runTool("/api/dns", "DNS"); };
+    document.getElementById("tool-ports").onclick = () => { void runTool("/api/ports", "Ports"); };
+    document.getElementById("tool-ping").onclick = () => { void runTool("/api/ping", "Ping"); };
+
     canvas.addEventListener("pointerdown", (e) => {
       dragging = true; autoSpin = false;
       lastX = e.clientX; lastY = e.clientY;
@@ -446,7 +641,7 @@ DASHBOARD_HTML = """
       const tbody = document.getElementById("hops");
       tbody.innerHTML = "";
       if (!route) {
-        tbody.innerHTML = `<tr><td colspan="5" class="muted">No routes yet.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" class="muted">No routes yet.</td></tr>`;
       } else {
         for (const hop of route.hops) {
           const tr = document.createElement("tr");
@@ -459,18 +654,26 @@ DASHBOARD_HTML = """
               (hop.whois && hop.whois.found ? `<div class="whois-line">${esc(hop.whois.summary || hop.whois.org || hop.whois.name || "")}</div>` : "")
             : `<span class="muted">* * * no reply</span>`;
           const place = hop.geo ? (hop.geo.place || "—") : "—";
+          const health = hop.health || (hop.responded ? "good" : "down");
           tr.innerHTML = `
             <td>${hop.ttl}</td>
             <td>${host}</td>
+            <td><span class="health ${esc(health)}">${esc(health)}</span></td>
             <td class="mono">${hop.rtt_avg_ms != null ? hop.rtt_avg_ms.toFixed(1) + " ms" : "—"}</td>
             <td class="loss mono">${hop.responded || hop.probes_sent ? hop.loss_pct.toFixed(1) + "%" : "100%"}</td>
             <td class="place">${esc(place)}</td>`;
-          tr.onclick = () => { selectedTtl = hop.ttl; renderPanels(); };
+          tr.onclick = () => {
+            selectedTtl = hop.ttl;
+            const toolInput = document.getElementById("tool-input");
+            if (hop.ip) toolInput.value = hop.ip;
+            renderPanels();
+          };
           tbody.appendChild(tr);
         }
       }
       renderHopDetail(route);
       renderEvents();
+      drawTimeline(route);
     }
 
     function renderHopDetail(route) {
@@ -513,6 +716,106 @@ DASHBOARD_HTML = """
     function fmt(v) { return v == null || Number.isNaN(Number(v)) ? "—" : Number(v).toFixed(1); }
     function esc(s) {
       return String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+    }
+
+    // ---------- PingPlotter-style timeline ----------
+    function drawTimeline(route) {
+      const canvas = document.getElementById("timeline");
+      if (!canvas) return;
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      const cssW = Math.max(320, Math.floor(rect.width));
+      const cssH = 220;
+      if (canvas.width !== Math.floor(cssW * dpr) || canvas.height !== Math.floor(cssH * dpr)) {
+        canvas.width = Math.floor(cssW * dpr);
+        canvas.height = Math.floor(cssH * dpr);
+      }
+      const tctx = canvas.getContext("2d");
+      tctx.clearRect(0, 0, canvas.width, canvas.height);
+      tctx.save();
+      tctx.scale(dpr, dpr);
+
+      const W = cssW, H = cssH;
+      const left = 48, right = W - 12, top = 12, bottom = H - 28;
+      tctx.fillStyle = "#8aa0b5";
+      tctx.font = "11px sans-serif";
+
+      if (!route || !route.hops || !route.hops.length) {
+        tctx.fillText("Waiting for hop timeline samples…", left, H / 2);
+        tctx.restore();
+        return;
+      }
+
+      const hops = route.hops;
+      const maxSamples = Math.max(1, ...hops.map((h) => (h.timeline || []).length));
+      const maxRtt = Math.max(
+        10,
+        ...hops.flatMap((h) => (h.timeline || []).map((s) => s.rtt_avg_ms || 0)),
+        ...hops.flatMap((h) => (h.timeline || []).map((s) => s.rtt_max_ms || 0)),
+      );
+      const rowH = (bottom - top) / hops.length;
+
+      // grid
+      tctx.strokeStyle = "rgba(29,51,74,0.85)";
+      tctx.lineWidth = 1;
+      for (let i = 0; i <= 4; i++) {
+        const y = top + ((bottom - top) * i) / 4;
+        tctx.beginPath(); tctx.moveTo(left, y); tctx.lineTo(right, y); tctx.stroke();
+      }
+      tctx.fillText("0 ms", 8, bottom + 4);
+      tctx.fillText(`${Math.round(maxRtt)} ms`, 4, top + 10);
+      tctx.fillText(`← older · ${maxSamples} samples · newer →`, left, H - 8);
+
+      hops.forEach((hop, row) => {
+        const y0 = top + row * rowH;
+        const yMid = y0 + rowH / 2;
+        const selected = hop.ttl === selectedTtl;
+        tctx.fillStyle = selected ? "#3ec7ff" : "#8aa0b5";
+        tctx.font = selected ? "bold 11px sans-serif" : "11px sans-serif";
+        tctx.fillText(String(hop.ttl), 18, yMid + 4);
+
+        // row baseline
+        tctx.strokeStyle = selected ? "rgba(62,199,255,0.35)" : "rgba(29,51,74,0.55)";
+        tctx.beginPath(); tctx.moveTo(left, y0 + rowH - 1); tctx.lineTo(right, y0 + rowH - 1); tctx.stroke();
+
+        const samples = hop.timeline || [];
+        if (!samples.length) return;
+        const xStep = (right - left) / Math.max(samples.length - 1, 1);
+
+        // area / line for avg RTT within the hop row band
+        tctx.beginPath();
+        let started = false;
+        samples.forEach((sample, i) => {
+          const x = left + i * xStep;
+          if (sample.rtt_avg_ms == null) {
+            started = false;
+            return;
+          }
+          const y = y0 + rowH - 4 - (sample.rtt_avg_ms / maxRtt) * (rowH - 10);
+          if (!started) { tctx.moveTo(x, y); started = true; }
+          else tctx.lineTo(x, y);
+        });
+        tctx.strokeStyle = selected ? "#3ec7ff" : hop.health === "poor" || hop.health === "down"
+          ? "#f07178" : hop.health === "degraded" ? "#f5b942" : "#2dd4bf";
+        tctx.lineWidth = selected ? 2.2 : 1.4;
+        tctx.stroke();
+
+        samples.forEach((sample, i) => {
+          const x = left + i * xStep;
+          if (sample.loss_pct >= 100 || sample.rtt_avg_ms == null) {
+            tctx.fillStyle = "#f07178";
+            tctx.fillRect(x - 1.5, y0 + 3, 3, rowH - 8);
+            return;
+          }
+          if (sample.loss_pct > 0) {
+            tctx.fillStyle = "#f5b942";
+            tctx.beginPath();
+            tctx.arc(x, y0 + rowH - 4 - (sample.rtt_avg_ms / maxRtt) * (rowH - 10), 2.5, 0, Math.PI * 2);
+            tctx.fill();
+          }
+        });
+      });
+      tctx.restore();
     }
 
     // ---------- 3D globe ----------

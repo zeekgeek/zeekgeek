@@ -329,12 +329,12 @@ python3 -m jet_radar --host 127.0.0.1 --port 8790 --sigma 3 --trigger-threshold 
 
 ---
 
-# Trace Radar (3D Visual Traceroute)
+# Trace Radar (PingPlotter-style hop health + Scanny tools)
 
-Diagnoses internet paths the way Speedtest.net and Scanny-style tools do —
-**per-hop RTT**, **packet-loss percentage**, **WHOIS/RDAP ownership**, and a
-**speed test** — then draws the route as animated great-circle arcs on a
-CDN-free **3D globe**.
+Live view of each hop on the path to a host — **RTT**, **packet-loss %**, and
+**health** (good / degraded / poor / down) — with a PingPlotter-style timeline
+graph, plus Scanny-style **WHOIS**, **DNS**, **TCP port scan**, and **ping**.
+Routes also draw as animated great-circle arcs on a CDN-free **3D globe**.
 
 ## Quick start
 
@@ -344,11 +344,12 @@ pip install -e .
 python3 -m trace_radar --demo
 ```
 
-Open the printed dashboard URL (default <http://127.0.0.1:8800>). Drag the
-globe to rotate, click hops for WHOIS (org, CIDR, abuse contact), and run a
-speed test from the header.
+Open the printed dashboard URL (default <http://127.0.0.1:8800>). Watch the
+hop table and timeline update each cycle, click a hop for WHOIS detail, use the
+tools panel for DNS / port scan / ping, and run a speed test from the header.
 
-Live traceroute (needs `traceroute` or `tracepath` on `PATH`):
+Live traceroute (needs `traceroute` / `tracepath`, or falls back to a Python
+UDP probe):
 
 ```bash
 python3 -m trace_radar one.one.one.one google.com
@@ -356,12 +357,12 @@ python3 -m trace_radar one.one.one.one google.com
 
 ## What you get
 
-- Detailed traceroute with **N probes per hop** (default 5) and **loss %**
-  (last cycle + cumulative)
+- Continuous traceroute with **N probes per hop** and **loss %** (last cycle + cumulative)
+- **PingPlotter timeline**: per-hop RTT samples over time with loss ticks
+- Hop **health** badges driven by loss and latency spikes
 - **WHOIS / RDAP** ownership: network name, org, CIDR, ASN, abuse email
-- GeoIP city/country for the 3D map
-- Speedtest-style latency, jitter, packet loss, download/upload
-- Interactive orthographic globe with continent outlines and pulse arcs
+- Scanny tools: **DNS** (A/AAAA/PTR), **TCP port scan**, **ping**
+- GeoIP city/country for the 3D map + speedtest latency/jitter/throughput
 
 ## Command options
 
@@ -377,8 +378,9 @@ python3 -m trace_radar --host 127.0.0.1 --port 8800 --probes 5 --demo
 
 ## API
 
-- `GET /api/state`: snapshot (routes, hops with loss/WHOIS/geo, speedtest, events)
+- `GET /api/state`: snapshot (routes, hop timelines, tool results, speedtest, events)
 - `POST /api/trace`: body `{"target": "example.com"}`
+- `POST /api/whois` / `/api/dns` / `/api/ports` / `/api/ping`: body `{"target": "…"}`
 - `POST /api/speedtest`: start a speed run
 - `GET /api/events`: Server-Sent Events stream
 

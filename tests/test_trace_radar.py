@@ -279,6 +279,62 @@ class DemoBackendTests(unittest.TestCase):
         self.assertTrue(snap["origin"]["lat"] is not None)
 
 
+class TimelineTests(unittest.TestCase):
+    def test_hop_timeline_and_health(self) -> None:
+        async def _run() -> dict:
+            state = RadarState(demo_mode=True)
+            await state.ingest_trace(
+                "example.com",
+                resolved_ip="1.1.1.1",
+                hops=[
+                    HopObservation(ttl=1, ip="192.168.1.1", rtts_ms=[1.0, 1.1], probes=5),
+                    HopObservation(ttl=2, ip="1.1.1.1", rtts_ms=[15.0], probes=5),
+                ],
+                destination_reached=True,
+            )
+            await state.ingest_trace(
+                "example.com",
+                resolved_ip="1.1.1.1",
+                hops=[
+                    HopObservation(ttl=1, ip="192.168.1.1", rtts_ms=[1.0, 1.0, 1.0, 1.0, 1.0], probes=5),
+                    HopObservation(ttl=2, ip="1.1.1.1", rtts_ms=[], probes=5),
+                ],
+                destination_reached=True,
+            )
+            return await state.snapshot()
+
+        snap = asyncio.run(_run())
+        hops = snap["routes"][0]["hops"]
+        self.assertEqual(len(hops[0]["timeline"]), 2)
+        self.assertEqual(hops[0]["health"], "good")
+        self.assertEqual(hops[1]["health"], "poor")  # last cycle 100% loss
+        self.assertIsNotNone(hops[0]["timeline"][0]["at"])
+
+
+class ScannyToolTests(unittest.TestCase):
+    def test_demo_dns_whois_ports_ping(self) -> None:
+        from trace_radar.tools import lookup_dns, ping_host, scan_ports
+        from trace_radar.whois import WhoisResolver
+
+        async def _run() -> tuple:
+            dns = await lookup_dns("one.one.one.one", demo=True)
+            ports = await scan_ports("1.1.1.1", demo=True)
+            ping = await ping_host("1.1.1.1", count=4, demo=True)
+            whois = await WhoisResolver(demo=True).lookup("1.1.1.1")
+            state = RadarState(demo_mode=True)
+            await state.record_tool_result("dns", "one.one.one.one", dns.to_dict())
+            snap = await state.snapshot()
+            return dns, ports, ping, whois, snap
+
+        dns, ports, ping, whois, snap = asyncio.run(_run())
+        self.assertIn("A", dns.records)
+        self.assertIn(443, ports.open_ports)
+        self.assertGreaterEqual(ping.answered, 1)
+        self.assertTrue(whois.found)
+        self.assertEqual(len(snap["tool_results"]), 1)
+        self.assertTrue(any(e["type"] == "tool:dns" for e in snap["events"]))
+
+
 class WebRouteTests(unittest.TestCase):
     def test_routes_exist(self) -> None:
         app = create_app(RadarState())
@@ -288,8 +344,13 @@ class WebRouteTests(unittest.TestCase):
         self.assertIn("/api/events", paths)
         self.assertIn("/api/trace", paths)
         self.assertIn("/api/speedtest", paths)
+        self.assertIn("/api/whois", paths)
+        self.assertIn("/api/dns", paths)
+        self.assertIn("/api/ports", paths)
+        self.assertIn("/api/ping", paths)
         self.assertIn("GET", paths["/api/state"])
         self.assertIn("POST", paths["/api/trace"])
+        self.assertIn("POST", paths["/api/whois"])
 
 
 if __name__ == "__main__":
