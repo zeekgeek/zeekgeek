@@ -8,7 +8,7 @@ This repo contains self-contained Python apps under `src/`:
 - `wifi_radar` — WiFi motion radar + FastAPI dashboard
 - `mac_battery` — MacBook battery/charging diagnostic + FastAPI dashboard
 - `jet_radar` — private-jet ADS-B movement radar + strange-event alarm dashboard
-- `etsy_ai_space` — phased Etsy POD research swarm (scrape → brief → export; manual upload)
+- `etsy_ai_space` — phased Etsy POD research swarm (scrape → brief → export; manual / Printify / BrowserClaw upload)
 
 There is no database and no frontend build step (dashboard HTML/JS is embedded
 in each package’s `web.py`).
@@ -36,6 +36,9 @@ Running the apps:
  BrowserClaw upload: `python3 -m etsy_ai_space browserclaw-upload --dry-run` then
  `browserclaw-upload --package etsy_ai_space/exports/listing-02-we-do-recover --reuse-tab`
  (saves as Etsy draft by default; needs BrowserClaw CDP + seller login).
+ Printify upload: set `PRINTIFY_API_TOKEN` (+ `PRINTIFY_SHOP_ID`), then
+ `python3 -m etsy_ai_space printify-upload --dry-run` / `--draft-id N` (creates
+ Printify products; `--publish` syncs to the connected Etsy shop).
  `--publish` is blocked while `require_manual_upload: true` unless `--force-publish`.
 - Dashboards bind to `http://127.0.0.1:<port>` by default. If the port is busy the app
  auto-increments to the next free port and prints the chosen URL, so read the startup log

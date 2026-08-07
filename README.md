@@ -333,7 +333,8 @@ python3 -m jet_radar --host 127.0.0.1 --port 8790 --sigma 3 --trigger-threshold 
 
 Phased agent swarm for **safe** print-on-demand store research. It follows a
 manual-upload rollout: scrape trends → creative brief → listing copy → JSON/CSV
-export. Nothing publishes to Etsy automatically.
+export. Publishing is opt-in via Printify or BrowserClaw, gated by
+`require_manual_upload` in `autopilot.yaml`.
 
 ## Architecture
 
@@ -350,6 +351,7 @@ src/etsy_ai_space/
 │   └── state.json         # Live agent status (gitignored; see state.schema.json)
 ├── dashboard/
 │   └── app.py             # Streamlit live status UI
+├── printify/              # Printify API → create/publish to connected Etsy shop
 ├── tools/                 # Humanized delays + QC rules
 └── obsidian_vault/        # Brief memory (Markdown)
 ```
@@ -423,6 +425,8 @@ python3 -m etsy_ai_space cursor-generate --list
 python3 -m etsy_ai_space cursor-generate --attach <draft-id> <image-file>
 python3 -m etsy_ai_space browserclaw-upload --dry-run
 python3 -m etsy_ai_space browserclaw-upload --package etsy_ai_space/exports/listing-02-we-do-recover --reuse-tab
+python3 -m etsy_ai_space printify-upload --dry-run
+python3 -m etsy_ai_space printify-upload --list-shops
 python3 -m etsy_ai_space stats
 python3 -m etsy_ai_space top [--limit 10]
 
@@ -502,3 +506,38 @@ Safety:
 - `require_manual_upload: true` in `etsy_ai_space/autopilot.yaml` blocks `--publish` unless you pass `--force-publish`
 - `daily_upload_cap` limits how many assisted uploads can run per day
 - Prefer draft-first for new shops (3–5/day)
+
+## Printify → Etsy publish (API)
+
+Same research → approve → image attach flow, then create products in Printify and
+optionally publish them to your **Printify-connected Etsy shop** (upload artwork →
+create product → publish). This is the API equivalent of the common automation
+WF3 step (no Make.com / Google Sheets required — SQLite + this CLI).
+
+Prerequisites:
+1. Etsy seller shop + Printify account with the shop connected
+2. Printify Personal Access Token (`PRINTIFY_API_TOKEN`)
+3. Shop id (`PRINTIFY_SHOP_ID` or `printify.shop_id` in `autopilot.yaml`)
+4. Approved drafts with attached images (`cursor-generate --attach`)
+
+```bash
+export PRINTIFY_API_TOKEN=...
+export PRINTIFY_SHOP_ID=...   # or set printify.shop_id in autopilot.yaml
+
+# Discover shops / providers for your token
+python3 -m etsy_ai_space printify-upload --list-shops
+python3 -m etsy_ai_space printify-upload --list-providers 6
+
+# Preview queue (approved drafts with images)
+python3 -m etsy_ai_space printify-upload --dry-run
+
+# Create products in Printify only (review in Printify UI; default)
+python3 -m etsy_ai_space printify-upload --draft-id 1
+
+# Publish to connected Etsy (blocked while require_manual_upload=true unless --force-publish)
+python3 -m etsy_ai_space printify-upload --draft-id 1 --publish --force-publish
+```
+
+Tune blueprint / provider / colors under `printify.product_types` in
+`etsy_ai_space/autopilot.yaml`. Default blueprint `6` is the common Unisex Heavy
+Cotton Tee; confirm `print_provider_id` with `--list-providers`.
