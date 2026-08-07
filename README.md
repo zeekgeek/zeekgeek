@@ -333,7 +333,8 @@ python3 -m jet_radar --host 127.0.0.1 --port 8790 --sigma 3 --trigger-threshold 
 
 Phased agent swarm for **safe** print-on-demand store research. It follows a
 manual-upload rollout: scrape trends → creative brief → listing copy → JSON/CSV
-export. Nothing publishes to Etsy automatically.
+export. Publishing is opt-in via Printify or BrowserClaw, gated by
+`require_manual_upload` in `autopilot.yaml`.
 
 ## Architecture
 
@@ -350,6 +351,7 @@ src/etsy_ai_space/
 │   └── state.json         # Live agent status (gitignored; see state.schema.json)
 ├── dashboard/
 │   └── app.py             # Streamlit live status UI
+├── printify/              # Printify API → create/publish to connected Etsy shop
 ├── tools/                 # Humanized delays + QC rules
 └── obsidian_vault/        # Brief memory (Markdown)
 ```
@@ -404,13 +406,44 @@ python3 -m etsy_ai_space pipeline "retro cat shirt"
 Without the key, Ultron falls back to deterministic templates so you can test
 the full export flow offline.
 
+## Full autopilot (n8n-style schedule → Printify)
+
+`etsy_ai_space/autopilot.yaml` can run the full loop on a timer:
+
+`scrape/concepts → auto-approve → OpenAI transparent PNG → Printify create → Etsy publish`
+
+```bash
+export OPENAI_API_KEY=...          # gpt-image-1 transparent PNGs
+export PRINTIFY_API_TOKEN=...
+export PRINTIFY_SHOP_ID=...        # or printify.shop_id in yaml
+
+# One cycle (demo scrape + demo/OpenAI images + Printify if token set)
+python3 -m etsy_ai_space autopilot --once
+
+# Continuous schedule (cycle_interval_seconds / max_cycles_per_day)
+python3 -m etsy_ai_space autopilot
+```
+
+Key flags in `autopilot.yaml`:
+
+| Flag | Role |
+|------|------|
+| `auto_approve` | Move new drafts to `approved_for_export` |
+| `auto_generate_images` | Call OpenAI Images (`gpt-image-1`) or `image_provider: demo` |
+| `auto_printify` | Create Printify products for drafts that have images |
+| `printify_publish` | Publish those products to the connected Etsy shop |
+| `require_manual_upload` | Must be `false` for Etsy publish to run |
+| `uploads_per_cycle` | Cap per cycle (default 2, like common n8n setups) |
+
+Without `OPENAI_API_KEY`, image step falls back to placeholder PNGs when `demo: true`.
+Without `PRINTIFY_API_TOKEN`, Printify is skipped with a warning (research/images still run).
+
 ## Safe scaling checklist
 
-1. Run demo pipeline locally and review `etsy_ai_space/exports/listing-bundle-*.json`.
-2. Generate artwork from `image_prompt` in your tool of choice; save paths into the bundle.
-3. Upload listings **manually** in Etsy Seller Manager (3–5/day for new shops).
-4. Only after the shop is established, consider Etsy Open API or browser assist tools.
-5. Never auto-delete listings — warroom outputs recommendations only.
+1. Start with `uploads_per_cycle: 2` and `daily_upload_cap: 5` for new shops.
+2. Confirm `print_provider_id` via `printify-upload --list-providers 6` before live publish.
+3. Set `printify_publish: false` first if you want to review products in Printify before Etsy.
+4. Never auto-delete listings — warroom outputs recommendations only.
 
 ## Command reference
 
@@ -423,6 +456,8 @@ python3 -m etsy_ai_space cursor-generate --list
 python3 -m etsy_ai_space cursor-generate --attach <draft-id> <image-file>
 python3 -m etsy_ai_space browserclaw-upload --dry-run
 python3 -m etsy_ai_space browserclaw-upload --package etsy_ai_space/exports/listing-02-we-do-recover --reuse-tab
+python3 -m etsy_ai_space printify-upload --dry-run
+python3 -m etsy_ai_space printify-upload --list-shops
 python3 -m etsy_ai_space stats
 python3 -m etsy_ai_space top [--limit 10]
 
@@ -502,3 +537,38 @@ Safety:
 - `require_manual_upload: true` in `etsy_ai_space/autopilot.yaml` blocks `--publish` unless you pass `--force-publish`
 - `daily_upload_cap` limits how many assisted uploads can run per day
 - Prefer draft-first for new shops (3–5/day)
+
+## Printify → Etsy publish (API)
+
+Same research → approve → image attach flow, then create products in Printify and
+optionally publish them to your **Printify-connected Etsy shop** (upload artwork →
+create product → publish). This is the API equivalent of the common automation
+WF3 step (no Make.com / Google Sheets required — SQLite + this CLI).
+
+Prerequisites:
+1. Etsy seller shop + Printify account with the shop connected
+2. Printify Personal Access Token (`PRINTIFY_API_TOKEN`)
+3. Shop id (`PRINTIFY_SHOP_ID` or `printify.shop_id` in `autopilot.yaml`)
+4. Approved drafts with attached images (`cursor-generate --attach`)
+
+```bash
+export PRINTIFY_API_TOKEN=...
+export PRINTIFY_SHOP_ID=...   # or set printify.shop_id in autopilot.yaml
+
+# Discover shops / providers for your token
+python3 -m etsy_ai_space printify-upload --list-shops
+python3 -m etsy_ai_space printify-upload --list-providers 6
+
+# Preview queue (approved drafts with images)
+python3 -m etsy_ai_space printify-upload --dry-run
+
+# Create products in Printify only (review in Printify UI; default)
+python3 -m etsy_ai_space printify-upload --draft-id 1
+
+# Publish to connected Etsy (blocked while require_manual_upload=true unless --force-publish)
+python3 -m etsy_ai_space printify-upload --draft-id 1 --publish --force-publish
+```
+
+Tune blueprint / provider / colors under `printify.product_types` in
+`etsy_ai_space/autopilot.yaml`. Default blueprint `6` is the common Unisex Heavy
+Cotton Tee; confirm `print_provider_id` with `--list-providers`.

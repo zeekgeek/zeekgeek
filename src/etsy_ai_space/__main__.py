@@ -90,6 +90,44 @@ def build_parser() -> argparse.ArgumentParser:
     browserclaw_upload.add_argument("--dry-run", action="store_true", help="Preview queue only")
     browserclaw_upload.add_argument("--reuse-tab", action="store_true")
 
+    printify_upload = sub.add_parser(
+        "printify-upload",
+        help="Create Printify products from drafts (optional publish to connected Etsy shop)",
+    )
+    printify_upload.add_argument("--config", type=Path, default=None, help="autopilot.yaml path")
+    printify_upload.add_argument("--list", action="store_true", help="List uploadable drafts")
+    printify_upload.add_argument(
+        "--list-shops",
+        action="store_true",
+        help="List Printify shops for PRINTIFY_API_TOKEN",
+    )
+    printify_upload.add_argument(
+        "--list-providers",
+        type=int,
+        metavar="BLUEPRINT_ID",
+        default=None,
+        help="List print providers for a blueprint id",
+    )
+    printify_upload.add_argument("--draft-id", action="append", help="Draft id to upload (repeatable)")
+    printify_upload.add_argument(
+        "--package",
+        type=Path,
+        default=None,
+        help="Upload from a listing package folder",
+    )
+    printify_upload.add_argument("--limit", type=int, default=None)
+    printify_upload.add_argument(
+        "--publish",
+        action="store_true",
+        help="Publish created products to the connected Etsy shop",
+    )
+    printify_upload.add_argument(
+        "--force-publish",
+        action="store_true",
+        help="Allow publish even when require_manual_upload=true",
+    )
+    printify_upload.add_argument("--dry-run", action="store_true", help="Preview queue only")
+
     pipeline = sub.add_parser("pipeline", help="Run phases 1–4 and export a manual upload bundle")
     pipeline.add_argument("query", help="Seed Etsy search query / niche")
     pipeline.add_argument("--niche", default=None, help="Creative niche override")
@@ -215,6 +253,12 @@ async def cmd_browserclaw_upload(args: argparse.Namespace) -> int:
     from .scraper.browserclaw_uploader import _cli as browserclaw_upload_cli
 
     return await browserclaw_upload_cli(args)
+
+
+async def cmd_printify_upload(args: argparse.Namespace) -> int:
+    from .printify.uploader import _cli as printify_upload_cli
+
+    return await printify_upload_cli(args)
 
 
 async def cmd_orchestrate(args: argparse.Namespace) -> int:
@@ -372,6 +416,8 @@ def main() -> None:
         raise SystemExit(asyncio.run(cmd_browserclaw_scrape(args)))
     if args.command == "browserclaw-upload":
         raise SystemExit(asyncio.run(cmd_browserclaw_upload(args)))
+    if args.command == "printify-upload":
+        raise SystemExit(asyncio.run(cmd_printify_upload(args)))
     if args.command == "orchestrate":
         raise SystemExit(asyncio.run(cmd_orchestrate(args)))
     if args.command == "pipeline":

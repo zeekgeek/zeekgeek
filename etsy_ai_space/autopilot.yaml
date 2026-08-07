@@ -1,4 +1,4 @@
-# Autopilot configuration — edit niches and schedule here
+# Autopilot configuration — n8n-style schedule → concepts → images → Printify
 #
 # Focus: sobriety / addiction recovery POD (not medical/surgery recovery).
 # Add more search phrases below as you validate winners from manual Etsy browsing.
@@ -19,6 +19,9 @@ cycle_interval_seconds: 21600  # 6 hours
 max_cycles_per_day: 4
 concepts_per_cycle: 5
 max_results_per_scrape: 24
+# How many listings to image+Printify per cycle (video-style "2 a day")
+uploads_per_cycle: 2
+daily_upload_cap: 5
 
 # Use demo scraper (true = offline, no Etsy HTTP). Set false on your Mac for live trends.
 demo: true
@@ -26,9 +29,36 @@ demo: true
 # Optional: set via environment variable ANTHROPIC_API_KEY for smarter copy
 use_claude: false
 
-# Human gate — autopilot never auto-uploads; you approve then upload manually
-require_manual_upload: true
-daily_upload_cap: 5
+# --- Full n8n-style continuation (WF2 + WF3) ---
+# auto_approve → auto_generate_images → auto_printify → optional Etsy publish
+auto_approve: true
+auto_generate_images: true
+auto_printify: true
+# Publish created products to the connected Etsy shop (requires token + shop link)
+printify_publish: true
+# Must be false for printify_publish to actually hit Etsy (otherwise create-only)
+require_manual_upload: false
+
+# Image generation: openai (needs OPENAI_API_KEY) or demo (placeholder PNG)
+# When demo:true and no OPENAI_API_KEY, autopilot falls back to demo placeholders.
+image_provider: openai
+openai_image_model: gpt-image-1
+openai_image_size: 1024x1024
+openai_image_quality: medium
+
+# Printify → Etsy. Token via PRINTIFY_API_TOKEN; shop via PRINTIFY_SHOP_ID
+# or printify.shop_id below. Discover IDs with:
+#   python3 -m etsy_ai_space printify-upload --list-shops
+#   python3 -m etsy_ai_space printify-upload --list-providers 6
+printify:
+  shop_id: null
+  # Default: Gildan 5000 Unisex Heavy Cotton Tee (blueprint 6). Override provider after --list-providers.
+  product_types:
+    - key: tshirt
+      blueprint_id: 6
+      print_provider_id: 99
+      colors: [Black, White, Navy, Sport Grey, Charcoal]
+      position: front
 
 # Suggested price band for recovery niche (reference for workers; listings use ~24.99 default)
 target_price_min: 22.99
