@@ -29,17 +29,14 @@ Running the apps:
  SQLite logging). Live Etsy scraping needs `pip install -e ".[etsy]"` and `playwright install chromium`.
  Phase 4 exports JSON/CSV for **manual** listing upload — no Etsy API publish in this flow.
  Dashboard: `python3 -m etsy_ai_space dashboard` (Streamlit; reads `etsy_ai_space/pipeline/state.json`).
- Autopilot: `python3 -m etsy_ai_space autopilot --once --demo` (loop with `autopilot.yaml`; manual upload gate).
- Image generation: `python3 -m etsy_ai_space cursor-generate --list` to list pending prompts,
- then ask the Cursor agent to generate images and attach them with `cursor-generate --attach <draft-id> <file>`.
- Images are copied to `etsy_ai_space/exports/images/` and referenced in the export bundle.
- BrowserClaw upload: `python3 -m etsy_ai_space browserclaw-upload --dry-run` then
- `browserclaw-upload --package etsy_ai_space/exports/listing-02-we-do-recover --reuse-tab`
- (saves as Etsy draft by default; needs BrowserClaw CDP + seller login).
- Printify upload: set `PRINTIFY_API_TOKEN` (+ `PRINTIFY_SHOP_ID`), then
- `python3 -m etsy_ai_space printify-upload --dry-run` / `--draft-id N` (creates
- Printify products; `--publish` syncs to the connected Etsy shop).
- `--publish` is blocked while `require_manual_upload: true` unless `--force-publish`.
+ Autopilot: `python3 -m etsy_ai_space autopilot --once` uses `autopilot.yaml` for the
+ full n8n-style loop when `auto_approve` / `auto_generate_images` / `auto_printify` /
+ `printify_publish` are enabled (concepts → OpenAI PNG → Printify → Etsy). Needs
+ `OPENAI_API_KEY` for real images (demo placeholders if `demo: true` and no key) and
+ `PRINTIFY_API_TOKEN` + shop id for Printify. Cursor image path still works:
+ `cursor-generate --list` / `--attach`. BrowserClaw upload remains available for
+ form-fill drafts. CLI Printify: `printify-upload --dry-run`. Etsy publish needs
+ `require_manual_upload: false` (or CLI `--force-publish`).
 - Dashboards bind to `http://127.0.0.1:<port>` by default. If the port is busy the app
  auto-increments to the next free port and prints the chosen URL, so read the startup log
  rather than assuming the default. Pass `--port <n>` for deterministic binding.

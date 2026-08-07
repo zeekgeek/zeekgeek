@@ -125,15 +125,26 @@ class EtsyAiSpaceTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(len(config.niches), 5)
         self.assertIn("soberversary shirt gift", config.niches)
         self.assertTrue(config.demo)
+        self.assertTrue(config.auto_approve)
+        self.assertTrue(config.auto_generate_images)
+        self.assertTrue(config.auto_printify)
 
     async def test_autopilot_single_cycle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db = StoreDatabase(Path(tmp) / "store.db")
-            config = AutopilotConfig(niches=["retro cat shirt"], demo=True, max_cycles_per_day=2)
+            config = AutopilotConfig(
+                niches=["retro cat shirt"],
+                demo=True,
+                max_cycles_per_day=2,
+                auto_approve=False,
+                auto_generate_images=False,
+                auto_printify=False,
+            )
             runner = AutopilotRunner(db, config, export_dir=Path(tmp) / "exports")
             result = await runner.run_cycle()
             self.assertEqual(result["concepts"], 5)
             self.assertIn("export", result)
+            self.assertEqual(result["auto_approved"], 0)
 
     def test_designer_worker_builds_listing(self) -> None:
         brief = CreativeBrief(
