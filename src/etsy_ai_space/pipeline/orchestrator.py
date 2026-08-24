@@ -15,6 +15,7 @@ from typing import Any
 from ..agents.workers import copywriter_agent, design_agent, seo_agent
 from ..db import StoreDatabase, default_db_path
 from ..export.bundle import export_pending_drafts
+from ..llm.env import get_openrouter_key, load_dotenv, openrouter_model
 from ..models import ListingDraft, ProductConcept
 from ..scraper.etsy_scraper import scrape_niche_to_db
 from ..tools.humanize import humanize_text
@@ -35,8 +36,10 @@ class ManagerAgent:
     """Reads top listings and produces unique product concepts."""
 
     def __init__(self, *, anthropic_api_key: str | None = None, model: str = "claude-sonnet-4-20250514") -> None:
+        load_dotenv()
+        self.openrouter_key = get_openrouter_key()
         self.api_key = anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY")
-        self.model = model
+        self.model = openrouter_model(model) if self.openrouter_key else model
 
     def analyze_trends(self, top_listings: list[dict[str, Any]]) -> str:
         if not top_listings:
@@ -90,6 +93,9 @@ class ManagerAgent:
         *,
         count: int = 5,
     ) -> list[ProductConcept]:
+        if self.openrouter_key:
+            return await self._generate_concepts_with_openrouter(niche, top_listings, count=count)
+
         if not self.api_key:
             return self.generate_concepts(niche, top_listings, count=count)
 
@@ -123,11 +129,65 @@ class ManagerAgent:
             ],
         )
         raw = "\n".join(block.text for block in message.content if hasattr(block, "text"))
-        if raw.strip().startswith("```"):
-            raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
-        payload = json.loads(raw)
+        return self._concepts_from_llm_json(raw, niche, top_listings, count=count)
+
+    async def _generate_concepts_with_openrouter(
+        self,
+        niche: str,
+        top_listings: list[dict[str, Any]],
+        *,
+        count: int,
+    ) -> list[ProductConcept]:
+        from ..llm.openrouter import OpenRouterError, chat_text
+
+        trend_summary = self.analyze_trends(top_listings)
+        try:
+            raw = chat_text(
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are an Etsy POD trend manager. Return ONLY JSON: "
+                            '{"concepts":[{"concept_name","hook","angle"}, ...]} with exactly '
+                            f"{count} original, copyright-safe concepts unlike the references."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            {
+                                "niche": niche,
+                                "trend_summary": trend_summary,
+                                "reference_titles": [row["title"] for row in top_listings[:8]],
+                            },
+                            indent=2,
+                        ),
+                    },
+                ],
+                api_key=self.openrouter_key,
+                model=self.model,
+                max_tokens=1800,
+            )
+            return self._concepts_from_llm_json(raw, niche, top_listings, count=count)
+        except (OpenRouterError, json.JSONDecodeError, KeyError) as exc:
+            LOGGER.warning("OpenRouter concept generation failed (%s); using templates", exc)
+            return self.generate_concepts(niche, top_listings, count=count)
+
+    def _concepts_from_llm_json(
+        self,
+        raw: str,
+        niche: str,
+        top_listings: list[dict[str, Any]],
+        *,
+        count: int,
+    ) -> list[ProductConcept]:
+        text = raw.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1].rsplit("```", 1)[0]
+        payload = json.loads(text)
+        trend_summary = self.analyze_trends(top_listings)
         refs = [str(row["etsy_listing_id"]) for row in top_listings[:5] if row.get("etsy_listing_id")]
-        return [
+        concepts = [
             ProductConcept(
                 concept_name=str(item["concept_name"]),
                 hook=str(item["hook"]),
@@ -137,6 +197,10 @@ class ManagerAgent:
             )
             for item in payload.get("concepts", [])[:count]
         ]
+        if len(concepts) < count:
+            LOGGER.warning("LLM returned %d concepts, filling remainder with templates", len(concepts))
+            concepts.extend(self.generate_concepts(niche, top_listings, count=count)[len(concepts) :])
+        return concepts
 
 
 async def run_orchestrator(
@@ -174,7 +238,7 @@ async def run_orchestrator(
 
     with state.agent_activity("Manager", "Generating concepts"):
         concepts = await manager.generate_concepts_with_claude(niche, top, count=concept_count)
-        if manager.api_key:
+        if manager.openrouter_key or manager.api_key:
             state.bump_metric("compute_cost_usd", 0.012 * concept_count)
 
     saved_concepts: list[dict[str, Any]] = []

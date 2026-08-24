@@ -25,6 +25,8 @@ from .agents.cursor_image_generator import (
     list_pending_image_jobs,
     save_generated_image,
 )
+from .llm.env import load_dotenv
+from .llm.openrouter import OpenRouterError, ping as openrouter_ping
 from .pipeline.orchestrator import run_orchestrator
 from .scraper.etsy_scraper import scrape_niche_to_db
 
@@ -175,6 +177,12 @@ def build_parser() -> argparse.ArgumentParser:
     record.add_argument("--revenue", type=float, default=0.0)
 
     queue = sub.add_parser("queue", help="Show listing drafts by status")
+
+    openrouter = sub.add_parser(
+        "openrouter-ping",
+        help="Verify OPENROUTER_API_KEY against OpenRouter chat completions",
+    )
+    openrouter.add_argument("--model", default=None, help="OpenRouter model id (default: openai/gpt-4o)")
 
     return parser
 
@@ -337,6 +345,16 @@ def cmd_cursor_generate(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_openrouter_ping(args: argparse.Namespace) -> int:
+    try:
+        result = openrouter_ping(model=args.model)
+    except OpenRouterError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        return 1
+    print(json.dumps(result, indent=2))
+    return 0 if result.get("ok") == "true" else 1
+
+
 def cmd_dashboard(args: argparse.Namespace) -> int:
     import subprocess
     import sys
@@ -362,6 +380,7 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
 
 
 def main() -> None:
+    load_dotenv()
     parser = build_parser()
     args = parser.parse_args()
     logging.basicConfig(level=getattr(logging, args.log_level.upper()))
@@ -394,6 +413,8 @@ def main() -> None:
         raise SystemExit(cmd_record_upload(args))
     if args.command == "queue":
         raise SystemExit(cmd_queue(args))
+    if args.command == "openrouter-ping":
+        raise SystemExit(cmd_openrouter_ping(args))
     parser.error(f"Unknown command: {args.command}")
 
 
