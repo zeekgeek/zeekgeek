@@ -404,6 +404,7 @@ class AppTests(unittest.TestCase):
             "Problem router",
             "Latency over time",
             "Country",
+            "fittedWan",
         ):
             self.assertIn(needle, DASHBOARD_HTML)
 

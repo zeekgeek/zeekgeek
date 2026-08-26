@@ -302,6 +302,7 @@ DASHBOARD_HTML = r"""<!doctype html>
   let frozen = false;
   let alpha = 1;
   let didFit = false;
+  let fittedWan = false;
   const T = { x: 0, y: 0, k: 1 };
   const mouse = { x: 0, y: 0, down: false, pan: false, drag: null, lx: 0, ly: 0 };
 
@@ -374,6 +375,12 @@ DASHBOARD_HTML = r"""<!doctype html>
       for (let i = 0; i < 40; i++) tick(0.4);
       fit();
       didFit = true;
+    }
+    const hasWan = nodes.some((n) => String(n.id || "").startsWith("net:"));
+    if (hasWan && !fittedWan && !mouse.drag) {
+      for (let i = 0; i < 36; i++) tick(0.35);
+      fit();
+      fittedWan = true;
     }
   }
 
