@@ -76,6 +76,18 @@ class ClassifyHopTests(unittest.TestCase):
         self.assertTrue(classified[1].filtered)
         self.assertEqual(find_problems(classified), [])
 
+    def test_filtered_gap_blames_silent_router(self) -> None:
+        readings = [
+            HopReading(1, "192.168.1.1", "gw", 1.0),
+            HopReading(2, "154.54.30.17", "cogent", None, timed_out=True),
+            HopReading(3, "1.1.1.1", "dest", 90.0),
+        ]
+        classified = classify_hops(readings)
+        self.assertEqual(classified[1].health, "slow")
+        self.assertEqual(classified[2].health, "ok")
+        problems = find_problems(classified)
+        self.assertEqual(problems[0].ip, "154.54.30.17")
+
     def test_hard_timeout_at_end_is_critical(self) -> None:
         readings = [
             HopReading(1, "192.168.1.1", "gw", 1.0),

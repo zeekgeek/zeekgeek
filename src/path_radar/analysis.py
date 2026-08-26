@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Sequence
 
 SLOW_ADDED_MS = 25.0
@@ -176,7 +176,35 @@ def classify_hops(readings: Sequence[HopReading]) -> list[ClassifiedHop]:
         )
         if not timed_out and reading.rtt_ms is not None:
             previous_rtt = float(reading.rtt_ms)
-    return classified
+    return _blame_gap(classified)
+
+
+def _blame_gap(classified: list[ClassifiedHop]) -> list[ClassifiedHop]:
+    """If delay appears on the first hop after a silent/filtered streak, blame the first silent hop."""
+    out = list(classified)
+    for index, item in enumerate(out):
+        if item.health != "slow" or not item.added_ms:
+            continue
+        first_gap = None
+        cursor = index - 1
+        while cursor >= 0 and out[cursor].health in {"filtered", "timeout"}:
+            first_gap = cursor
+            cursor -= 1
+        if first_gap is None:
+            continue
+        blamed = out[first_gap]
+        out[first_gap] = replace(
+            blamed,
+            health="slow",
+            added_ms=item.added_ms,
+            rtt_ms=item.rtt_ms,
+            reason=(
+                f"This hop is silent or ICMP-filtered, and {item.added_ms:.0f} ms of delay "
+                "shows up on the next responder — typically the router that introduced the problem."
+            ),
+        )
+        out[index] = replace(item, health="ok", added_ms=0.0, reason=None)
+    return out
 
 
 def _health(
