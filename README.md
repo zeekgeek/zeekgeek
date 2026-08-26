@@ -329,6 +329,71 @@ python3 -m jet_radar --host 127.0.0.1 --port 8790 --sigma 3 --trigger-threshold 
 
 ---
 
+# Path Radar
+
+A full-bleed **force-directed network map** plus **continuous traceroute**, mixing
+Scanny-style topology with PingPlotter-style hop quality:
+
+- draggable nodes, wheel zoom, pan, edge latency labels
+- search box that highlights matching nodes (name, IP, ASN, city, provider)
+- click a node or hop to inspect details
+- **Reheat** / **Freeze** the force simulation
+- per-hop current / min / avg / max / jitter / loss, plus a time heatmap
+- slow hops called out where delay *enters* the path (not inherited downstream)
+- problem-router card with ASN, facility, NOC, looking glass, and provider notes
+
+The demo topology is a home LAN plus three internet paths that share the Comcast
+metro. **Cloudflare (`1.1.1.1`)** and **GitHub** go through a congested
+**Cogent (AS174)** peering hop; **Google (`8.8.8.8`)** peers directly with Comcast
+and stays fast — the classic “the site is fine, the transit handoff is not”
+diagnosis.
+
+## Quick start
+
+```bash
+source .venv/bin/activate
+pip install -e .
+python3 -m path_radar --demo
+```
+
+Open the printed dashboard URL (default <http://127.0.0.1:8800>). Search for
+`cogent`, click the red hop, and compare with a trace to `8.8.8.8`.
+
+Live traceroute (needs a `traceroute` or `tracepath` binary):
+
+```bash
+python3 -m path_radar --target 1.1.1.1
+```
+
+If live traceroute is unavailable, the app auto-switches to demo mode.
+
+## Command options
+
+```text
+python3 -m path_radar --host 127.0.0.1 --port 8800 --target 1.1.1.1 --interval 1 --demo
+```
+
+- `--demo`: simulated LAN + Comcast / Cogent / Google paths
+- `--target`: host or IP to highlight as the active trace
+- `--interval`: seconds between probes
+- `--no-auto-demo-fallback`: exit instead of switching to demo
+- `--host` / `--port` / `--log-level`
+
+The app auto-selects the next free port if `--port` is busy.
+
+## API
+
+- `GET /api/snapshot`: hops, heatmap, problem router, and graph
+- `POST /api/trace`: body `{"target": "8.8.8.8"}`
+- `GET /api/events`: Server-Sent Events stream
+
+## Keyboard
+
+- `/` focus search · `R` reheat · `F` freeze · `Esc` clear search
+- Double-click a pinned node to unpin it
+
+---
+
 # Etsy AI Space
 
 Phased agent swarm for **safe** print-on-demand store research. It follows a

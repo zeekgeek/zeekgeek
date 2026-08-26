@@ -1,0 +1,207 @@
+"""Unit tests for Path Radar analysis, traceroute parsing, and demo state."""
+
+from __future__ import annotations
+
+import socket
+import unittest
+
+from path_radar.analysis import (
+    HopReading,
+    classify_hops,
+    end_to_end_ms,
+    find_problems,
+    grade_path,
+    introduced_ms,
+    summarize,
+)
+from path_radar.providers import provider_for_ip
+from path_radar.state import PathState
+from path_radar.topology import DEFAULT_TARGET, node_id_for, sample_graph
+from path_radar.tracer import demo_probe, parse_traceroute
+from path_radar.__main__ import pick_available_port
+from path_radar.web import create_app
+
+
+class LatencyStatsTests(unittest.TestCase):
+    def test_summarize_min_avg_max_jitter_loss(self) -> None:
+        stats = summarize([10.0, 12.0, None, 11.0])
+        self.assertEqual(stats.count, 4)
+        self.assertEqual(stats.timeouts, 1)
+        self.assertAlmostEqual(stats.loss_pct, 25.0)
+        self.assertEqual(stats.min_ms, 10.0)
+        self.assertEqual(stats.max_ms, 12.0)
+        self.assertAlmostEqual(stats.avg_ms or 0, 11.0)
+        self.assertAlmostEqual(stats.jitter_ms or 0, 1.5)
+        self.assertEqual(stats.current_ms, 11.0)
+
+    def test_empty_history_is_all_loss(self) -> None:
+        stats = summarize([None, None])
+        self.assertIsNone(stats.avg_ms)
+        self.assertEqual(stats.loss_pct, 100.0)
+
+    def test_introduced_latency_clamps_negative(self) -> None:
+        self.assertEqual(introduced_ms(20, 25), 0.0)
+        self.assertAlmostEqual(introduced_ms(90, 12), 78.0)
+        self.assertIsNone(introduced_ms(None, 12))
+
+
+class ClassifyHopTests(unittest.TestCase):
+    def test_slow_hop_is_where_delay_enters(self) -> None:
+        readings = [
+            HopReading(1, "192.168.1.1", "gw", 1.0),
+            HopReading(2, "68.86.90.5", "comcast", 11.0),
+            HopReading(3, "154.54.30.17", "cogent", 92.0, loss_pct=8.0),
+            HopReading(4, "1.1.1.1", "one.one.one.one", 96.0),
+        ]
+        classified = classify_hops(readings)
+        self.assertEqual(classified[0].health, "ok")
+        self.assertEqual(classified[1].health, "ok")
+        self.assertEqual(classified[2].health, "slow")
+        self.assertGreaterEqual(classified[2].added_ms or 0, 70)
+        self.assertEqual(classified[3].health, "ok")
+        problems = find_problems(classified)
+        self.assertEqual(len(problems), 1)
+        self.assertEqual(problems[0].ip, "154.54.30.17")
+        self.assertEqual(grade_path(classified, problems), "fair")
+        self.assertAlmostEqual(end_to_end_ms(classified) or 0, 96.0)
+
+    def test_icmp_filter_is_not_a_problem(self) -> None:
+        readings = [
+            HopReading(1, "192.168.1.1", "gw", 1.0),
+            HopReading(2, "10.4.0.1", "ont", None, timed_out=True),
+            HopReading(3, "8.8.8.8", "dns.google", 16.0),
+        ]
+        classified = classify_hops(readings)
+        self.assertEqual(classified[1].health, "filtered")
+        self.assertTrue(classified[1].filtered)
+        self.assertEqual(find_problems(classified), [])
+
+    def test_hard_timeout_at_end_is_critical(self) -> None:
+        readings = [
+            HopReading(1, "192.168.1.1", "gw", 1.0),
+            HopReading(2, "9.9.9.9", "dead", None, timed_out=True),
+        ]
+        classified = classify_hops(readings)
+        self.assertEqual(classified[1].health, "timeout")
+        problems = find_problems(classified)
+        self.assertEqual(problems[0].kind, "timeout")
+        self.assertEqual(grade_path(classified, problems), "critical")
+
+    def test_lossy_hop(self) -> None:
+        readings = [HopReading(1, "1.2.3.4", "rtr", 20.0, loss_pct=22.0)]
+        classified = classify_hops(readings)
+        self.assertEqual(classified[0].health, "loss")
+        self.assertEqual(find_problems(classified)[0].kind, "loss")
+
+
+class TracerouteParseTests(unittest.TestCase):
+    def test_parse_named_and_numeric_and_stars(self) -> None:
+        text = """
+traceroute to 1.1.1.1 (1.1.1.1), 30 hops max, 60 byte packets
+ 1  u6-gateway.lan (192.168.1.1)  0.412 ms  0.389 ms
+ 2  10.4.0.1  1.8 ms
+ 3  * * *
+ 4  be2993.ccr42.sea02.atlas.cogentco.com (154.54.30.17)  88.1 ms
+        """
+        hops = parse_traceroute(text)
+        self.assertEqual(len(hops), 4)
+        self.assertEqual(hops[0]["ip"], "192.168.1.1")
+        self.assertEqual(hops[0]["hostname"], "u6-gateway.lan")
+        self.assertAlmostEqual(hops[0]["rtts"][0], 0.412)
+        self.assertEqual(hops[1]["ip"], "10.4.0.1")
+        self.assertTrue(hops[2]["timed_out"])
+        self.assertEqual(hops[3]["ip"], "154.54.30.17")
+
+
+class GraphAndProviderTests(unittest.TestCase):
+    def test_sample_graph_has_lan_and_problem_hop(self) -> None:
+        graph = sample_graph()
+        ids = {node["id"] for node in graph["nodes"]}
+        self.assertIn("lan:you", ids)
+        self.assertIn("lan:gw", ids)
+        self.assertIn("net:154.54.30.17", ids)
+        self.assertIn("net:1.1.1.1", ids)
+        self.assertIn("net:8.8.8.8", ids)
+        problem = next(node for node in graph["nodes"] if node["id"] == "net:154.54.30.17")
+        self.assertTrue(problem["problem"])
+        self.assertEqual(problem["asn"], "AS174")
+        self.assertIn("cogent", problem["search"])
+
+    def test_gateway_node_id_merges_with_lan(self) -> None:
+        self.assertEqual(node_id_for("192.168.1.1", 1), "lan:gw")
+        self.assertEqual(node_id_for("154.54.30.17", 6), "net:154.54.30.17")
+
+    def test_cogent_provider_notes(self) -> None:
+        provider = provider_for_ip("154.54.30.17")
+        self.assertIsNotNone(provider)
+        assert provider is not None
+        self.assertEqual(provider.asn, "AS174")
+        self.assertIn("peering", provider.notes or "")
+
+
+class DemoStateTests(unittest.IsolatedAsyncioTestCase):
+    async def test_snapshot_flags_cogent_as_problem_router(self) -> None:
+        state = PathState()
+        snap = await state.snapshot()
+        self.assertEqual(snap["target"], DEFAULT_TARGET)
+        self.assertGreaterEqual(len(snap["hops"]), 6)
+        self.assertTrue(snap["problems"])
+        router = snap["problem_router"]
+        self.assertIsNotNone(router)
+        assert router is not None
+        self.assertEqual(router["ip"], "154.54.30.17")
+        self.assertEqual(router["provider_detail"]["asn"], "AS174")
+        self.assertIn("Cogent", router["provider_detail"]["name"])
+        self.assertTrue(snap["heatmap"]["rows"])
+        ids = {node["id"] for node in snap["graph"]["nodes"]}
+        self.assertIn("lan:you", ids)
+        self.assertIn("net:154.54.30.17", ids)
+        cogent = next(node for node in snap["graph"]["nodes"] if node["ip"] == "154.54.30.17")
+        self.assertIn("cogent", cogent["search"])
+
+    async def test_google_path_has_no_cogent_bottleneck(self) -> None:
+        state = PathState()
+        await state.set_target("8.8.8.8")
+        rng_probe = demo_probe(active_target="8.8.8.8", rng=__import__("random").Random(3), now=2.0)
+        await state.ingest_demo(rng_probe)
+        snap = await state.snapshot()
+        self.assertEqual(snap["target"], "8.8.8.8")
+        ips = [hop["ip"] for hop in snap["hops"]]
+        self.assertIn("8.8.8.8", ips)
+        self.assertNotIn("154.54.30.17", ips)
+        self.assertLess(snap["quality"]["end_to_end_ms"] or 999, 40)
+
+    async def test_search_blob_includes_asn_and_city(self) -> None:
+        state = PathState()
+        snap = await state.snapshot()
+        cogent = next(node for node in snap["graph"]["nodes"] if node.get("ip") == "154.54.30.17")
+        self.assertIn("as174", cogent["search"])
+        self.assertIn("seattle", cogent["search"])
+
+
+class AppTests(unittest.TestCase):
+    def test_routes_exist(self) -> None:
+        app = create_app(PathState())
+        paths = {getattr(route, "path", None) for route in app.routes}
+        self.assertIn("/", paths)
+        self.assertIn("/api/snapshot", paths)
+        self.assertIn("/api/trace", paths)
+        self.assertIn("/api/events", paths)
+
+    def test_dashboard_contains_graph_controls(self) -> None:
+        from path_radar.web import DASHBOARD_HTML
+
+        for needle in ("Reheat", "Freeze", "Search nodes", "Hop chain", "Problem router", "Latency over time"):
+            self.assertIn(needle, DASHBOARD_HTML)
+
+    def test_pick_available_port_skips_busy(self) -> None:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            occupied = sock.getsockname()[1]
+            chosen = pick_available_port("127.0.0.1", occupied, max_tries=4)
+        self.assertNotEqual(chosen, occupied)
+        self.assertGreaterEqual(chosen, occupied + 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
