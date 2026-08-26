@@ -23,12 +23,13 @@ def node_id_for(
     *,
     gateway_ip: str | None = None,
     local_ips: set[str] | None = None,
+    demo_lan: bool = True,
 ) -> str:
     if ip and local_ips and ip in local_ips:
         return "lan:you"
     if ip and gateway_ip and ip == gateway_ip:
         return "lan:gw"
-    if ip and ip in LAN_NODE_BY_IP:
+    if demo_lan and ip and ip in LAN_NODE_BY_IP:
         return LAN_NODE_BY_IP[ip]
     if ip:
         return f"net:{ip}"

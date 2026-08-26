@@ -714,6 +714,7 @@ DASHBOARD_HTML = r"""<!doctype html>
       "<span>Provider</span><b>" + esc(n.provider || n.as_name || "—") + "</b>" +
       "<span>ASN</span><b>" + esc(n.asn || "—") + "</b>" +
       "<span>City</span><b>" + esc(n.city || "—") + "</b>" +
+      "<span>Country</span><b>" + esc(n.country || "—") + "</b>" +
       "<span>Facility</span><b>" + esc(n.facility || "—") + "</b>" +
       "</div>" +
       (n.notes || n.reason ? '<p class="notes">' + esc(n.reason || n.notes) + "</p>" : "") +

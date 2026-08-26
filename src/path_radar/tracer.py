@@ -173,8 +173,25 @@ def run_traceroute(target: str, max_hops: int = 30, wait: float = 1.0) -> list[d
 
 
 def reverse_name(ip: str | None) -> str | None:
-    if not ip:
+    if not ip or ip_kind(ip) != "public":
         return None
+    dig = shutil.which("dig")
+    if dig:
+        try:
+            completed = subprocess.run(
+                [dig, "+short", "+time=1", "+tries=1", "-x", ip],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=2.0,
+            )
+            text = (completed.stdout or "").strip()
+            if text:
+                name = text.splitlines()[0].strip().rstrip(".")
+                if name and not IP_RE.match(name):
+                    return name
+        except (OSError, subprocess.TimeoutExpired):
+            pass
     try:
         socket.setdefaulttimeout(0.8)
         hostname, _, _ = socket.gethostbyaddr(ip)
@@ -252,14 +269,22 @@ class LiveTraceBackend:
         cycle = 0
         while True:
             target = self.state.target
-            await self._trace(target)
+            try:
+                await self._trace(target)
+            except Exception as exc:
+                LOGGER.warning("Live trace %s failed: %s", target, exc)
+                await self.state.add_system_event(
+                    "scanner-error",
+                    f"Live trace {target} failed ({type(exc).__name__}: {exc}). Retrying.",
+                )
             if cycle % 4 == 0:
                 for extra in self.companions:
-                    if extra != target:
-                        try:
-                            await self._trace(extra)
-                        except Exception as exc:
-                            LOGGER.warning("Companion trace %s failed: %s", extra, exc)
+                    if extra == self.state.target:
+                        continue
+                    try:
+                        await self._trace(extra)
+                    except Exception as exc:
+                        LOGGER.warning("Companion trace %s failed: %s", extra, exc)
             cycle += 1
             await asyncio.sleep(max(0.4, self.interval))
 
@@ -278,4 +303,3 @@ class LiveTraceBackend:
 
         await asyncio.gather(*[enrich(hop) for hop in hops])
         await self.state.ingest_live(hops, target=target, source="live")
-

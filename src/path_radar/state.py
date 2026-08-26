@@ -94,6 +94,7 @@ class HopTrack:
             "hostname": self.hostname or (template.hostname if template else None),
             "role": self.role or (template.role if template else None),
             "city": self.city or (template.city if template else None),
+            "country": self.country,
             "facility": template.facility if template else None,
             "layer": template.layer if template else None,
             "problem_template": bool(template.problem) if template else False,
@@ -128,7 +129,13 @@ class PathState:
             self._bootstrap()
 
     def _nid(self, ip: str | None, hop: int | None) -> str:
-        return node_id_for(ip, hop, gateway_ip=self.gateway_ip, local_ips=self.local_ips or None)
+        return node_id_for(
+            ip,
+            hop,
+            gateway_ip=self.gateway_ip,
+            local_ips=self.local_ips or None,
+            demo_lan=self.mode == "demo",
+        )
 
     def _lan(self):
         if self.mode == "live":
@@ -218,16 +225,17 @@ class PathState:
     async def ingest_live(self, hops: list[dict[str, Any]], *, target: str, source: str = "live") -> None:
         async with self._lock:
             self.source = source
-            self.probe_count += 1
             self.updated_at = utc_now()
-            self.target = target
+            # Companion traces merge into the graph but must not steal the HUD target.
+            if target == self.target:
+                self.probe_count += 1
             path: list[dict[str, Any]] = []
             for hop in hops:
                 ip = hop.get("ip")
                 rtts = hop.get("rtts") or []
                 rtt = rtts[0] if rtts else None
                 hostname = hop.get("hostname")
-                key = ip or f"hop:{hop['hop']}"
+                key = ip or f"hop:{target}:{hop['hop']}"
                 track = self.tracks.get(key)
                 if track is None:
                     track = HopTrack(ip=ip, hostname=hostname)
@@ -258,7 +266,7 @@ class PathState:
         self._emit_health_events(classified)
 
     def _classify_active(self):
-        path = self.paths.get(self.target) or next(iter(self.paths.values()), [])
+        path = self.paths.get(self.target) or []
         readings: list[HopReading] = []
         for item in path:
             ip = item.get("ip")
@@ -283,13 +291,13 @@ class PathState:
         stats = track.snapshot() if track else summarize([]).as_dict()
         template: HopTemplate | None = track.template if track else None
         extra = track.extra() if track else enrich_dict(item.ip, template.asn if template else None)
-        node_id = self._nid(item.ip, item.hop)
+        node_id = self._nid(item.ip, item.hop) if item.ip else f"hop:{self.target}:{item.hop}"
         return {
             "hop": item.hop,
             "id": node_id,
             "ip": item.ip,
             "hostname": item.hostname or stats.get("hostname"),
-            "label": _label(item.hostname or stats.get("hostname"), item.ip),
+            "label": _label(item.hostname or stats.get("hostname"), item.ip, hop=item.hop),
             "rtt_ms": _round(item.rtt_ms),
             "added_ms": _round(item.added_ms),
             "health": item.health,
@@ -302,6 +310,7 @@ class PathState:
             "city": (track.city if track and track.city else None)
             or stats.get("city")
             or (template.city if template else None),
+            "country": (track.country if track and track.country else None) or stats.get("country"),
             "facility": stats.get("facility") or (template.facility if template else None),
             "notes": stats.get("notes") or (template.notes if template else None),
             "min_ms": stats.get("min_ms"),
@@ -393,6 +402,9 @@ class PathState:
                         extra.get("asn"),
                         extra.get("provider"),
                         extra.get("as_name"),
+                        track.city if track else None,
+                        track.country if track else None,
+                        track.notes if track else None,
                         template.city if template else None,
                         template.role if template else None,
                         template.facility if template else None,
@@ -402,10 +414,12 @@ class PathState:
                 ).lower()
                 payload = {
                     "id": node_id,
-                    "label": _label(item.get("hostname"), ip),
+                    "label": _label(item.get("hostname"), ip, hop=item["hop"]),
                     "hostname": item.get("hostname"),
                     "ip": ip,
-                    "kind": template.role if template else "transit",
+                    "kind": (track.role if track and track.role else None)
+                    or (template.role if template else None)
+                    or "transit",
                     "layer": template.layer if template else 5,
                     "hop": item["hop"],
                     "rtt_ms": _round(rtt),
@@ -415,13 +429,14 @@ class PathState:
                     "asn": extra.get("asn"),
                     "provider": extra.get("provider"),
                     "as_name": extra.get("as_name"),
-                        "city": (track.city if track and track.city else None)
-                        or (template.city if template else None),
+                    "city": (track.city if track and track.city else None)
+                    or (template.city if template else None),
+                    "country": track.country if track else None,
                     "facility": template.facility if template else None,
                     "problem": health in {"slow", "loss", "timeout"},
                     "active": is_active or (ip in active_ips),
                     "search": search,
-                    "notes": template.notes if template else None,
+                    "notes": (track.notes if track else None) or (template.notes if template else None),
                     "provider_detail": extra.get("provider_detail"),
                     "min_ms": stats.min_ms if stats else None,
                     "avg_ms": stats.avg_ms if stats else None,
@@ -444,6 +459,7 @@ class PathState:
                             "as_name": payload["as_name"] or existing.get("as_name"),
                             "asn": payload["asn"] or existing.get("asn"),
                             "city": payload["city"] or existing.get("city"),
+                            "country": payload["country"] or existing.get("country"),
                             "facility": payload["facility"] or existing.get("facility"),
                             "notes": payload["notes"] or existing.get("notes"),
                             "provider_detail": payload["provider_detail"] or existing.get("provider_detail"),
@@ -600,11 +616,23 @@ def _current(track: HopTrack | None) -> float | None:
     return None
 
 
-def _label(hostname: str | None, ip: str | None) -> str:
+def _label(hostname: str | None, ip: str | None, hop: int | None = None) -> str:
     if hostname:
-        head = hostname.split(".")[0]
-        return head[:22] + ("…" if len(head) > 22 else "")
-    return ip or "?"
+        parts = [part for part in hostname.rstrip(".").split(".") if part]
+        if not parts:
+            text = hostname
+        elif len(parts) == 1:
+            text = parts[0]
+        elif len(set(part.lower() for part in parts)) == 1:
+            text = hostname.rstrip(".")
+        elif len(parts) == 2:
+            text = ".".join(parts)
+        else:
+            text = parts[0]
+        return text[:22] + ("…" if len(text) > 22 else "")
+    if ip:
+        return ip
+    return f"hop {hop}" if hop else "?"
 
 
 def _round(value: float | None, digits: int = 2) -> float | None:
