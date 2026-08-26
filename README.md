@@ -332,9 +332,11 @@ python3 -m jet_radar --host 127.0.0.1 --port 8790 --sigma 3 --trigger-threshold 
 # Trace Radar (PingPlotter-style hop health + Scanny tools)
 
 Live view of each hop on the path to a host — **RTT**, **packet-loss %**, and
-**health** (good / degraded / poor / down) — with a PingPlotter-style timeline
-graph, plus Scanny-style **WHOIS**, **DNS**, **TCP port scan**, and **ping**.
-Routes also draw as animated great-circle arcs on a CDN-free **3D globe**.
+**health** (good / degraded / poor / down) — with a PingPlotter-style timeline,
+a **full-bleed force-directed path graph**, and a **modest 3D hop display**
+(latency as height, slow-hop provider labels). Scanny-style **WHOIS**, **DNS**,
+**TCP port scan**, and **ping** sit in the side tools. Slow hops are scored by
+*introduced* latency (the delta vs the previous hop), not inherited RTT.
 
 ## Quick start
 
@@ -344,9 +346,10 @@ pip install -e .
 python3 -m trace_radar --demo
 ```
 
-Open the printed dashboard URL (default <http://127.0.0.1:8800>). Watch the
-hop table and timeline update each cycle, click a hop for WHOIS detail, use the
-tools panel for DNS / port scan / ping, and run a speed test from the header.
+Open the printed dashboard URL (default <http://127.0.0.1:8800>). The canvas is
+the network graph (drag nodes, wheel-zoom, pan, search, reheat/freeze). The left
+panel is the hop table plus a small 3D hop path — click a glowing hop for
+provider / ASN / prefix detail at the problem router.
 
 Live traceroute (needs `traceroute` / `tracepath`, or falls back to a Python
 UDP probe):
@@ -358,11 +361,15 @@ python3 -m trace_radar one.one.one.one google.com
 ## What you get
 
 - Continuous traceroute with **N probes per hop** and **loss %** (last cycle + cumulative)
+- **Force-directed graph**: draggable nodes, zoom/pan, edge latency labels, search highlight
+- **3D hop path**: modest perspective view with RTT height, slow-hop callouts, orbit drag
 - **PingPlotter timeline**: per-hop RTT samples over time with loss ticks
+- Slow-hop scoring by **introduced latency** plus provider / ASN / CIDR / abuse contact
 - Hop **health** badges driven by loss and latency spikes
 - **WHOIS / RDAP** ownership: network name, org, CIDR, ASN, abuse email
 - Scanny tools: **DNS** (A/AAAA/PTR), **TCP port scan**, **ping**
-- GeoIP city/country for the 3D map + speedtest latency/jitter/throughput
+- Sample LAN devices on the graph so the topology is never a single line
+- GeoIP city/country + speedtest latency/jitter/throughput
 
 ## Command options
 

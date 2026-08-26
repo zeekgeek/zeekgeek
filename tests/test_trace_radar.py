@@ -279,6 +279,88 @@ class DemoBackendTests(unittest.TestCase):
         self.assertTrue(snap["origin"]["lat"] is not None)
 
 
+class AnalysisTests(unittest.TestCase):
+    def test_introduced_latency_marks_slow_hop(self) -> None:
+        from trace_radar.analysis import annotate_hops, problem_cards
+
+        hops = annotate_hops(
+            [
+                {"ttl": 1, "responded": True, "rtt_avg_ms": 1.0, "last_loss_pct": 0, "health": "good", "ip": "192.168.1.1", "is_private": True},
+                {"ttl": 2, "responded": True, "rtt_avg_ms": 12.0, "last_loss_pct": 0, "health": "good", "ip": "24.7.128.1"},
+                {
+                    "ttl": 3,
+                    "responded": True,
+                    "rtt_avg_ms": 88.0,
+                    "last_loss_pct": 0,
+                    "health": "degraded",
+                    "ip": "4.69.140.94",
+                    "whois": {"org": "Level 3 Parent, LLC", "asn": "AS3356", "cidr": "4.0.0.0/9", "abuse_email": "abuse@level3.com", "summary": "Level 3"},
+                    "geo": {"city": "Ashburn", "country": "United States", "place": "Ashburn, United States", "isp": "Level 3"},
+                },
+                {"ttl": 4, "responded": True, "rtt_avg_ms": 90.0, "last_loss_pct": 0, "health": "good", "ip": "1.1.1.1"},
+            ]
+        )
+        self.assertEqual(hops[0]["added_ms"], 1.0)
+        self.assertEqual(hops[1]["added_ms"], 11.0)
+        self.assertGreaterEqual(hops[2]["added_ms"], 25.0)
+        self.assertTrue(hops[2]["slow"])
+        self.assertEqual(hops[2]["problem_reason"], "latency-introduced")
+        self.assertFalse(hops[3]["slow"])  # inherited RTT, little added
+        cards = problem_cards(hops)
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0]["provider"], "Level 3 Parent, LLC")
+        self.assertIn("Ashburn", cards[0]["detail"])
+        self.assertIn("abuse@level3.com", cards[0]["detail"])
+
+    def test_icmp_filtered_not_problem(self) -> None:
+        from trace_radar.analysis import annotate_hops, problem_cards
+
+        hops = annotate_hops(
+            [
+                {"ttl": 1, "responded": True, "rtt_avg_ms": 2.0, "last_loss_pct": 0, "ip": "192.168.1.1"},
+                {"ttl": 2, "responded": False, "rtt_avg_ms": None, "last_loss_pct": 100.0, "ip": None},
+                {"ttl": 3, "responded": True, "rtt_avg_ms": 20.0, "last_loss_pct": 0, "ip": "1.1.1.1"},
+            ]
+        )
+        self.assertTrue(hops[1]["icmp_filtered"])
+        self.assertFalse(hops[1]["slow"])
+        self.assertEqual(problem_cards(hops), [])
+
+
+class GraphTests(unittest.TestCase):
+    def test_sample_graph_and_shared_hops(self) -> None:
+        from trace_radar.graph import SAMPLE_LAN, build_topology
+
+        routes = [
+            {
+                "target": "one.one.one.one",
+                "hops": [
+                    {"ttl": 1, "ip": "192.168.1.1", "hostname": "gw", "is_private": True, "responded": True, "rtt_avg_ms": 1.2, "health": "good"},
+                    {"ttl": 2, "ip": "1.1.1.1", "hostname": "one.one.one.one", "responded": True, "rtt_avg_ms": 15.0, "health": "good", "slow": False},
+                ],
+            },
+            {
+                "target": "google.com",
+                "hops": [
+                    {"ttl": 1, "ip": "192.168.1.1", "hostname": "gw", "is_private": True, "responded": True, "rtt_avg_ms": 1.1, "health": "good"},
+                    {"ttl": 2, "ip": "8.8.8.8", "hostname": "dns.google", "responded": True, "rtt_avg_ms": 18.0, "health": "good"},
+                ],
+            },
+        ]
+        graph = build_topology(routes, lan=SAMPLE_LAN)
+        ids = {node["id"] for node in graph["nodes"]}
+        self.assertIn("lan:you", ids)
+        self.assertIn("lan:phone", ids)
+        self.assertIn("ip:192.168.1.1", ids)
+        self.assertIn("ip:1.1.1.1", ids)
+        self.assertIn("ip:8.8.8.8", ids)
+        gw_nodes = [n for n in graph["nodes"] if n["id"] == "ip:192.168.1.1"]
+        self.assertEqual(len(gw_nodes), 1)
+        self.assertEqual(set(gw_nodes[0]["targets"]), {"one.one.one.one", "google.com"})
+        self.assertGreaterEqual(len(graph["edges"]), 6)
+        self.assertTrue(any(e["kind"] == "lan" for e in graph["edges"]))
+
+
 class TimelineTests(unittest.TestCase):
     def test_hop_timeline_and_health(self) -> None:
         async def _run() -> dict:
@@ -309,6 +391,9 @@ class TimelineTests(unittest.TestCase):
         self.assertEqual(hops[0]["health"], "good")
         self.assertEqual(hops[1]["health"], "poor")  # last cycle 100% loss
         self.assertIsNotNone(hops[0]["timeline"][0]["at"])
+        snap_graph = snap["graph"]
+        self.assertIn("nodes", snap_graph)
+        self.assertGreaterEqual(len(snap_graph["nodes"]), 1)
 
 
 class ScannyToolTests(unittest.TestCase):
@@ -351,6 +436,15 @@ class WebRouteTests(unittest.TestCase):
         self.assertIn("GET", paths["/api/state"])
         self.assertIn("POST", paths["/api/trace"])
         self.assertIn("POST", paths["/api/whois"])
+
+    def test_dashboard_has_force_graph_and_3d_hops(self) -> None:
+        from trace_radar.web import DASHBOARD_HTML
+
+        self.assertIn('id="net"', DASHBOARD_HTML)
+        self.assertIn('id="hop3d"', DASHBOARD_HTML)
+        self.assertIn('id="search"', DASHBOARD_HTML)
+        self.assertIn("Reheat", DASHBOARD_HTML)
+        self.assertIn("Freeze", DASHBOARD_HTML)
 
 
 if __name__ == "__main__":

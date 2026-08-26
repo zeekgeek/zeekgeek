@@ -8,7 +8,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from .analysis import annotate_hops, problem_cards
 from .geoip import GeoInfo
+from .graph import SAMPLE_LAN, build_topology
 from .whois import WhoisInfo
 
 
@@ -158,11 +160,12 @@ class RouteTrace:
         return tuple(hop.ip or "*" for hop in self.hops)
 
     def snapshot(self) -> dict[str, Any]:
-        hops = [hop.snapshot() for hop in self.hops]
+        hops = annotate_hops([hop.snapshot() for hop in self.hops])
         answered = [h for h in hops if h["responded"]]
         probes_sent = sum(h["probes_sent"] for h in hops)
         probes_answered = sum(h["probes_answered"] for h in hops)
         lossy = [h for h in hops if h["loss_pct"] > 0]
+        problems = problem_cards(hops)
         return {
             "target": self.target,
             "resolved_ip": self.resolved_ip,
@@ -180,6 +183,8 @@ class RouteTrace:
             "probes_answered": probes_answered,
             "packet_loss_pct": loss_percent(probes_sent, probes_answered),
             "lossy_hop_count": len(lossy),
+            "slow_hop_count": sum(1 for h in hops if h.get("slow")),
+            "problems": problems,
             "hops": hops,
         }
 
@@ -381,14 +386,17 @@ class RadarState:
             routes = [self._routes[target].snapshot() for target in self._order]
             located_hops = sum(route["located_count"] for route in routes)
             total_hops = sum(route["hop_count"] for route in routes)
+            origin = self._origin.to_dict() if self._origin is not None else None
             return {
                 "generated_at": iso_time(now),
                 "demo_mode": self.demo_mode,
-                "origin": self._origin.to_dict() if self._origin is not None else None,
+                "origin": origin,
                 "target_count": len(routes),
                 "hop_count": total_hops,
                 "located_count": located_hops,
+                "slow_hop_count": sum(route.get("slow_hop_count", 0) for route in routes),
                 "routes": routes,
+                "graph": build_topology(routes, origin=origin, lan=SAMPLE_LAN),
                 "speedtest": dict(self._speedtest),
                 "tool_results": list(self._tool_results),
                 "events": list(self._events),
