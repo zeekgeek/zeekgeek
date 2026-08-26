@@ -305,6 +305,7 @@ class AnalysisTests(unittest.TestCase):
         self.assertGreaterEqual(hops[2]["added_ms"], 25.0)
         self.assertTrue(hops[2]["slow"])
         self.assertEqual(hops[2]["problem_reason"], "latency-introduced")
+        self.assertEqual(hops[2]["health"], "degraded")
         self.assertFalse(hops[3]["slow"])  # inherited RTT, little added
         cards = problem_cards(hops)
         self.assertEqual(len(cards), 1)

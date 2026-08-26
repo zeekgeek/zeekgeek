@@ -55,6 +55,8 @@ def annotate_hops(hops: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
         item["problem_reason"] = reason
         item["slow"] = reason in {"latency-introduced", "high-loss", "timeout"}
+        if item["slow"] and item.get("health") == "good":
+            item["health"] = "degraded"
         if rtt is not None:
             prev_rtt = float(rtt)
         annotated.append(item)

@@ -195,7 +195,7 @@ DASHBOARD_HTML = r"""
     .left { top: 76px; left: 12px; }
     .right { top: 76px; right: 12px; }
     h2 { margin: 0 0 8px; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
-    #hop3d { width: 100%; height: 210px; display: block; border-radius: 12px; background: #070d16; border: 1px solid var(--line); }
+    #hop3d { width: 100%; height: 236px; display: block; border-radius: 12px; background: #070d16; border: 1px solid var(--line); }
     #timeline { width: 100%; height: 168px; display: block; border-radius: 12px; background: #070d16; border: 1px solid var(--line); }
     .hop-table { width: 100%; border-collapse: collapse; font-size: 12px; }
     .hop-table th { text-align: left; color: var(--muted); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; padding: 4px; }
@@ -207,7 +207,7 @@ DASHBOARD_HTML = r"""
     .hop-table .mono { font-family: var(--mono); font-size: 11px; color: var(--muted); }
     .health { border-radius: 999px; padding: 2px 7px; font-size: 10px; font-weight: 700; text-transform: uppercase; }
     .health.good { background: rgba(125,255,195,.14); color: var(--mint); }
-    .health.degraded { background: rgba(255,176,32,.14); color: var(--amber); }
+    .health.degraded, .health.slow { background: rgba(255,176,32,.14); color: var(--amber); }
     .health.poor, .health.down { background: rgba(255,107,122,.16); color: var(--coral); }
     .health.unknown { background: rgba(139,155,180,.14); color: var(--muted); }
     .problem {
@@ -600,7 +600,20 @@ DASHBOARD_HTML = r"""
 
     function hopWorld(i, n) {
       const t = n <= 1 ? 0 : i / (n - 1);
-      return { x: (t - 0.5) * 210, y: 0, z: 18 + t * 150 };
+      return { x: (t - 0.5) * 200, y: 0, z: 24 + t * 140 };
+    }
+
+    function hopHeight(hop) {
+      return hop.rtt_avg_ms != null ? Math.min(86, 18 + hop.rtt_avg_ms * 0.55) : 14;
+    }
+
+    function face(ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, w, h) {
+      return [
+        project3(ax, ay, az, w, h),
+        project3(bx, by, bz, w, h),
+        project3(cx, cy, cz, w, h),
+        project3(dx, dy, dz, w, h),
+      ];
     }
 
     function drawHop3d(route) {
@@ -611,7 +624,7 @@ DASHBOARD_HTML = r"""
       hctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       hctx.fillStyle = "#070d16";
       hctx.fillRect(0, 0, w, h);
-      if (cam3.auto && !cam3.dragging && !sim.frozen) cam3.yaw += 0.0022;
+      if (cam3.auto && !cam3.dragging && !sim.frozen) cam3.yaw += 0.0016;
       const hops = (route && route.hops) || [];
       const n = hops.length;
       if (!n) {
@@ -620,23 +633,28 @@ DASHBOARD_HTML = r"""
         hctx.fillText("Waiting for hops…", 16, h / 2);
         return;
       }
-      hctx.strokeStyle = "rgba(148,176,210,.12)";
+      hctx.strokeStyle = "rgba(148,176,210,.2)";
       hctx.lineWidth = 1;
-      for (let g = -3; g <= 3; g++) {
-        const a = project3(-120, 0, 10 + g * 28, w, h);
-        const b = project3(120, 0, 10 + g * 28, w, h);
+      for (let g = -4; g <= 4; g++) {
+        const a = project3(-130, 0, 8 + g * 24, w, h);
+        const b = project3(130, 0, 8 + g * 24, w, h);
+        hctx.beginPath(); hctx.moveTo(a.x, a.y); hctx.lineTo(b.x, b.y); hctx.stroke();
+      }
+      for (let g = -4; g <= 4; g++) {
+        const a = project3(g * 28, 0, 8, w, h);
+        const b = project3(g * 28, 0, 180, w, h);
         hctx.beginPath(); hctx.moveTo(a.x, a.y); hctx.lineTo(b.x, b.y); hctx.stroke();
       }
       const pts = hops.map((hop, i) => {
         const p = hopWorld(i, n);
-        const height = hop.rtt_avg_ms != null ? Math.min(78, 8 + hop.rtt_avg_ms * 0.45) : 8;
-        return { hop, i, p, height, pr: project3(p.x, height, p.z, w, h), base: project3(p.x, 0, p.z, w, h) };
+        const height = hopHeight(hop);
+        return { hop, i, p, height, pr: project3(p.x, height + 8, p.z, w, h) };
       });
       const ordered = pts.slice().sort((a, b) => b.pr.z - a.pr.z);
       for (let i = 0; i < n - 1; i++) {
         const a = pts[i].pr, b = pts[i + 1].pr;
-        hctx.strokeStyle = hops[i + 1].slow ? "rgba(255,176,32,.7)" : "rgba(92,225,230,.45)";
-        hctx.lineWidth = hops[i + 1].slow ? 2.4 : 1.4;
+        hctx.strokeStyle = hops[i + 1].slow ? "rgba(255,176,32,.85)" : "rgba(92,225,230,.55)";
+        hctx.lineWidth = hops[i + 1].slow ? 2.6 : 1.6;
         hctx.beginPath(); hctx.moveTo(a.x, a.y); hctx.lineTo(b.x, b.y); hctx.stroke();
       }
       const t = (performance.now() / 1800) % 1;
@@ -645,51 +663,41 @@ DASHBOARD_HTML = r"""
         const lt = (t * (n - 1)) - seg;
         const a = pts[seg].pr, b = pts[seg + 1].pr;
         hctx.beginPath();
-        hctx.arc(a.x + (b.x - a.x) * lt, a.y + (b.y - a.y) * lt, 3.2, 0, Math.PI * 2);
-        hctx.fillStyle = "#5ce1e6";
+        hctx.arc(a.x + (b.x - a.x) * lt, a.y + (b.y - a.y) * lt, 3.4, 0, Math.PI * 2);
+        hctx.fillStyle = "#eef4ff";
         hctx.fill();
       }
       for (const item of ordered) {
         const hop = item.hop;
-        const hw = 9, hd = 9;
-        const y0 = 0, y1 = item.height;
-        const cornersTop = [
-          project3(item.p.x - hw, y1, item.p.z - hd, w, h),
-          project3(item.p.x + hw, y1, item.p.z - hd, w, h),
-          project3(item.p.x + hw, y1, item.p.z + hd, w, h),
-          project3(item.p.x - hw, y1, item.p.z + hd, w, h),
-        ];
-        const right = [
-          project3(item.p.x + hw, y0, item.p.z - hd, w, h),
-          project3(item.p.x + hw, y1, item.p.z - hd, w, h),
-          project3(item.p.x + hw, y1, item.p.z + hd, w, h),
-          project3(item.p.x + hw, y0, item.p.z + hd, w, h),
-        ];
-        const front = [
-          project3(item.p.x - hw, y0, item.p.z + hd, w, h),
-          project3(item.p.x + hw, y0, item.p.z + hd, w, h),
-          project3(item.p.x + hw, y1, item.p.z + hd, w, h),
-          project3(item.p.x - hw, y1, item.p.z + hd, w, h),
-        ];
+        const hw = 8, hd = 8, cap = 7;
+        const y0 = 0, y1 = item.height, y2 = item.height + cap;
+        const px = item.p.x, pz = item.p.z;
         const col = hop.slow ? "#ffb020" : healthColor(hop.health);
         const selected = selectedTtl === hop.ttl;
-        drawBox(hctx, right, hop.slow ? "rgba(255,176,32,.28)" : "rgba(62,90,120,.45)");
-        drawBox(hctx, front, hop.slow ? "rgba(255,176,32,.38)" : "rgba(80,120,150,.5)");
-        drawBox(hctx, cornersTop, col, selected ? "#eef4ff" : "rgba(255,255,255,.25)");
-        const label = "#" + hop.ttl + "  " + fmt(hop.rtt_avg_ms, 0) + "ms";
-        hctx.fillStyle = selected || hop.slow ? "#eef4ff" : "#b7c4d8";
-        hctx.font = (selected || hop.slow ? "bold " : "") + "10px ui-sans-serif";
-        hctx.fillText(label, item.pr.x + 12, item.pr.y - 2);
+        const side = hop.slow ? "rgba(180,110,20,.85)" : "rgba(40,70,95,.9)";
+        const frontC = hop.slow ? "rgba(255,176,32,.55)" : "rgba(70,110,140,.85)";
+        drawBox(hctx, face(px + hw, y0, pz - hd, px + hw, y1, pz - hd, px + hw, y1, pz + hd, px + hw, y0, pz + hd, w, h), side);
+        drawBox(hctx, face(px - hw, y0, pz + hd, px + hw, y0, pz + hd, px + hw, y1, pz + hd, px - hw, y1, pz + hd, w, h), frontC);
+        drawBox(hctx, face(px - hw, y1, pz - hd, px + hw, y1, pz - hd, px + hw, y1, pz + hd, px - hw, y1, pz + hd, w, h), col);
+        const rw = 6, rd = 6;
+        drawBox(hctx, face(px + rw, y1, pz - rd, px + rw, y2, pz - rd, px + rw, y2, pz + rd, px + rw, y1, pz + rd, w, h), "rgba(20,30,42,.95)");
+        drawBox(hctx, face(px - rw, y1, pz + rd, px + rw, y1, pz + rd, px + rw, y2, pz + rd, px - rw, y2, pz + rd, w, h), "rgba(36,52,70,.95)");
+        drawBox(hctx, face(px - rw, y2, pz - rd, px + rw, y2, pz - rd, px + rw, y2, pz + rd, px - rw, y2, pz + rd, w, h), selected ? "#eef4ff" : col, selected ? "#ffffff" : "rgba(255,255,255,.35)");
+        const label = "#" + hop.ttl + "  " + fmt(hop.rtt_avg_ms, 0) + " ms";
+        const lx = (item.i % 2 === 0) ? item.pr.x + 12 : item.pr.x - 124;
+        hctx.fillStyle = selected || hop.slow ? "#eef4ff" : "#c5d0e0";
+        hctx.font = (selected || hop.slow ? "bold " : "") + "11px ui-sans-serif";
+        hctx.fillText(label, lx, item.pr.y - 2);
         if (hop.slow || selected) {
           const host = hop.hostname || hop.ip || "no reply";
           const who = (hop.whois && (hop.whois.org || hop.whois.asn)) || (hop.geo && hop.geo.isp) || "";
           hctx.font = "10px ui-monospace, monospace";
-          hctx.fillStyle = "#8b9bb4";
-          hctx.fillText(String(host).slice(0, 28), item.pr.x + 12, item.pr.y + 11);
-          if (who) hctx.fillText(String(who).slice(0, 28), item.pr.x + 12, item.pr.y + 23);
+          hctx.fillStyle = "#9aabc2";
+          hctx.fillText(String(host).slice(0, 26), lx, item.pr.y + 12);
+          if (who) hctx.fillText(String(who).slice(0, 26), lx, item.pr.y + 24);
           if (hop.added_ms != null && hop.slow) {
             hctx.fillStyle = "#ffb020";
-            hctx.fillText("+" + fmt(hop.added_ms, 0) + " ms introduced", item.pr.x + 12, item.pr.y + 35);
+            hctx.fillText("+" + fmt(hop.added_ms, 0) + " ms introduced", lx, item.pr.y + 36);
           }
         }
       }
@@ -707,7 +715,7 @@ DASHBOARD_HTML = r"""
       let best = null, bestD = 28;
       route.hops.forEach((hop, i) => {
         const p = hopWorld(i, route.hops.length);
-        const height = hop.rtt_avg_ms != null ? Math.min(78, 8 + hop.rtt_avg_ms * 0.45) : 8;
+        const height = hopHeight(hop);
         const pr = project3(p.x, height, p.z, w, h);
         const d = Math.hypot(pr.x - mx, pr.y - my);
         if (d < bestD) { best = hop; bestD = d; }
@@ -796,13 +804,14 @@ DASHBOARD_HTML = r"""
           const slow = hop.slow ? "slow" : "";
           const host = hop.hostname || hop.ip || "no reply";
           const added = hop.icmp_filtered ? "filt" : (hop.added_ms == null ? "—" : "+" + fmt(hop.added_ms, 0));
+          const badge = hop.slow ? "slow" : hop.health;
           return "<tr class='" + sel + " " + slow + "' data-ttl='" + hop.ttl + "'>" +
             "<td>" + hop.ttl + "</td>" +
             "<td>" + esc(host) + "<div class='mono'>" + esc(hop.ip || "") + "</div></td>" +
             "<td>" + added + "</td>" +
             "<td>" + fmt(hop.rtt_last_ms || hop.rtt_avg_ms, 1) + "</td>" +
             "<td>" + fmt(hop.last_loss_pct, 0) + "%</td>" +
-            "<td><span class='health " + esc(hop.health) + "'>" + esc(hop.health) + "</span></td></tr>";
+            "<td><span class='health " + esc(badge) + "'>" + esc(badge) + "</span></td></tr>";
         }).join("");
         body.querySelectorAll("tr").forEach((tr) => tr.onclick = () => {
           selectedTtl = Number(tr.dataset.ttl);
