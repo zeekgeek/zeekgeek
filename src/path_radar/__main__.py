@@ -30,11 +30,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--port", type=int, default=8800, help="Dashboard port")
     parser.add_argument("--target", default=DEFAULT_TARGET, help="Host or IP to trace")
     parser.add_argument("--interval", type=float, default=1.0, help="Seconds between probes")
-    parser.add_argument("--demo", action="store_true", help="Simulated LAN + multi-path internet (no traceroute binary)")
     parser.add_argument(
-        "--no-auto-demo-fallback",
+        "--companions",
+        default="8.8.8.8,1.1.1.1",
+        help="Comma-separated extra live targets to keep on the graph (default: 8.8.8.8,1.1.1.1)",
+    )
+    parser.add_argument("--no-companions", action="store_true", help="Trace only --target, not companion hosts")
+    parser.add_argument("--max-hops", type=int, default=20, help="Max TTL / hop count for live traceroute")
+    parser.add_argument("--demo", action="store_true", help="Simulated LAN + Comcast/Cogent/Google paths")
+    parser.add_argument(
+        "--auto-demo-fallback",
         action="store_true",
-        help="Exit if live traceroute is unavailable instead of switching to demo mode",
+        help="If live probing fails, switch to the simulated topology instead of retrying",
     )
     parser.add_argument("--log-level", default="info", choices=["debug", "info", "warning", "error"])
     return parser
@@ -65,15 +72,21 @@ def main() -> None:
 
 
 async def run(args: argparse.Namespace) -> None:
-    state = PathState()
+    mode = "demo" if args.demo else "live"
+    state = PathState(mode=mode)
     await state.set_target(args.target)
     app = create_app(state)
+    companions = () if args.no_companions or args.demo else tuple(
+        part.strip() for part in (args.companions or "").split(",") if part.strip()
+    )
     scanner_task = asyncio.create_task(
         _run_tracer(
             state=state,
             force_demo=args.demo,
-            auto_demo_fallback=not args.no_auto_demo_fallback,
+            auto_demo_fallback=args.auto_demo_fallback,
             interval=args.interval,
+            companions=companions,
+            max_hops=args.max_hops,
         ),
         name="path-tracer",
     )
@@ -97,9 +110,9 @@ async def run(args: argparse.Namespace) -> None:
 
     print(f"Path Radar dashboard: http://{args.host}:{chosen_port}")
     if args.demo:
-        print("Running in demo mode: LAN map + Comcast/Cogent/Google paths with a congested peering hop.")
+        print("Running in demo mode: simulated LAN + Comcast/Cogent/Google paths.")
     else:
-        print("Running live traceroute with automatic demo fallback if unavailable.")
+        print("Live mode: ICMP TTL traceroute, ARP/LAN, Team Cymru ASN, RIPE geolocation.")
 
     done, pending = await asyncio.wait(
         {scanner_task, server_task, stop_task},
@@ -136,19 +149,37 @@ async def _run_tracer(
     force_demo: bool,
     auto_demo_fallback: bool,
     interval: float,
+    companions: tuple[str, ...] = (),
+    max_hops: int = 20,
 ) -> None:
     if force_demo:
         await DemoTraceBackend(state, interval=interval).run()
         return
     try:
-        await LiveTraceBackend(state, interval=max(2.0, interval)).run()
+        await LiveTraceBackend(
+            state,
+            interval=interval,
+            companions=companions,
+            max_hops=max_hops,
+        ).run()
     except Exception as exc:
-        message = f"Live traceroute unavailable ({type(exc).__name__}: {exc}). Switching to demo scanner."
+        message = f"Live traceroute unavailable ({type(exc).__name__}: {exc})."
         LOGGER.warning(message)
-        await state.add_system_event("scanner-fallback", message)
+        await state.add_system_event("scanner-error", message)
         if not auto_demo_fallback:
-            raise
-        print(message)
+            print(message + " Retrying live probes in 3s.")
+            await asyncio.sleep(3)
+            await _run_tracer(
+                state=state,
+                force_demo=False,
+                auto_demo_fallback=False,
+                interval=interval,
+                companions=companions,
+                max_hops=max_hops,
+            )
+            return
+        print(message + " Switching to demo scanner.")
+        await state.add_system_event("scanner-fallback", "Switched to demo topology.")
         await DemoTraceBackend(state, interval=interval).run()
 
 

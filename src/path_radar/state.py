@@ -46,25 +46,58 @@ class HopTrack:
     hostname: str | None
     template: HopTemplate | None = None
     history: deque[float | None] = field(default_factory=lambda: deque(maxlen=HISTORY))
+    asn: str | None = None
+    as_name: str | None = None
+    provider: str | None = None
+    city: str | None = None
+    country: str | None = None
+    role: str | None = None
+    notes: str | None = None
+    prefix: str | None = None
+    provider_detail: dict[str, Any] | None = None
 
     def record(self, rtt: float | None, hostname: str | None = None) -> None:
         self.history.append(rtt)
         if hostname:
             self.hostname = hostname
 
+    def apply_lookup(self, lookup: dict[str, Any] | None) -> None:
+        if not lookup:
+            return
+        self.asn = lookup.get("asn") or self.asn
+        self.as_name = lookup.get("as_name") or self.as_name
+        self.provider = lookup.get("provider") or self.provider
+        self.city = lookup.get("city") or self.city
+        self.country = lookup.get("country") or self.country
+        self.role = lookup.get("role") or self.role
+        self.notes = lookup.get("notes") or self.notes
+        self.prefix = lookup.get("prefix") or self.prefix
+        if lookup.get("provider_detail"):
+            self.provider_detail = lookup["provider_detail"]
+
+    def extra(self) -> dict[str, Any]:
+        if self.provider_detail or self.asn:
+            return {
+                "asn": self.asn,
+                "provider": self.provider,
+                "as_name": self.as_name,
+                "provider_detail": self.provider_detail,
+            }
+        return enrich_dict(self.ip, self.template.asn if self.template else None)
+
     def snapshot(self) -> dict[str, Any]:
         stats = summarize(list(self.history))
         template = self.template
-        extra = enrich_dict(self.ip, template.asn if template else None)
+        extra = self.extra()
         return {
             "ip": self.ip,
             "hostname": self.hostname or (template.hostname if template else None),
-            "role": template.role if template else None,
-            "city": template.city if template else None,
+            "role": self.role or (template.role if template else None),
+            "city": self.city or (template.city if template else None),
             "facility": template.facility if template else None,
             "layer": template.layer if template else None,
             "problem_template": bool(template.problem) if template else False,
-            "notes": template.notes if template else None,
+            "notes": self.notes or (template.notes if template else None),
             **extra,
             **stats.as_dict(),
             "history": [_round(sample) for sample in self.history],
@@ -72,9 +105,10 @@ class HopTrack:
 
 
 class PathState:
-    def __init__(self) -> None:
+    def __init__(self, mode: str = "demo") -> None:
         self._lock = asyncio.Lock()
-        self.source = "demo"
+        self.mode = mode if mode in {"demo", "live"} else "demo"
+        self.source = self.mode
         self.target = DEFAULT_TARGET
         self.tracing = True
         self.probe_count = 0
@@ -82,8 +116,24 @@ class PathState:
         self.events: deque[dict[str, Any]] = deque(maxlen=EVENTS)
         self.tracks: dict[str, HopTrack] = {}
         self.paths: dict[str, list[dict[str, Any]]] = {}
+        self.lan_devices: list[Any] = []
+        self.gateway_ip: str | None = None
+        self.local_ips: set[str] = set()
         self._last_health: dict[str, str] = {}
-        self._bootstrap()
+        self._cached_graph: dict[str, Any] = {"nodes": [], "links": []}
+        self._cached_hops: list[dict[str, Any]] = []
+        self._cached_problems: list[dict[str, Any]] = []
+        self._cached_classified: list[Any] = []
+        if self.mode == "demo":
+            self._bootstrap()
+
+    def _nid(self, ip: str | None, hop: int | None) -> str:
+        return node_id_for(ip, hop, gateway_ip=self.gateway_ip, local_ips=self.local_ips or None)
+
+    def _lan(self):
+        if self.mode == "live":
+            return self.lan_devices
+        return list(LAN_DEVICES)
 
     def _bootstrap(self) -> None:
         for template in unique_templates().values():
@@ -118,6 +168,14 @@ class PathState:
         self.probe_count = 1
         self._recompute_locked()
 
+    async def set_lan(self, devices: list[Any]) -> None:
+        async with self._lock:
+            self.lan_devices = list(devices)
+            self.local_ips = {device.ip for device in devices if getattr(device, "kind", None) == "host"}
+            gateway = next((device for device in devices if getattr(device, "kind", None) == "gateway"), None)
+            self.gateway_ip = gateway.ip if gateway else None
+            self._recompute_locked()
+
     async def add_system_event(self, kind: str, message: str) -> dict[str, Any]:
         event = {"time": iso_time(utc_now()), "kind": kind, "message": message}
         async with self._lock:
@@ -126,7 +184,10 @@ class PathState:
 
     async def set_target(self, target: str) -> dict[str, Any]:
         cleaned = (target or "").strip() or DEFAULT_TARGET
-        canonical, _ = resolve_path(cleaned)
+        if self.mode == "demo":
+            canonical, _ = resolve_path(cleaned)
+        else:
+            canonical = cleaned
         async with self._lock:
             self.target = canonical
             event = {
@@ -172,6 +233,8 @@ class PathState:
                     track = HopTrack(ip=ip, hostname=hostname)
                     self.tracks[key] = track
                 track.record(rtt, hostname)
+                if hop.get("lookup"):
+                    track.apply_lookup(hop["lookup"])
                 path.append(
                     {
                         "hop": hop["hop"],
@@ -219,8 +282,8 @@ class PathState:
         track = self.tracks.get(item.ip) if item.ip else None
         stats = track.snapshot() if track else summarize([]).as_dict()
         template: HopTemplate | None = track.template if track else None
-        extra = enrich_dict(item.ip, template.asn if template else None)
-        node_id = node_id_for(item.ip, item.hop)
+        extra = track.extra() if track else enrich_dict(item.ip, template.asn if template else None)
+        node_id = self._nid(item.ip, item.hop)
         return {
             "hop": item.hop,
             "id": node_id,
@@ -233,8 +296,12 @@ class PathState:
             "reason": item.reason,
             "filtered": item.filtered,
             "timed_out": item.timed_out,
-            "role": stats.get("role") or (template.role if template else None),
-            "city": stats.get("city") or (template.city if template else None),
+            "role": (track.role if track and track.role else None)
+            or stats.get("role")
+            or (template.role if template else None),
+            "city": (track.city if track and track.city else None)
+            or stats.get("city")
+            or (template.city if template else None),
             "facility": stats.get("facility") or (template.facility if template else None),
             "notes": stats.get("notes") or (template.notes if template else None),
             "min_ms": stats.get("min_ms"),
@@ -258,7 +325,7 @@ class PathState:
         links: list[dict[str, Any]] = []
         active_ips = {item.get("ip") for item in (self.paths.get(self.target) or []) if item.get("ip")}
 
-        for device in LAN_DEVICES:
+        for device in self._lan():
             nodes[device.id] = {
                 "id": device.id,
                 "label": device.name,
@@ -278,11 +345,13 @@ class PathState:
                 "search": f"{device.name} {device.ip} {device.vendor} {device.kind} lan".lower(),
                 "notes": device.notes,
             }
-        links.append({"source": "lan:you", "target": "lan:gw", "label": "0.5 ms", "ms": 0.5, "health": "ok", "kind": "lan"})
-        for device in LAN_DEVICES:
-            if device.id not in {"lan:you", "lan:gw"}:
+        lan_ids = {device.id for device in self._lan()}
+        if "lan:you" in lan_ids and "lan:gw" in lan_ids:
+            links.append({"source": "lan:you", "target": "lan:gw", "label": "LAN", "ms": None, "health": "ok", "kind": "lan"})
+        for device in self._lan():
+            if device.id not in {"lan:you", "lan:gw"} and "lan:gw" in lan_ids:
                 links.append(
-                    {"source": "lan:gw", "target": device.id, "label": "LAN", "ms": 0.8, "health": "ok", "kind": "lan"}
+                    {"source": "lan:gw", "target": device.id, "label": "LAN", "ms": None, "health": "ok", "kind": "lan"}
                 )
 
         for target, path in self.paths.items():
@@ -304,14 +373,14 @@ class PathState:
                     )
                 )
             classified_path = classify_hops(readings)
-            previous_id = "lan:you"
+            previous_id = "lan:gw" if "lan:gw" in nodes else ("lan:you" if "lan:you" in nodes else None)
             is_active = target == self.target
             for item, classified in zip(path, classified_path, strict=False):
                 ip = item.get("ip")
                 template: HopTemplate | None = item.get("template")
-                node_id = node_id_for(ip, item["hop"]) if ip else f"hop:{target}:{item['hop']}"
+                node_id = self._nid(ip, item["hop"]) if ip else f"hop:{target}:{item['hop']}"
                 track = self.tracks.get(ip) if ip else None
-                extra = enrich_dict(ip, template.asn if template else None)
+                extra = track.extra() if track else enrich_dict(ip, template.asn if template else None)
                 health = classified.health
                 rtt = classified.rtt_ms
                 added = classified.added_ms
@@ -346,7 +415,8 @@ class PathState:
                     "asn": extra.get("asn"),
                     "provider": extra.get("provider"),
                     "as_name": extra.get("as_name"),
-                    "city": template.city if template else None,
+                        "city": (track.city if track and track.city else None)
+                        or (template.city if template else None),
                     "facility": template.facility if template else None,
                     "problem": health in {"slow", "loss", "timeout"},
                     "active": is_active or (ip in active_ips),
@@ -396,18 +466,19 @@ class PathState:
                     if health == "timeout"
                     else (f"+{added:.0f} ms" if added is not None and added >= 1 else (f"{rtt:.1f} ms" if rtt else ""))
                 )
-                links.append(
-                    {
-                        "source": previous_id,
-                        "target": node_id,
-                        "label": label,
-                        "ms": _round(added if added is not None else rtt),
-                        "health": link_health,
-                        "kind": "wan",
-                        "active": is_active,
-                        "problem": health in {"slow", "loss", "timeout"},
-                    }
-                )
+                if previous_id and previous_id != node_id:
+                    links.append(
+                        {
+                            "source": previous_id,
+                            "target": node_id,
+                            "label": label,
+                            "ms": _round(added if added is not None else rtt),
+                            "health": link_health,
+                            "kind": "wan",
+                            "active": is_active,
+                            "problem": health in {"slow", "loss", "timeout"},
+                        }
+                    )
                 previous_id = node_id
 
         return {"nodes": list(nodes.values()), "links": _unique_links(links)}
@@ -498,7 +569,8 @@ class PathState:
                 "target": self.target,
                 "tracing": self.tracing,
                 "probe_count": self.probe_count,
-                "background_targets": list(BACKGROUND_TARGETS),
+                "background_targets": list(self.paths.keys()) if self.mode == "live" else list(BACKGROUND_TARGETS),
+                "mode": self.mode,
                 "quality": self._quality(),
                 "hops": list(self._cached_hops),
                 "problems": list(self._cached_problems),
@@ -513,7 +585,7 @@ class PathState:
                         "kind": device.kind,
                         "vendor": device.vendor,
                     }
-                    for device in LAN_DEVICES
+                    for device in self._lan()
                 ],
                 "events": list(self.events),
             }

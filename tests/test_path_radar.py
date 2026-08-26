@@ -14,7 +14,9 @@ from path_radar.analysis import (
     introduced_ms,
     summarize,
 )
-from path_radar.providers import provider_for_ip
+from path_radar.lan import default_gateway, local_ipv4
+from path_radar.pinger import parse_ping_output, traceroute_from_probes
+from path_radar.providers import ip_kind, parse_cymru_asn, parse_cymru_origin, provider_for_ip, reversed_ipv4
 from path_radar.state import PathState
 from path_radar.topology import DEFAULT_TARGET, node_id_for, sample_graph
 from path_radar.tracer import demo_probe, parse_traceroute
@@ -104,6 +106,118 @@ class ClassifyHopTests(unittest.TestCase):
         classified = classify_hops(readings)
         self.assertEqual(classified[0].health, "loss")
         self.assertEqual(find_problems(classified)[0].kind, "loss")
+
+
+class PingParseTests(unittest.TestCase):
+    def test_ttl_exceeded(self) -> None:
+        text = """
+PING 1.1.1.1 (1.1.1.1) 56(84) bytes of data.
+From 10.1.3.17 icmp_seq=1 Time to live exceeded
+"""
+        parsed = parse_ping_output(text)
+        self.assertEqual(parsed["ip"], "10.1.3.17")
+        self.assertTrue(parsed["ttl_exceeded"])
+        self.assertFalse(parsed["reached"])
+
+    def test_echo_reply(self) -> None:
+        text = "64 bytes from 1.1.1.1: icmp_seq=1 ttl=55 time=2.20 ms"
+        parsed = parse_ping_output(text)
+        self.assertEqual(parsed["ip"], "1.1.1.1")
+        self.assertTrue(parsed["reached"])
+        self.assertAlmostEqual(parsed["rtt_ms"], 2.20)
+
+    def test_timeout(self) -> None:
+        parsed = parse_ping_output("PING 1.1.1.1 (1.1.1.1) 56(84) bytes of data.\n")
+        self.assertTrue(parsed["timed_out"])
+        self.assertIsNone(parsed["ip"])
+
+    def test_stop_at_destination(self) -> None:
+        probes = {
+            1: {"ip": None, "timed_out": True},
+            2: {"ip": "10.1.3.17", "ttl_exceeded": True, "rtt_ms": 2.0, "timed_out": False},
+            3: {"ip": "1.1.1.1", "reached": True, "rtt_ms": 2.2, "timed_out": False},
+            4: {"ip": "1.1.1.1", "reached": True, "rtt_ms": 2.1, "timed_out": False},
+        }
+        hops = traceroute_from_probes(probes, {"1.1.1.1"}, 20)
+        self.assertEqual(len(hops), 3)
+        self.assertEqual(hops[-1]["ip"], "1.1.1.1")
+        self.assertTrue(hops[-1]["reached"])
+
+
+class LiveLookupTests(unittest.TestCase):
+    def test_ip_kind(self) -> None:
+        self.assertEqual(ip_kind("10.1.3.17"), "private")
+        self.assertEqual(ip_kind("192.168.1.1"), "private")
+        self.assertEqual(ip_kind("240.0.232.98"), "reserved")
+        self.assertEqual(ip_kind("1.1.1.1"), "public")
+        self.assertEqual(ip_kind("100.64.0.1"), "cgnat")
+
+    def test_cymru_origin_parse(self) -> None:
+        parsed = parse_cymru_origin('"16509 | 52.32.0.0/11 | US | arin | 1991-12-19"')
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual(parsed["asn"], "16509")
+        self.assertEqual(parsed["prefix"], "52.32.0.0/11")
+        self.assertEqual(reversed_ipv4("52.46.166.113"), "113.166.46.52")
+
+    def test_cymru_asn_parse(self) -> None:
+        parsed = parse_cymru_asn('"16509 | US | arin | 2000-05-04 | AMAZON-02 - Amazon.com, Inc., US"')
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertIn("Amazon", parsed["name"])
+
+
+class LiveStateTests(unittest.IsolatedAsyncioTestCase):
+    async def test_live_mode_does_not_seed_demo_topology(self) -> None:
+        state = PathState(mode="live")
+        snap = await state.snapshot()
+        self.assertEqual(snap["source"], "live")
+        self.assertEqual(snap["hops"], [])
+        ids = {node["id"] for node in snap["graph"]["nodes"]}
+        self.assertNotIn("net:154.54.30.17", ids)
+        self.assertNotIn("lan:phone", ids)
+
+    async def test_live_ingest_keeps_provider_lookup(self) -> None:
+        state = PathState(mode="live")
+        hops = [
+            {
+                "hop": 1,
+                "ip": "10.1.3.17",
+                "hostname": None,
+                "rtts": [1.4],
+                "timed_out": False,
+                "lookup": {"asn": "PRIVATE", "provider": "Home network", "provider_detail": {"asn": "PRIVATE", "name": "LAN"}},
+            },
+            {
+                "hop": 2,
+                "ip": "1.1.1.1",
+                "hostname": "one.one.one.one",
+                "rtts": [2.2],
+                "timed_out": False,
+                "lookup": {
+                    "asn": "AS13335",
+                    "provider": "Cloudflare",
+                    "as_name": "Cloudflare, Inc.",
+                    "city": "Anycast",
+                    "provider_detail": {"asn": "AS13335", "name": "Cloudflare, Inc.", "aka": "Cloudflare"},
+                },
+            },
+        ]
+        await state.ingest_live(hops, target="1.1.1.1", source="live")
+        snap = await state.snapshot()
+        self.assertEqual(snap["target"], "1.1.1.1")
+        dest = snap["hops"][-1]
+        self.assertEqual(dest["ip"], "1.1.1.1")
+        self.assertEqual(dest["asn"], "AS13335")
+        self.assertEqual(dest["provider"], "Cloudflare")
+        self.assertNotIn("154.54.30.17", [hop["ip"] for hop in snap["hops"]])
+
+    def test_lan_discovery_returns_this_host(self) -> None:
+        ip = local_ipv4()
+        self.assertTrue(ip)
+        gw = default_gateway()
+        # Gateway may be absent in some netns; host address should exist.
+        self.assertNotEqual(ip, "127.0.0.1")
 
 
 class TracerouteParseTests(unittest.TestCase):

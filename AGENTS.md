@@ -26,9 +26,9 @@ Running the apps:
  AppleSmartBattery). Default dashboard port is `8780`.
 - Jet radar: `python3 -m jet_radar --demo` (live polls adsb.lol; needs network egress).
  Default dashboard port is `8790`.
-- Path radar: `python3 -m path_radar --demo` (simulated LAN + Comcast/Cogent/Google paths).
- Live traceroute needs a `traceroute`/`tracepath` binary; Cloud VMs typically do not have one,
- so always use `--demo`. Default dashboard port is `8800`.
+- Path radar: `python3 -m path_radar` (live ICMP TTL traceroute + Team Cymru ASN +
+ RIPE geo + ARP LAN). Optional `--demo` for the simulated Comcast/Cogent/Google
+ topology. Default dashboard port is `8800`.
 - Etsy AI Space: `python3 -m etsy_ai_space scrape "retro cat shirt" --demo` (Phase 1 demo scraper +
  SQLite logging). Live Etsy scraping needs `pip install -e ".[etsy]"` and `playwright install chromium`.
  Phase 4 exports JSON/CSV for **manual** listing upload — no Etsy API publish in this flow.

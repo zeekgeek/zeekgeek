@@ -348,35 +348,48 @@ metro. **Cloudflare (`1.1.1.1`)** and **GitHub** go through a congested
 and stays fast — the classic “the site is fine, the transit handoff is not”
 diagnosis.
 
-## Quick start
+## Quick start (live)
+
+Live is the default. Path Radar discovers this machine and the default gateway
+from the kernel, walks the real path with **ICMP TTL probes** (no `traceroute`
+binary required), and enriches every public hop with **Team Cymru ASN** plus
+**RIPE geolocation**. A companion trace to `8.8.8.8` / `1.1.1.1` stays on the
+graph so you can compare paths.
 
 ```bash
 source .venv/bin/activate
 pip install -e .
+python3 -m path_radar
+# or pin a host:
+python3 -m path_radar --target 1.1.1.1
+```
+
+Open the printed dashboard URL (default <http://127.0.0.1:8800>). The status
+chip shows **LIVE**. Click a hop to inspect the live provider record.
+
+## Demo topology (offline)
+
+```bash
 python3 -m path_radar --demo
 ```
 
 Open the printed dashboard URL (default <http://127.0.0.1:8800>). Search for
 `cogent`, click the red hop, and compare with a trace to `8.8.8.8`.
 
-Live traceroute (needs a `traceroute` or `tracepath` binary):
-
-```bash
-python3 -m path_radar --target 1.1.1.1
-```
-
-If live traceroute is unavailable, the app auto-switches to demo mode.
-
 ## Command options
 
 ```text
-python3 -m path_radar --host 127.0.0.1 --port 8800 --target 1.1.1.1 --interval 1 --demo
+python3 -m path_radar --host 127.0.0.1 --port 8800 --target 1.1.1.1 --interval 1
 ```
 
+- (default) live ICMP TTL traceroute + Team Cymru / RIPE + ARP LAN
 - `--demo`: simulated LAN + Comcast / Cogent / Google paths
 - `--target`: host or IP to highlight as the active trace
+- `--companions`: extra live targets to keep on the graph (default `8.8.8.8,1.1.1.1`)
+- `--no-companions`: trace only `--target`
 - `--interval`: seconds between probes
-- `--no-auto-demo-fallback`: exit instead of switching to demo
+- `--max-hops`: max TTL for live traceroute (default 20)
+- `--auto-demo-fallback`: if live probing fails, switch to the simulated topology
 - `--host` / `--port` / `--log-level`
 
 The app auto-selects the next free port if `--port` is busy.

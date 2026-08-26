@@ -1,8 +1,15 @@
-"""ASN / operator catalog for problem-router inspection."""
+"""ASN / operator catalog plus live Team Cymru / RIPE lookups."""
 
 from __future__ import annotations
 
+import json
+import re
+import shutil
+import subprocess
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass, field
+from ipaddress import ip_address
 from typing import Any
 
 
@@ -111,6 +118,13 @@ PROVIDERS: dict[str, Provider] = {
         website="https://developers.google.com/speed/public-dns",
         notes="Direct peering with large access ISPs is common, so 8.8.8.8 is a useful healthy-path control.",
     ),
+    "AS16509": Provider(
+        asn="AS16509",
+        name="Amazon.com, Inc.",
+        aka="Amazon",
+        rir="ARIN",
+        notes="AWS / Amazon edge. Seeing this hop usually means you have reached a cloud on-ramp, not a fault on your LAN.",
+    ),
     "AS36459": Provider(
         asn="AS36459",
         name="GitHub, Inc.",
@@ -190,4 +204,223 @@ def enrich_dict(ip: str | None, asn: str | None = None) -> dict[str, Any]:
         "provider": provider.aka or provider.name,
         "as_name": provider.name,
         "provider_detail": provider.as_dict(),
+    }
+
+
+def ip_kind(ip: str | None) -> str:
+    if not ip:
+        return "unknown"
+    try:
+        parsed = ip_address(ip)
+    except ValueError:
+        return "unknown"
+    packed = int(parsed)
+    if packed >= 0xF0000000:
+        return "reserved"
+    if parsed.is_loopback:
+        return "loopback"
+    if parsed.is_link_local:
+        return "link-local"
+    if parsed.is_multicast:
+        return "reserved"
+    if parsed.is_private:
+        return "private"
+    if 0x64400000 <= packed <= 0x647FFFFF:
+        return "cgnat"
+    return "public"
+
+
+def reversed_ipv4(ip: str) -> str:
+    return ".".join(reversed(ip.split(".")))
+
+
+def parse_cymru_origin(txt: str) -> dict[str, str] | None:
+    cleaned = txt.strip().strip('"')
+    parts = [part.strip() for part in cleaned.split("|")]
+    if len(parts) < 4:
+        return None
+    asn = re.sub(r"[^0-9]", "", parts[0])
+    if not asn:
+        return None
+    return {
+        "asn": asn,
+        "prefix": parts[1],
+        "cc": parts[2],
+        "rir": parts[3],
+        "date": parts[4] if len(parts) > 4 else "",
+    }
+
+
+def parse_cymru_asn(txt: str) -> dict[str, str] | None:
+    cleaned = txt.strip().strip('"')
+    parts = [part.strip() for part in cleaned.split("|")]
+    if len(parts) < 5:
+        return None
+    return {
+        "asn": re.sub(r"[^0-9]", "", parts[0]),
+        "cc": parts[1],
+        "rir": parts[2],
+        "date": parts[3],
+        "name": parts[4],
+    }
+
+
+def _dns_txt(qname: str, timeout: float = 1.2) -> str | None:
+    dig = shutil.which("dig")
+    if dig:
+        try:
+            completed = subprocess.run(
+                [dig, "+short", "+time=1", "+tries=1", qname, "TXT"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=timeout + 0.5,
+            )
+            text = (completed.stdout or "").strip()
+            if text:
+                return text.splitlines()[0]
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    url = "https://dns.google/resolve?" + urllib.parse.urlencode({"name": qname, "type": "TXT"})
+    payload = _http_json(url, timeout=timeout)
+    if not payload:
+        return None
+    for answer in payload.get("Answer") or []:
+        data = str(answer.get("data") or "").strip()
+        if data:
+            return data
+    return None
+
+
+def _http_json(url: str, timeout: float = 2.0) -> dict[str, Any] | None:
+    try:
+        request = urllib.request.Request(url, headers={"User-Agent": "path-radar/0.1"})
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return None
+
+
+def cymru_origin(ip: str) -> dict[str, str] | None:
+    qname = f"{reversed_ipv4(ip)}.origin.asn.cymru.com"
+    txt = _dns_txt(qname)
+    if not txt:
+        return None
+    return parse_cymru_origin(txt)
+
+
+def cymru_asn_name(asn: str) -> dict[str, str] | None:
+    qname = f"AS{asn}.asn.cymru.com"
+    txt = _dns_txt(qname)
+    if not txt:
+        return None
+    return parse_cymru_asn(txt)
+
+
+def ripe_geoloc(ip: str) -> dict[str, str] | None:
+    url = "https://stat.ripe.net/data/geoloc/data.json?resource=" + urllib.parse.quote(ip)
+    payload = _http_json(url, timeout=2.0)
+    if not payload or payload.get("status") != "ok":
+        return None
+    resources = ((payload.get("data") or {}).get("located_resources")) or []
+    for resource in resources:
+        for location in resource.get("locations") or []:
+            city = (location.get("city") or "").strip()
+            country = (location.get("country") or "").strip()
+            if country == "?":
+                country = ""
+            if city or country:
+                return {"city": city or None, "country": country or None}
+    return None
+
+
+_LOOKUP_CACHE: dict[str, dict[str, Any]] = {}
+
+
+def lookup_ip(ip: str | None) -> dict[str, Any]:
+    """Live (cached) ASN + provider + geo for a hop IP."""
+    if not ip:
+        return {"asn": None, "provider": None, "provider_detail": None}
+    cached = _LOOKUP_CACHE.get(ip)
+    if cached is not None:
+        return cached
+    result = _lookup_ip_uncached(ip)
+    _LOOKUP_CACHE[ip] = result
+    return result
+
+
+def _lookup_ip_uncached(ip: str) -> dict[str, Any]:
+    kind = ip_kind(ip)
+    if kind in {"private", "loopback", "link-local"}:
+        extra = enrich_dict(ip, "PRIVATE")
+        extra["city"] = "LAN"
+        extra["role"] = "gateway" if ip.endswith(".1") else "lan"
+        return extra
+    if kind == "cgnat":
+        extra = enrich_dict(ip, "CGNAT")
+        extra["role"] = "access"
+        return extra
+    if kind == "reserved":
+        provider = Provider(
+            asn="RESERVED",
+            name="Non-routable overlay hop",
+            aka="Fabric",
+            notes=(
+                "This hop answered from a reserved address (often a cloud underlay, "
+                "hypervisor fabric, or carrier encapsulation). Public ASN registries "
+                "do not publish an operator for it."
+            ),
+        )
+        return {
+            "asn": "RESERVED",
+            "provider": provider.aka,
+            "as_name": provider.name,
+            "city": None,
+            "country": None,
+            "role": "overlay",
+            "notes": provider.notes,
+            "provider_detail": provider.as_dict(),
+        }
+    if kind != "public":
+        return {"asn": None, "provider": None, "provider_detail": None}
+
+    origin = cymru_origin(ip)
+    asn_num = origin["asn"] if origin else None
+    asn = f"AS{asn_num}" if asn_num else None
+    named = cymru_asn_name(asn_num) if asn_num else None
+    geo = ripe_geoloc(ip)
+    catalog = provider_for_asn(asn) if asn else None
+    as_name = (catalog.name if catalog else None) or (named["name"] if named else None)
+    provider_label = (catalog.aka if catalog else None) or as_name
+    city = None
+    country = (origin or {}).get("cc") or None
+    if geo:
+        city = geo.get("city") or city
+        country = geo.get("country") or country
+    if catalog:
+        detail = catalog.as_dict()
+    else:
+        detail = Provider(
+            asn=asn or "UNKNOWN",
+            name=as_name or "Unknown operator",
+            rir=(origin or {}).get("rir"),
+            prefix=(origin or {}).get("prefix"),
+            notes="Live Team Cymru / RIPE record. No local handbook entry for this ASN.",
+        ).as_dict()
+    if origin:
+        detail["prefix"] = origin.get("prefix") or detail.get("prefix")
+        detail["rir"] = origin.get("rir") or detail.get("rir")
+    detail["country"] = country
+    if city:
+        detail["city"] = city
+    return {
+        "asn": asn,
+        "provider": provider_label,
+        "as_name": as_name,
+        "city": city or country,
+        "country": country,
+        "prefix": (origin or {}).get("prefix"),
+        "role": "anycast" if catalog and catalog.asn in {"AS13335", "AS15169"} else "transit",
+        "notes": catalog.notes if catalog else None,
+        "provider_detail": detail,
     }

@@ -1,7 +1,9 @@
-"""Demo probe engine and live traceroute parser / runner."""
+"""Demo probe engine, live ICMP traceroute, and system traceroute parser."""
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import math
 import os
 import random
@@ -13,7 +15,12 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from .lan import discover_lan
+from .pinger import traceroute_ping_async
+from .providers import ip_kind, lookup_ip
 from .topology import BACKGROUND_TARGETS, HopTemplate, unique_templates, resolve_path
+
+LOGGER = logging.getLogger(__name__)
 
 IP_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
 
@@ -221,19 +228,54 @@ class DemoTraceBackend:
 
 
 class LiveTraceBackend:
-    def __init__(self, state, interval: float = 3.0) -> None:
+    """Continuous live traceroute: ICMP TTL probes + ASN/geo + LAN."""
+
+    def __init__(
+        self,
+        state,
+        interval: float = 1.0,
+        companions: tuple[str, ...] = ("8.8.8.8", "1.1.1.1"),
+        max_hops: int = 20,
+    ) -> None:
         self.state = state
         self.interval = interval
+        self.companions = tuple(item.strip() for item in companions if item and item.strip())
+        self.max_hops = max_hops
 
     async def run(self) -> None:
-        import asyncio
-
+        lan = await asyncio.to_thread(discover_lan)
+        await self.state.set_lan(lan)
+        await self.state.add_system_event(
+            "live",
+            "Live mode: ICMP TTL traceroute, ARP/LAN, Team Cymru ASN, RIPE geolocation.",
+        )
+        cycle = 0
         while True:
             target = self.state.target
-            hops = await asyncio.to_thread(run_traceroute, target)
-            for hop in hops:
-                if hop.get("ip") and not hop.get("hostname"):
-                    hop["hostname"] = await asyncio.to_thread(reverse_name, hop["ip"])
-            await self.state.ingest_live(hops, target=target, source="live")
-            await asyncio.sleep(max(1.0, self.interval))
+            await self._trace(target)
+            if cycle % 4 == 0:
+                for extra in self.companions:
+                    if extra != target:
+                        try:
+                            await self._trace(extra)
+                        except Exception as exc:
+                            LOGGER.warning("Companion trace %s failed: %s", extra, exc)
+            cycle += 1
+            await asyncio.sleep(max(0.4, self.interval))
+
+    async def _trace(self, target: str) -> None:
+        hops = await traceroute_ping_async(target, max_hops=self.max_hops)
+        if not hops:
+            raise RuntimeError(f"No hops returned for {target}")
+
+        async def enrich(hop: dict[str, Any]) -> None:
+            ip = hop.get("ip")
+            if not ip:
+                return
+            if ip_kind(ip) == "public" and not hop.get("hostname"):
+                hop["hostname"] = await asyncio.to_thread(reverse_name, ip)
+            hop["lookup"] = await asyncio.to_thread(lookup_ip, ip)
+
+        await asyncio.gather(*[enrich(hop) for hop in hops])
+        await self.state.ingest_live(hops, target=target, source="live")
 

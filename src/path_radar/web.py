@@ -141,6 +141,7 @@ DASHBOARD_HTML = r"""<!doctype html>
     .chip.fair b, .chip.poor b { color: var(--amber); }
     .chip.critical b, .chip.down b, .chip.slow b { color: var(--rose); }
     .chip.excellent b, .chip.good b { color: var(--mint); }
+    .chip.live { border-color: rgba(62,224,212,.45); }
     aside.left {
       top: 82px; left: 14px; bottom: 210px; width: min(360px, 38vw);
       border-radius: 16px; padding: 12px; display: flex; flex-direction: column; min-height: 0;
@@ -757,8 +758,8 @@ DASHBOARD_HTML = r"""<!doctype html>
     if (document.activeElement !== targetEl && !targetEl.value) targetEl.value = data.target || "";
     const q = data.quality || {};
     const grade = q.grade || "down";
-    statusEl.className = "chip " + grade;
-    statusEl.innerHTML = "<b>" + grade.toUpperCase() + "</b> · " + fmt(q.end_to_end_ms) +
+    statusEl.className = "chip " + grade + (data.source === "live" ? " live" : "");
+    statusEl.innerHTML = "<b>" + (data.source === "live" ? "LIVE · " : "") + grade.toUpperCase() + "</b> · " + fmt(q.end_to_end_ms) +
       " · " + (q.hop_count || 0) + " hops · " + (q.problem_count || 0) + " slow · " +
       (data.source || "") + " · #" + (data.probe_count || 0);
     hopSummary.textContent = (q.destination || data.target || "") + (q.top_problem ? " · bottleneck hop " + q.top_problem.hop : "");
