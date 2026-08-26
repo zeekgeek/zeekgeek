@@ -8,6 +8,7 @@ This repo contains self-contained Python apps under `src/`:
 - `wifi_radar` — WiFi motion radar + FastAPI dashboard
 - `mac_battery` — MacBook battery/charging diagnostic + FastAPI dashboard
 - `jet_radar` — private-jet ADS-B movement radar + strange-event alarm dashboard
+- `trace_radar` — PingPlotter-style hop health radar (force graph, 3D hops, timeline, WHOIS/DNS/ports/ping)
 - `etsy_ai_space` — phased Etsy POD research swarm (scrape → brief → export; manual upload)
 
 There is no database and no frontend build step (dashboard HTML/JS is embedded
@@ -25,6 +26,10 @@ Running the apps:
  AppleSmartBattery). Default dashboard port is `8780`.
 - Jet radar: `python3 -m jet_radar --demo` (live polls adsb.lol; needs network egress).
  Default dashboard port is `8790`.
+- Trace radar: `python3 -m trace_radar --demo` (full-bleed force graph + modest 3D hop
+ path + PingPlotter timeline + WHOIS/DNS/port scan/ping). Live mode shells out to
+ `traceroute`/`tracepath` (or Python UDP fallback) and enriches hops via ip-api.com +
+ rdap.org. Default dashboard port is `8800`.
 - Etsy AI Space: `python3 -m etsy_ai_space scrape "retro cat shirt" --demo` (Phase 1 demo scraper +
  SQLite logging). Live Etsy scraping needs `pip install -e ".[etsy]"` and `playwright install chromium`.
  Phase 4 exports JSON/CSV for **manual** listing upload — no Etsy API publish in this flow.
