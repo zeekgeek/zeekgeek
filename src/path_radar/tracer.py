@@ -64,9 +64,14 @@ def demo_probe(
     for target in targets:
         _name, hops = resolve_path(target)
         path: list[dict[str, Any]] = []
+        prev_rtt = 0.0
         for hop in hops:
             sample = by_ip.get(hop.ip or "")
             rtt = sample.rtt_ms if sample else sample_rtt(hop, rng, clock)
+            if rtt is not None:
+                # Traceroute RTT is cumulative; later hops never beat an earlier responder.
+                rtt = max(rtt, prev_rtt)
+                prev_rtt = rtt
             path.append(
                 {
                     "hop": hop.hop,
