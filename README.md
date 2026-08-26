@@ -329,6 +329,84 @@ python3 -m jet_radar --host 127.0.0.1 --port 8790 --sigma 3 --trigger-threshold 
 
 ---
 
+# Path Radar
+
+A full-bleed **force-directed network map** plus **continuous traceroute**, mixing
+Scanny-style topology with PingPlotter-style hop quality:
+
+- draggable nodes, wheel zoom, pan, edge latency labels
+- search box that highlights matching nodes (name, IP, ASN, city, provider)
+- click a node or hop to inspect details
+- **Reheat** / **Freeze** the force simulation
+- per-hop current / min / avg / max / jitter / loss, plus a time heatmap
+- slow hops called out where delay *enters* the path (not inherited downstream)
+- problem-router card with ASN, facility, NOC, looking glass, and provider notes
+
+The demo topology is a home LAN plus three internet paths that share the Comcast
+metro. **Cloudflare (`1.1.1.1`)** and **GitHub** go through a congested
+**Cogent (AS174)** peering hop; **Google (`8.8.8.8`)** peers directly with Comcast
+and stays fast — the classic “the site is fine, the transit handoff is not”
+diagnosis.
+
+## Quick start (live)
+
+Live is the default. Path Radar discovers this machine and the default gateway
+from the kernel, walks the real path with **ICMP TTL probes** (no `traceroute`
+binary required), and enriches every public hop with **Team Cymru ASN** plus
+**RIPE geolocation**. A companion trace to `8.8.8.8` / `1.1.1.1` stays on the
+graph so you can compare paths.
+
+```bash
+source .venv/bin/activate
+pip install -e .
+python3 -m path_radar
+# or pin a host:
+python3 -m path_radar --target 1.1.1.1
+```
+
+Open the printed dashboard URL (default <http://127.0.0.1:8800>). The status
+chip shows **LIVE**. Click a hop to inspect the live provider record.
+
+## Demo topology (offline)
+
+```bash
+python3 -m path_radar --demo
+```
+
+Open the printed dashboard URL (default <http://127.0.0.1:8800>). Search for
+`cogent`, click the red hop, and compare with a trace to `8.8.8.8`.
+
+## Command options
+
+```text
+python3 -m path_radar --host 127.0.0.1 --port 8800 --target 1.1.1.1 --interval 1
+```
+
+- (default) live ICMP TTL traceroute + Team Cymru / RIPE + ARP LAN
+- `--demo`: simulated LAN + Comcast / Cogent / Google paths
+- `--target`: host or IP to highlight as the active trace
+- `--companions`: extra live targets to keep on the graph (default `8.8.8.8,1.1.1.1`); they do not replace the hop-chain HUD
+- `--no-companions`: trace only `--target`
+- `--interval`: seconds between probes
+- `--max-hops`: max TTL for live traceroute (default 20)
+- `--auto-demo-fallback`: if live probing fails, switch to the simulated topology
+- `--host` / `--port` / `--log-level`
+
+The app auto-selects the next free port if `--port` is busy.
+
+## API
+
+- `GET /api/snapshot`: hops, heatmap, problem router, and graph
+- `POST /api/trace`: body `{"target": "8.8.8.8"}`
+- `GET /api/events`: Server-Sent Events stream
+
+## Keyboard
+
+- `/` focus search · `R` reheat · `F` freeze · `Esc` clear search
+- Double-click a pinned node to unpin it
+
+---
+
 # Etsy AI Space
 
 Phased agent swarm for **safe** print-on-demand store research. It follows a
