@@ -470,17 +470,48 @@ python3 -m etsy_ai_space scrape "cottagecore mushroom shirt"
 The scraper uses randomized delays between actions. Start with low volume and
  `--max-results 24` while you validate selectors.
 
-## Claude orchestration (Phase 2–3)
+## Claude / OpenRouter orchestration (Phase 2–3)
 
-Set `ANTHROPIC_API_KEY` and run the pipeline without `--demo` when ready:
+Set `OPENROUTER_API_KEY` (preferred) or `ANTHROPIC_API_KEY` and run the pipeline without
+`--demo` when ready:
 
 ```bash
-export ANTHROPIC_API_KEY=sk-...
+cp .env.example .env   # then paste the OpenRouter key
+export OPENROUTER_API_KEY=sk-or-...
+export OPENROUTER_MODEL=openai/gpt-4o   # optional
+python3 -m etsy_ai_space openrouter-ping
 python3 -m etsy_ai_space pipeline "retro cat shirt"
 ```
 
-Without the key, Ultron falls back to deterministic templates so you can test
-the full export flow offline.
+Without a key, Ultron falls back to deterministic templates so you can test
+the full export flow offline. OpenRouter takes priority when both keys are set.
+
+## OpenRouter + Cursor
+
+Cloud Agents (this environment) cannot use OpenRouter as the **agent model**. They can
+call OpenRouter from repo code via `OPENROUTER_API_KEY`.
+
+To route **Cursor Desktop** chat/agent through OpenRouter (beta, unofficial BYOK):
+
+1. Open **Cursor Settings → Models** (not VS Code `Cmd/Ctrl+,`).
+2. Enable **OpenAI API Key** and paste your OpenRouter key (`sk-or-...`).
+3. Enable **Override OpenAI Base URL** and set it to:
+
+   `https://openrouter.ai/api/v1/cursor`
+
+   Do not use `https://openrouter.ai/api/v1/chat/completions` — Cursor appends the
+   chat path itself. The `/cursor` suffix adapts Cursor's tool-call format.
+4. **+ Add model** and enter an OpenRouter id that does not collide with Cursor
+   built-ins, for example `openai/gpt-4o` or `deepseek/deepseek-v4-flash`.
+   Router aliases need a `~` prefix (`~openai/gpt-latest`).
+5. Select that custom model in the chat/agent picker.
+
+Notes:
+
+- Turn the OpenAI override **off** when you want Cursor-hosted models (Composer, Auto).
+- Agent mode is less reliable than Ask mode with this override.
+- Tab completion always uses Cursor's models.
+- Do not enable an Anthropic key at the same time as the OpenRouter OpenAI override.
 
 ## Safe scaling checklist
 
@@ -503,6 +534,7 @@ python3 -m etsy_ai_space browserclaw-upload --dry-run
 python3 -m etsy_ai_space browserclaw-upload --package etsy_ai_space/exports/listing-02-we-do-recover --reuse-tab
 python3 -m etsy_ai_space stats
 python3 -m etsy_ai_space top [--limit 10]
+python3 -m etsy_ai_space openrouter-ping [--model openai/gpt-4o]
 
 # Live Streamlit dashboard (auto-refreshes from pipeline/state.json)
 pip install -e ".[etsy]"
