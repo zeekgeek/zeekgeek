@@ -448,5 +448,62 @@ class WebRouteTests(unittest.TestCase):
         self.assertIn("Freeze", DASHBOARD_HTML)
 
 
+class MacOSLauncherTests(unittest.TestCase):
+    def test_find_traceroute_absolute_candidate(self) -> None:
+        import os
+        import tempfile
+        from pathlib import Path
+
+        from trace_radar.tracer import find_traceroute_cmd
+
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "traceroute"
+            binary.write_text("#!/bin/sh\n")
+            binary.chmod(0o755)
+            found = find_traceroute_cmd(candidates=(str(binary),))
+            self.assertEqual(found, str(binary))
+            self.assertTrue(os.path.isfile(found))
+
+    def test_ping_command_macos_uses_milliseconds(self) -> None:
+        from trace_radar.tools import build_ping_command
+
+        darwin = build_ping_command("1.1.1.1", 4, 1.5, platform="darwin", ping_bin="/sbin/ping")
+        self.assertEqual(darwin, ["/sbin/ping", "-c", "4", "-W", "1500", "1.1.1.1"])
+        linux = build_ping_command("1.1.1.1", 4, 1.5, platform="linux", ping_bin="ping")
+        self.assertEqual(linux, ["ping", "-c", "4", "-W", "1", "1.1.1.1"])
+
+    def test_command_file_is_executable_shell(self) -> None:
+        import stat
+        import subprocess
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        command = root / "path_radar.command"
+        wrapper = root / "path_radar.py"
+        self.assertTrue(command.is_file())
+        self.assertTrue(wrapper.is_file())
+        self.assertTrue(command.stat().st_mode & stat.S_IXUSR)
+        script = command.read_text(encoding="utf-8")
+        self.assertIn("macos", script.lower())
+        self.assertIn("path_radar.py", script)
+        self.assertIn("--open", script)
+        subprocess.run(["bash", "-n", str(command)], check=True)
+
+    def test_root_wrapper_help(self) -> None:
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        wrapper = Path(__file__).resolve().parents[1] / "path_radar.py"
+        proc = subprocess.run(
+            [sys.executable, str(wrapper), "--help"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertIn("--demo", proc.stdout)
+        self.assertIn("--open", proc.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

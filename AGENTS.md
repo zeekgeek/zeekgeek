@@ -26,10 +26,9 @@ Running the apps:
  AppleSmartBattery). Default dashboard port is `8780`.
 - Jet radar: `python3 -m jet_radar --demo` (live polls adsb.lol; needs network egress).
  Default dashboard port is `8790`.
-- Trace radar: `python3 -m trace_radar --demo` (full-bleed force graph + modest 3D hop
- path + PingPlotter timeline + WHOIS/DNS/port scan/ping). Live mode shells out to
- `traceroute`/`tracepath` (or Python UDP fallback) and enriches hops via ip-api.com +
- rdap.org. Default dashboard port is `8800`.
+- Trace radar: `python3 -m trace_radar --demo` or double-click `path_radar.command` on
+ macOS Sequoia (`python3 path_radar.py --open`). Live mode uses `/usr/sbin/traceroute`
+ on macOS (demo fallback if probes fail). Default dashboard port is `8800`.
 - Etsy AI Space: `python3 -m etsy_ai_space scrape "retro cat shirt" --demo` (Phase 1 demo scraper +
  SQLite logging). Live Etsy scraping needs `pip install -e ".[etsy]"` and `playwright install chromium`.
  Phase 4 exports JSON/CSV for **manual** listing upload — no Etsy API publish in this flow.

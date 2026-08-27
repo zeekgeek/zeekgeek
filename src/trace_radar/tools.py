@@ -9,16 +9,60 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 import select
 import shutil
 import socket
 import struct
+import sys
 import time
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
 LOGGER = logging.getLogger(__name__)
+
+PING_CANDIDATES: tuple[str, ...] = (
+    "ping",
+    "/sbin/ping",
+    "/usr/bin/ping",
+    "/usr/sbin/ping",
+)
+
+
+def find_ping_cmd(candidates: Sequence[str] | None = None) -> str | None:
+    """Return a ping binary, including macOS /sbin/ping."""
+    for name in candidates or PING_CANDIDATES:
+        if os.path.sep in name:
+            if os.path.isfile(name) and os.access(name, os.X_OK):
+                return name
+            continue
+        path = shutil.which(name)
+        if path:
+            return path
+    return None
+
+
+def build_ping_command(
+    host: str,
+    count: int,
+    timeout: float,
+    *,
+    platform: str | None = None,
+    ping_bin: str | None = None,
+) -> list[str]:
+    """Build a ping argv that works on both Linux and macOS Sequoia.
+
+    Linux ``-W`` is seconds per probe. macOS ``-W`` is milliseconds.
+    """
+    binary = ping_bin or find_ping_cmd() or "ping"
+    which = platform if platform is not None else sys.platform
+    if which == "darwin":
+        wait_ms = max(1, int(timeout * 1000))
+        return [binary, "-c", str(count), "-W", str(wait_ms), host]
+    timeout_s = max(1, int(timeout))
+    return [binary, "-c", str(count), "-W", str(timeout_s), host]
 
 # Common ports Scanny-style tools usually probe first.
 COMMON_PORTS = [
@@ -306,9 +350,10 @@ async def ping_host(
         )
 
     # Prefer system ping when available (needs less privilege than raw ICMP).
-    if shutil.which("ping"):
+    ping_bin = find_ping_cmd()
+    if ping_bin:
         try:
-            return await asyncio.to_thread(_system_ping, host, resolved, count, timeout)
+            return await asyncio.to_thread(_system_ping, host, resolved, count, timeout, ping_bin)
         except Exception as exc:
             LOGGER.info("system ping failed (%s); trying UDP echo probe", exc)
 
@@ -358,14 +403,14 @@ def _demo_ping(host: str, count: int) -> PingResult:
     )
 
 
-def _system_ping(host: str, resolved: str, count: int, timeout: float) -> PingResult:
+def _system_ping(
+    host: str, resolved: str, count: int, timeout: float, ping_bin: str | None = None
+) -> PingResult:
     import re
     import subprocess
 
-    # Linux: ping -c N -W timeout_seconds
-    timeout_s = max(1, int(timeout))
     proc = subprocess.run(
-        ["ping", "-c", str(count), "-W", str(timeout_s), host],
+        build_ping_command(host, count, timeout, ping_bin=ping_bin),
         capture_output=True,
         text=True,
         timeout=count * (timeout + 1) + 2,

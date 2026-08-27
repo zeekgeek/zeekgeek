@@ -7,6 +7,9 @@ import asyncio
 import logging
 import signal
 import socket
+import subprocess
+import sys
+import webbrowser
 from contextlib import suppress
 
 import uvicorn
@@ -61,6 +64,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Exit if live traceroute fails instead of switching to demo mode",
     )
     parser.add_argument("--log-level", default="info", choices=["debug", "info", "warning", "error"])
+    parser.add_argument(
+        "--open",
+        action="store_true",
+        help="Open the dashboard in the default browser (used by path_radar.command on macOS)",
+    )
+    parser.add_argument("--no-open", action="store_true", help="Do not open a browser")
     return parser
 
 
@@ -110,6 +119,9 @@ async def run(args: argparse.Namespace) -> None:
     else:
         print("Running live traceroute with GeoIP + RDAP WHOIS; auto demo fallback if unavailable.")
 
+    if args.open and not args.no_open:
+        asyncio.create_task(_open_dashboard(args.host, chosen_port), name="open-browser")
+
     # Fire-and-forget: must not be in the wait set or a finished speed test
     # would tear down the dashboard (asyncio.wait FIRST_COMPLETED).
     if args.speedtest_on_start:
@@ -147,6 +159,27 @@ async def run(args: argparse.Namespace) -> None:
 async def _delayed_speedtest(state: RadarState) -> None:
     await asyncio.sleep(1.5)
     await run_speed_test(state)
+
+
+async def _open_dashboard(host: str, port: int) -> None:
+    url = f"http://{host}:{port}"
+    for _ in range(40):
+        if not _port_is_available(host, port):
+            open_dashboard(url)
+            return
+        await asyncio.sleep(0.15)
+
+
+def open_dashboard(url: str) -> None:
+    """Open a URL in the default browser; prefer macOS ``open`` on Darwin."""
+    if sys.platform == "darwin":
+        subprocess.Popen(
+            ["/usr/bin/open", url],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return
+    webbrowser.open(url)
 
 
 def pick_available_port(host: str, preferred_port: int, max_tries: int = 30) -> int:

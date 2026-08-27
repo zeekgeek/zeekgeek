@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 import re
 import select
@@ -20,6 +21,7 @@ import shutil
 import socket
 import struct
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -47,6 +49,32 @@ HOP_RE = re.compile(
 RTT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*ms")
 IP_TOKEN_RE = re.compile(r"^(?P<ip>(?:\d{1,3}\.){3}\d{1,3}|[0-9a-fA-F:]+)$")
 DEFAULT_PROBES = 5  # enough samples for a meaningful per-cycle loss %
+
+# macOS Sequoia keeps traceroute in /usr/sbin, which Finder-launched apps
+# and slim PATH environments often miss via shutil.which().
+TRACEROUTE_CANDIDATES: tuple[str, ...] = (
+    "traceroute",
+    "traceroute6",
+    "/usr/sbin/traceroute",
+    "/usr/sbin/traceroute6",
+    "/opt/homebrew/sbin/traceroute",
+    "/opt/homebrew/bin/traceroute",
+    "/usr/local/sbin/traceroute",
+    "/usr/local/bin/traceroute",
+)
+
+
+def find_traceroute_cmd(candidates: Sequence[str] | None = None) -> str | None:
+    """Return the first executable traceroute binary, including macOS /usr/sbin."""
+    for name in candidates or TRACEROUTE_CANDIDATES:
+        if os.path.sep in name:
+            if os.path.isfile(name) and os.access(name, os.X_OK):
+                return name
+            continue
+        path = shutil.which(name)
+        if path:
+            return path
+    return None
 
 
 class TracerBackend(Protocol):
@@ -431,7 +459,7 @@ class LiveTracerBackend:
         await self.state.set_origin(origin)
 
         mode = "system"
-        if self._find_traceroute_cmd() or shutil.which("tracepath"):
+        if self._find_traceroute_cmd() or shutil.which("tracepath") or os.path.isfile("/usr/bin/tracepath"):
             await self.state.add_system_event("tracer-live", "Live traceroute backend started (system binary)")
         else:
             # Prove the Python UDP path works before committing to the live loop.
@@ -551,11 +579,7 @@ class LiveTracerBackend:
         )
 
     def _find_traceroute_cmd(self) -> str | None:
-        for name in ("traceroute", "traceroute6"):
-            path = shutil.which(name)
-            if path:
-                return path
-        return None
+        return find_traceroute_cmd()
 
 
 @dataclass

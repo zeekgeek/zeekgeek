@@ -338,7 +338,25 @@ a **full-bleed force-directed path graph**, and a **modest 3D hop display**
 **TCP port scan**, and **ping** sit in the side tools. Slow hops are scored by
 *introduced* latency (the delta vs the previous hop), not inherited RTT.
 
-## Quick start
+## Quick start (macOS Sequoia)
+
+Double-click **`path_radar.command`** in Finder. It installs FastAPI if needed,
+opens the dashboard in your browser, and uses live `/usr/sbin/traceroute`
+(demo mode if probes fail). Leave the Terminal window open; Ctrl+C quits.
+
+```bash
+chmod +x path_radar.command path_radar.py
+./path_radar.command
+./path_radar.command --demo
+python3 path_radar.py --open
+```
+
+Needs **Python 3.11+**. Sequoia's system `/usr/bin/python3` is often 3.9 —
+install current Python with `brew install python` or from python.org.
+If Gatekeeper blocks the `.command`: Right-click → Open, or
+`xattr -d com.apple.quarantine path_radar.command`.
+
+## Quick start (any OS)
 
 ```bash
 source .venv/bin/activate
@@ -381,6 +399,7 @@ python3 -m trace_radar --host 127.0.0.1 --port 8800 --probes 5 --demo
 - `--interval`: seconds between re-traces (default `45` live / `3` demo)
 - `--probes`: probes per hop for packet-loss percentage (default `5`)
 - `--speedtest-on-start`: run a speed test after the dashboard binds
+- `--open`: open the dashboard in the default browser (macOS `path_radar.command` does this)
 - `--no-auto-demo-fallback` / `--host` / `--port` / `--log-level`
 
 ## API
