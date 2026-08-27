@@ -306,6 +306,36 @@ class WebRouteTests(unittest.TestCase):
         self.assertIn(("/api/events", ("GET",)), paths)
         self.assertIn(("/api/sensitivity", ("POST",)), paths)
 
+    def test_stream_snapshot_is_smaller_than_full(self) -> None:
+        asyncio.run(self._stream_size_flow())
+
+    async def _stream_size_flow(self) -> None:
+        state = RadarState(stale_after=30, min_baseline_samples=1, cycle_seconds=60)
+        now = datetime.now(UTC)
+        await state.ingest_cycle(
+            [
+                JetObservation(
+                    hex_id=f"ad{i:04d}",
+                    callsign=f"N{i:04d}",
+                    lat=40.0 + i * 0.01,
+                    lon=-74.0,
+                    altitude_ft=40000,
+                    observed_at=now,
+                )
+                for i in range(40)
+            ]
+        )
+        full = await state.snapshot(stream=False)
+        stream = await state.snapshot(stream=True)
+        self.assertEqual(len(stream["jets"]), len(full["jets"]))
+        self.assertNotIn("altitude_history", stream["jets"][0])
+        self.assertIn("altitude_history", full["jets"][0])
+        self.assertFalse(stream["data_is_live"])
+        await state.set_scan_status(mode="live", awaiting_first_poll=False)
+        live = await state.snapshot(stream=True)
+        self.assertTrue(live["data_is_live"])
+        self.assertEqual(live["feed_source"], "adsb.lol")
+
 
 if __name__ == "__main__":
     unittest.main()

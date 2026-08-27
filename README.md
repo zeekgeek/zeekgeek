@@ -319,7 +319,8 @@ python3 -m jet_radar --host 127.0.0.1 --port 8790 --sigma 3 --trigger-threshold 
 - `--trigger-threshold`: triggers in the recent window needed to alarm
 - `--baseline-samples`: poll cycles before anomaly scoring starts
 - `--center` / `--radius-nm`: optional regional filter
-- `--no-auto-demo-fallback` / `--host` / `--port` / `--log-level`
+- `--allow-demo-fallback`: opt in to simulated data if live ADS-B fails (live-only by default)
+- `--host` / `--port` / `--log-level`
 
 ## API
 

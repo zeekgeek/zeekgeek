@@ -21,7 +21,7 @@ LOGGER = logging.getLogger(__name__)
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Private jet movement radar with strange-event alarm")
-    parser.add_argument("--host", default="127.0.0.1", help="Dashboard host")
+    parser.add_argument("--host", default="0.0.0.0", help="Dashboard bind address (0.0.0.0 for browser access)")
     parser.add_argument("--port", type=int, default=8790, help="Dashboard port")
     parser.add_argument("--demo", action="store_true", help="Simulate jet traffic instead of polling live ADS-B")
     parser.add_argument("--poll-interval", type=float, default=60.0, help="Seconds between live ADS-B polls")
@@ -47,9 +47,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--center", default=None, help="Optional 'lat,lon' to watch a region instead of the whole feed")
     parser.add_argument("--radius-nm", type=float, default=250.0, help="Region radius in nautical miles when --center is set")
     parser.add_argument(
-        "--no-auto-demo-fallback",
+        "--allow-demo-fallback",
         action="store_true",
-        help="Exit if the live ADS-B feed fails instead of switching to demo mode",
+        help="If live ADS-B fails, switch to simulated demo data (off by default — live only)",
     )
     parser.add_argument("--log-level", default="info", choices=["debug", "info", "warning", "error"])
     return parser
@@ -90,10 +90,10 @@ async def run(args: argparse.Namespace) -> None:
     )
     app = create_app(state)
     scanner_task = asyncio.create_task(
-        _run_scanner(
+        _run_scanner_loop(
             state=state,
             force_demo=args.demo,
-            auto_demo_fallback=not args.no_auto_demo_fallback,
+            auto_demo_fallback=args.allow_demo_fallback,
             poll_interval=args.poll_interval,
             center=parse_center(args.center),
             radius_nm=args.radius_nm,
@@ -101,13 +101,15 @@ async def run(args: argparse.Namespace) -> None:
         name="jet-scanner",
     )
 
-    chosen_port = pick_available_port(args.host, args.port)
+    bind_host = args.host
+    display_host = "127.0.0.1" if bind_host in {"0.0.0.0", "::"} else bind_host
+    chosen_port = pick_available_port(bind_host, args.port)
     if chosen_port != args.port:
         message = f"Port {args.port} is busy; using port {chosen_port} instead."
         print(message)
         await state.add_system_event("port-reassigned", message)
 
-    config = uvicorn.Config(app, host=args.host, port=chosen_port, log_level=args.log_level)
+    config = uvicorn.Config(app, host=bind_host, port=chosen_port, log_level=args.log_level)
     server = uvicorn.Server(config)
     server_task = asyncio.create_task(server.serve(), name="dashboard-server")
 
@@ -118,14 +120,16 @@ async def run(args: argparse.Namespace) -> None:
         with suppress(NotImplementedError):
             loop.add_signal_handler(sig, stop_event.set)
 
-    print(f"Jet radar dashboard: http://{args.host}:{chosen_port}")
+    print(f"Jet radar dashboard: http://{display_host}:{chosen_port}")
+    if bind_host in {"0.0.0.0", "::"}:
+        print(f"Listening on all interfaces (bound to {bind_host}:{chosen_port}).")
     if args.demo:
-        print("Running in demo mode: scramble, Hawaii quiet, tanker rendezvous, and surge scenario.")
+        print("Running in demo mode with simulated jet traffic.")
     else:
-        print("Polling live ADS-B data from adsb.lol with automatic demo fallback if unavailable.")
+        print("Live-only mode: polling ADS-B from adsb.lol (no demo fallback).")
 
     done, pending = await asyncio.wait(
-        {scanner_task, server_task, stop_task},
+        {server_task, stop_task},
         return_when=asyncio.FIRST_COMPLETED,
     )
 
@@ -135,12 +139,13 @@ async def run(args: argparse.Namespace) -> None:
             continue
         exception = task.exception()
         if exception is not None:
-            if task is server_task and isinstance(exception, SystemExit):
-                failure = RuntimeError(f"Dashboard failed to start on {args.host}:{chosen_port}.")
+            if isinstance(exception, SystemExit):
+                failure = RuntimeError(f"Dashboard failed to start on {bind_host}:{chosen_port}.")
             else:
                 failure = exception
 
     server.should_exit = True
+    scanner_task.cancel()
     remaining: list[asyncio.Task] = []
     for task in pending:
         if task is server_task:
@@ -148,7 +153,7 @@ async def run(args: argparse.Namespace) -> None:
             continue
         task.cancel()
         remaining.append(task)
-    await asyncio.gather(*remaining, return_exceptions=True)
+    await asyncio.gather(scanner_task, *remaining, return_exceptions=True)
     if failure is not None:
         raise failure
 
@@ -171,6 +176,34 @@ def _port_is_available(host: str, port: int) -> bool:
             return False
 
 
+async def _run_scanner_loop(
+    *,
+    state: RadarState,
+    force_demo: bool,
+    auto_demo_fallback: bool,
+    poll_interval: float,
+    center: tuple[float, float] | None,
+    radius_nm: float,
+) -> None:
+    """Keep the scanner running; restart after unexpected exits."""
+    while True:
+        try:
+            await _run_scanner(
+                state=state,
+                force_demo=force_demo,
+                auto_demo_fallback=auto_demo_fallback,
+                poll_interval=poll_interval,
+                center=center,
+                radius_nm=radius_nm,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            LOGGER.exception("Scanner loop error: %s", exc)
+            await state.add_system_event("scanner-restart", f"Scanner restarting after error: {exc}")
+            await asyncio.sleep(5)
+
+
 async def _run_scanner(
     *,
     state: RadarState,
@@ -181,9 +214,11 @@ async def _run_scanner(
     radius_nm: float,
 ) -> None:
     if force_demo:
+        await state.set_scan_status(mode="demo", awaiting_first_poll=True)
         await DemoScannerBackend(state).run()
         return
 
+    await state.set_scan_status(mode="live", awaiting_first_poll=True)
     try:
         await AdsbLolBackend(
             state,
@@ -198,6 +233,7 @@ async def _run_scanner(
         if not auto_demo_fallback:
             raise
         print(message)
+        await state.set_scan_status(mode="demo", awaiting_first_poll=True)
         await DemoScannerBackend(state).run()
 
 
