@@ -268,12 +268,34 @@ class LiveStateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snap["probe_count"], 1)
         ips = {node.get("ip") for node in snap["graph"]["nodes"]}
         self.assertIn("1.1.1.1", ips)
-        self.assertIn("8.8.8.8", ips)
-        google = next(node for node in snap["graph"]["nodes"] if node.get("ip") == "8.8.8.8")
-        self.assertEqual(google["label"], "dns.google")
-        self.assertIn("as15169", google["search"])
+        self.assertNotIn("8.8.8.8", ips)
+        ids = {node["id"] for node in snap["graph"]["nodes"]}
+        self.assertIn("slot:2", ids)
         cloudflare = next(node for node in snap["graph"]["nodes"] if node.get("ip") == "1.1.1.1")
         self.assertIn("anycast", cloudflare["search"])
+
+    async def test_live_graph_keeps_stable_slots_when_ip_changes(self) -> None:
+        state = PathState(mode="live")
+        await state.set_target("1.1.1.1")
+        await state.ingest_live(
+            [
+                {"hop": 1, "ip": "10.1.3.17", "hostname": None, "rtts": [1.0], "timed_out": False},
+                {"hop": 2, "ip": "52.46.166.113", "hostname": None, "rtts": [2.0], "timed_out": False},
+            ],
+            target="1.1.1.1",
+        )
+        await state.ingest_live(
+            [
+                {"hop": 1, "ip": "10.1.3.17", "hostname": None, "rtts": [1.1], "timed_out": False},
+                {"hop": 2, "ip": "52.46.166.151", "hostname": None, "rtts": [2.1], "timed_out": False},
+            ],
+            target="1.1.1.1",
+        )
+        snap = await state.snapshot()
+        wan_ids = [node["id"] for node in snap["graph"]["nodes"] if str(node["id"]).startswith("slot:")]
+        self.assertEqual(wan_ids, ["slot:1", "slot:2"])
+        hop2 = next(node for node in snap["graph"]["nodes"] if node["id"] == "slot:2")
+        self.assertEqual(hop2["ip"], "52.46.166.151")
 
     def test_lan_discovery_returns_this_host(self) -> None:
         ip = local_ipv4()
@@ -404,7 +426,7 @@ class AppTests(unittest.TestCase):
             "Problem router",
             "Latency over time",
             "Country",
-            "fittedWan",
+            "layoutPinned",
         ):
             self.assertIn(needle, DASHBOARD_HTML)
 

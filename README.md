@@ -385,7 +385,7 @@ python3 -m path_radar --host 127.0.0.1 --port 8800 --target 1.1.1.1 --interval 1
 - (default) live ICMP TTL traceroute + Team Cymru / RIPE + ARP LAN
 - `--demo`: simulated LAN + Comcast / Cogent / Google paths
 - `--target`: host or IP to highlight as the active trace
-- `--companions`: extra live targets to keep on the graph (default `8.8.8.8,1.1.1.1`); they do not replace the hop-chain HUD
+- `--companions`: optional extra live targets to probe in the background (off the map)
 - `--no-companions`: trace only `--target`
 - `--interval`: seconds between probes
 - `--max-hops`: max TTL for live traceroute (default 20)

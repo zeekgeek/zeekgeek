@@ -251,7 +251,7 @@ class LiveTraceBackend:
         self,
         state,
         interval: float = 1.0,
-        companions: tuple[str, ...] = ("8.8.8.8", "1.1.1.1"),
+        companions: tuple[str, ...] = (),
         max_hops: int = 20,
     ) -> None:
         self.state = state

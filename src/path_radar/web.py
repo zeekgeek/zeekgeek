@@ -43,12 +43,12 @@ def create_app(state: PathState) -> FastAPI:
 async def _event_stream(state: PathState) -> AsyncIterator[str]:
     last_payload = ""
     while True:
-        snapshot = await state.snapshot()
-        payload = json.dumps(snapshot)
+        snapshot = await state.snapshot(lite=True)
+        payload = json.dumps(snapshot, separators=(",", ":"))
         if payload != last_payload:
             yield f"data: {payload}\n\n"
             last_payload = payload
-        await asyncio.sleep(0.7)
+        await asyncio.sleep(1.2)
 
 
 DASHBOARD_HTML = r"""<!doctype html>
@@ -79,7 +79,7 @@ DASHBOARD_HTML = r"""<!doctype html>
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink); font-family: var(--font); }
-    #graph { position: fixed; inset: 0; width: 100%; height: 100%; display: block; z-index: 0; cursor: grab; }
+    #graph { position: fixed; inset: 0; width: 100%; height: 100%; display: block; z-index: 0; cursor: grab; contain: strict; }
     #graph.drag { cursor: grabbing; }
     .vignette {
       position: fixed; inset: 0; z-index: 1; pointer-events: none;
@@ -290,6 +290,8 @@ DASHBOARD_HTML = r"""<!doctype html>
     ix: "#3ee0d4", anycast: "#9dffce", dns: "#e8f07a"
   };
   const HEALTH = { ok: "#3ee0d4", warn: "#ffb020", slow: "#ff5d7a", loss: "#ff5d7a", timeout: "#6b7280", filtered: "#64748b" };
+  const FONT = "ui-sans-serif, system-ui, sans-serif";
+  const MONO = "ui-monospace, SF Mono, Menlo, Consolas, monospace";
 
   let W = 0, H = 0, dpr = 1;
   let nodes = [];
@@ -299,12 +301,36 @@ DASHBOARD_HTML = r"""<!doctype html>
   let selected = null;
   let hover = null;
   let query = "";
-  let frozen = false;
-  let alpha = 1;
-  let didFit = false;
-  let fittedWan = false;
+  let frozen = true;
+  let layoutKey = "";
+  let hopDomKey = "";
+  let raf = 0;
+  let needDraw = true;
   const T = { x: 0, y: 0, k: 1 };
   const mouse = { x: 0, y: 0, down: false, pan: false, drag: null, lx: 0, ly: 0 };
+
+  freezeBtn.classList.add("on");
+  freezeBtn.textContent = "Frozen";
+
+  function requestDraw() {
+    needDraw = true;
+    if (raf) return;
+    raf = requestAnimationFrame(loop);
+  }
+
+  function loop() {
+    raf = 0;
+    if (!needDraw && !mouse.drag && !mouse.pan) return;
+    needDraw = false;
+    const ready = W > 2;
+    resize();
+    if (!ready && W > 2 && nodes.length) {
+      layoutPinned();
+      fit();
+    }
+    draw();
+    if (mouse.drag || mouse.pan) requestDraw();
+  }
 
   function resize() {
     dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -336,34 +362,51 @@ DASHBOARD_HTML = r"""<!doctype html>
     return 12;
   }
 
+  function pin(n, x, y) {
+    n.x = n.fx = x;
+    n.y = n.fy = y;
+    n.vx = 0;
+    n.vy = 0;
+  }
+
+  function layoutPinned() {
+    const col = 120;
+    const you = nodes.find((n) => n.id === "lan:you");
+    const gw = nodes.find((n) => n.id === "lan:gw");
+    const extras = nodes.filter((n) => String(n.id || "").startsWith("lan:") && n.id !== "lan:you" && n.id !== "lan:gw");
+    const wan = nodes.filter((n) => !String(n.id || "").startsWith("lan:"));
+    const byHop = new Map();
+    wan.forEach((n) => {
+      const hop = n.hop || n.slot || 0;
+      if (!byHop.has(hop)) byHop.set(hop, []);
+      byHop.get(hop).push(n);
+    });
+    const hopNums = Array.from(byHop.keys()).sort((a, b) => a - b);
+    let x = 0;
+    if (you) { pin(you, x, 0); x += col; }
+    if (gw) { pin(gw, x, 0); x += col; }
+    hopNums.forEach((hop) => {
+      const group = byHop.get(hop).sort((a, b) => Number(b.active) - Number(a.active));
+      group.forEach((n, row) => pin(n, x, row * 92));
+      x += col;
+    });
+    extras.forEach((n, i) => pin(n, (i + 1) * col, 92));
+  }
+
   function mergeGraph(graph) {
     const prev = new Map(nodes.map((n) => [n.id, n]));
-    const cx = (W || 800) * 0.42;
-    const cy = (H || 600) * 0.42;
-    nodes = (graph.nodes || []).map((raw, i) => {
+    const incoming = graph.nodes || [];
+    const key = incoming.map((n) => n.id).join("|");
+    nodes = incoming.map((raw) => {
       const old = prev.get(raw.id);
-      const layer = raw.layer == null ? 3 : raw.layer;
-      const tx = 80 + layer * 150;
-      const ty = cy + (hash(raw.id) % 80) - 40;
       if (old) {
+        const x = old.x, y = old.y, fx = old.fx, fy = old.fy;
         Object.assign(old, raw);
         old.r = radius(old);
-        old.tx = tx;
-        old.ty = ty;
+        old.x = x; old.y = y; old.fx = fx; old.fy = fy;
         return old;
       }
-      return {
-        ...raw,
-        x: tx + ((hash(raw.id) % 30) - 15),
-        y: ty,
-        vx: 0,
-        vy: 0,
-        fx: null,
-        fy: null,
-        r: radius(raw),
-        tx,
-        ty
-      };
+      return { ...raw, x: 0, y: 0, vx: 0, vy: 0, fx: 0, fy: 0, r: radius(raw) };
     });
     const byId = new Map(nodes.map((n) => [n.id, n]));
     links = (graph.links || []).map((l) => ({
@@ -371,65 +414,10 @@ DASHBOARD_HTML = r"""<!doctype html>
       s: byId.get(l.source),
       t: byId.get(l.target)
     })).filter((l) => l.s && l.t);
-    if (!didFit && nodes.length) {
-      for (let i = 0; i < 40; i++) tick(0.4);
+    if (key !== layoutKey) {
+      layoutPinned();
       fit();
-      didFit = true;
-    }
-    const hasWan = nodes.some((n) => String(n.id || "").startsWith("net:"));
-    if (hasWan && !fittedWan && !mouse.drag) {
-      for (let i = 0; i < 36; i++) tick(0.35);
-      fit();
-      fittedWan = true;
-    }
-  }
-
-  function hash(s) {
-    let h = 0;
-    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-    return Math.abs(h);
-  }
-
-  function tick(a) {
-    const n = nodes.length;
-    const charge = 520;
-    for (let i = 0; i < n; i++) {
-      const A = nodes[i];
-      for (let j = i + 1; j < n; j++) {
-        const B = nodes[j];
-        let dx = B.x - A.x, dy = B.y - A.y;
-        let d2 = dx * dx + dy * dy || 1;
-        const f = (charge * a) / d2;
-        const dist = Math.sqrt(d2);
-        dx /= dist; dy /= dist;
-        if (A.fx == null) { A.vx -= dx * f; A.vy -= dy * f; }
-        if (B.fx == null) { B.vx += dx * f; B.vy += dy * f; }
-      }
-    }
-    for (const l of links) {
-      const s = l.s, t = l.t;
-      let dx = t.x - s.x, dy = t.y - s.y;
-      const dist = Math.hypot(dx, dy) || 1;
-      const desired = l.kind === "lan" ? 70 : 96;
-      const k = ((dist - desired) / dist) * 0.08 * a;
-      dx *= k; dy *= k;
-      if (s.fx == null) { s.vx += dx; s.vy += dy; }
-      if (t.fx == null) { t.vx -= dx; t.vy -= dy; }
-    }
-    for (const node of nodes) {
-      node.vx += (node.tx - node.x) * 0.045 * a;
-      node.vy += (node.ty - node.y) * 0.02 * a;
-      if (node.fx == null) {
-        node.vx *= 0.72;
-        node.vy *= 0.72;
-        node.x += node.vx;
-        node.y += node.vy;
-      } else {
-        node.x = node.fx;
-        node.y = node.fy;
-        node.vx = 0;
-        node.vy = 0;
-      }
+      layoutKey = key;
     }
   }
 
@@ -442,10 +430,11 @@ DASHBOARD_HTML = r"""<!doctype html>
     }
     const bw = Math.max(80, maxX - minX);
     const bh = Math.max(80, maxY - minY);
-    const k = Math.min((W - 420) / bw, (H - 320) / bh, 1.45);
-    T.k = Math.max(0.35, k);
+    const k = Math.min((W - 440) / bw, (H - 340) / bh, 1.35);
+    T.k = Math.max(0.4, k);
     T.x = W * 0.52 - ((minX + maxX) / 2) * T.k;
     T.y = H * 0.42 - ((minY + maxY) / 2) * T.k;
+    requestDraw();
   }
 
   function hit(sx, sy) {
@@ -458,7 +447,7 @@ DASHBOARD_HTML = r"""<!doctype html>
     return null;
   }
 
-  function draw(now) {
+  function draw() {
     ctx.fillStyle = "#05070d";
     ctx.fillRect(0, 0, W, H);
     drawGrid();
@@ -473,30 +462,30 @@ DASHBOARD_HTML = r"""<!doctype html>
       const [x2, y2] = toScreen(l.t.x, l.t.y);
       const dim = q && !(l.s._match && l.t._match);
       const health = l.health || "ok";
-      ctx.globalAlpha = dim ? 0.08 : (l.active === false ? 0.28 : 0.85);
+      ctx.globalAlpha = dim ? 0.08 : (l.active === false ? 0.22 : 0.9);
       ctx.strokeStyle = HEALTH[health] || "#5aa8ff";
-      ctx.lineWidth = (l.problem ? 2.6 : 1.4) * Math.min(T.k, 1.6);
+      ctx.lineWidth = (l.problem ? 2.6 : 1.6) * Math.min(T.k, 1.6);
       ctx.beginPath();
       ctx.moveTo(x1, y1);
       ctx.lineTo(x2, y2);
       ctx.stroke();
-      if (!dim && T.k > 0.7 && l.label) {
+      if (!dim && T.k > 0.75 && l.label && l.active !== false) {
         const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
         ctx.globalAlpha = 0.9;
-        ctx.font = "10px ui-monospace, SF Mono, Menlo, monospace";
+        ctx.font = "10px " + MONO;
         ctx.fillStyle = health === "slow" ? "#ffb4c0" : "#9aa6c2";
         ctx.textAlign = "center";
-        ctx.fillText(l.label, mx, my - 4);
+        ctx.fillText(l.label, mx, my - 5);
       }
     }
     ctx.globalAlpha = 1;
-    for (const n of nodes) drawNode(n, now);
+    for (const n of nodes) drawNode(n);
     ctx.globalAlpha = 1;
   }
 
   function drawGrid() {
     const step = 48;
-    ctx.strokeStyle = "rgba(255,255,255,0.035)";
+    ctx.strokeStyle = "rgba(255,255,255,0.03)";
     ctx.lineWidth = 1;
     ctx.beginPath();
     for (let x = (T.x % step); x < W; x += step) { ctx.moveTo(x, 0); ctx.lineTo(x, H); }
@@ -504,15 +493,14 @@ DASHBOARD_HTML = r"""<!doctype html>
     ctx.stroke();
   }
 
-  function drawNode(n, now) {
+  function drawNode(n) {
     const [sx, sy] = toScreen(n.x, n.y);
-    if (sx < -50 || sy < -50 || sx > W + 50 || sy > H + 50) return;
+    if (sx < -60 || sy < -60 || sx > W + 60 || sy > H + 60) return;
     const dim = query && !n._match;
-    ctx.globalAlpha = dim ? 0.12 : (n.active ? 1 : 0.7);
-    const pulse = n.problem ? 1 + 0.1 * Math.sin(now / 180) : 1;
-    const r = n.r * Math.min(T.k, 1.8) * pulse;
+    ctx.globalAlpha = dim ? 0.12 : (n.active === false ? 0.55 : 1);
+    const r = n.r * Math.min(T.k, 1.8);
     const color = n.problem ? "#ff5d7a" : (KIND[n.kind] || "#5aa8ff");
-    if (n.problem || n === selected || (query && n._match)) {
+    if (n.problem || n.id === selected || (query && n._match)) {
       ctx.beginPath();
       ctx.arc(sx, sy, r + 8, 0, Math.PI * 2);
       ctx.fillStyle = n.problem ? "rgba(255,93,122,.18)" : "rgba(62,224,212,.16)";
@@ -522,31 +510,22 @@ DASHBOARD_HTML = r"""<!doctype html>
     ctx.arc(sx, sy, r, 0, Math.PI * 2);
     ctx.fillStyle = color;
     ctx.fill();
-    ctx.lineWidth = n === selected ? 2.4 : 1;
-    ctx.strokeStyle = n === selected ? "#eef3ff" : "rgba(0,0,0,.35)";
+    ctx.lineWidth = n.id === selected ? 2.4 : 1;
+    ctx.strokeStyle = n.id === selected ? "#eef3ff" : "rgba(0,0,0,.35)";
     ctx.stroke();
     ctx.fillStyle = "#041016";
-    ctx.font = "700 9px " + getComputedStyle(document.body).fontFamily;
+    ctx.font = "700 9px " + FONT;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    const mark = n.hop ? String(n.hop) : (n.kind === "host" ? "you" : n.kind.slice(0, 2));
+    const mark = n.hop ? String(n.hop) : (n.kind === "host" ? "you" : String(n.kind || "").slice(0, 2));
     ctx.fillText(mark, sx, sy);
     if (!dim && T.k > 0.55) {
       ctx.fillStyle = "#eef3ff";
-      ctx.font = "11px " + getComputedStyle(document.body).fontFamily;
+      ctx.font = "11px " + FONT;
       ctx.textBaseline = "top";
-      ctx.fillText(n.label || n.ip || "", sx, sy + r + 4);
+      const label = n.label || n.ip || "";
+      ctx.fillText(label.length > 18 ? label.slice(0, 17) + "…" : label, sx, sy + r + 4);
     }
-  }
-
-  function loop(now) {
-    resize();
-    if (!frozen && alpha > 0.002) {
-      tick(alpha);
-      alpha *= 0.988;
-    }
-    draw(now);
-    requestAnimationFrame(loop);
   }
 
   canvas.addEventListener("pointerdown", (e) => {
@@ -559,6 +538,7 @@ DASHBOARD_HTML = r"""<!doctype html>
       n.fx = n.x; n.fy = n.y;
       select(n.id);
       canvas.setPointerCapture(e.pointerId);
+      requestDraw();
     } else {
       mouse.pan = true;
       canvas.classList.add("drag");
@@ -583,21 +563,24 @@ DASHBOARD_HTML = r"""<!doctype html>
     }
     if (mouse.drag) {
       const [wx, wy] = toWorld(e.offsetX, e.offsetY);
-      mouse.drag.fx = wx; mouse.drag.fy = wy;
-      if (!frozen) alpha = Math.max(alpha, 0.25);
+      mouse.drag.x = mouse.drag.fx = wx;
+      mouse.drag.y = mouse.drag.fy = wy;
+      requestDraw();
     } else if (mouse.pan) {
       T.x += e.offsetX - mouse.lx;
       T.y += e.offsetY - mouse.ly;
+      requestDraw();
     }
     mouse.lx = e.offsetX; mouse.ly = e.offsetY;
   });
   canvas.addEventListener("pointerup", () => {
     mouse.down = false; mouse.pan = false; mouse.drag = null;
     canvas.classList.remove("drag");
+    requestDraw();
   });
   canvas.addEventListener("dblclick", (e) => {
     const n = hit(e.offsetX, e.offsetY);
-    if (n) { n.fx = null; n.fy = null; if (!frozen) alpha = 0.6; }
+    if (n) { n.fx = n.x; n.fy = n.y; requestDraw(); }
   });
   canvas.addEventListener("wheel", (e) => {
     e.preventDefault();
@@ -607,20 +590,30 @@ DASHBOARD_HTML = r"""<!doctype html>
     T.k = k;
     T.x = e.offsetX - wx * T.k;
     T.y = e.offsetY - wy * T.k;
+    requestDraw();
   }, { passive: false });
 
-  document.getElementById("reheat").onclick = () => { frozen = false; alpha = 1; freezeBtn.classList.remove("on"); freezeBtn.textContent = "Freeze"; };
+  document.getElementById("reheat").onclick = () => {
+    layoutPinned();
+    fit();
+    freezeBtn.classList.add("on");
+    freezeBtn.textContent = "Frozen";
+    frozen = true;
+  };
   freezeBtn.onclick = () => {
-    frozen = !frozen;
-    if (frozen) { alpha = 0; freezeBtn.classList.add("on"); freezeBtn.textContent = "Frozen"; }
-    else { alpha = 0.8; freezeBtn.classList.remove("on"); freezeBtn.textContent = "Freeze"; }
+    frozen = true;
+    freezeBtn.classList.add("on");
+    freezeBtn.textContent = "Frozen";
+    layoutPinned();
+    fit();
   };
   document.getElementById("fit").onclick = fit;
-  searchEl.addEventListener("input", () => { query = searchEl.value.trim().toLowerCase(); });
+  searchEl.addEventListener("input", () => { query = searchEl.value.trim().toLowerCase(); requestDraw(); });
+  window.addEventListener("resize", () => requestDraw());
   document.addEventListener("keydown", (e) => {
     if (e.key === "/" && document.activeElement.tagName !== "INPUT") { e.preventDefault(); searchEl.focus(); }
-    if (e.key === "Escape") { searchEl.value = ""; query = ""; selected = null; renderInspect(); }
-    if (e.key === "r" && document.activeElement.tagName !== "INPUT") { frozen = false; alpha = 1; }
+    if (e.key === "Escape") { searchEl.value = ""; query = ""; selected = null; renderInspect(); requestDraw(); }
+    if (e.key === "r" && document.activeElement.tagName !== "INPUT") { layoutPinned(); fit(); }
     if (e.key === "f" && document.activeElement.tagName !== "INPUT") freezeBtn.click();
   });
 
@@ -638,10 +631,9 @@ DASHBOARD_HTML = r"""<!doctype html>
 
   function select(id) {
     selected = id;
-    const n = nodes.find((x) => x.id === id);
-    if (n && !frozen) alpha = Math.max(alpha, 0.15);
     renderHops();
     renderInspect();
+    requestDraw();
   }
 
   function esc(s) {
@@ -665,7 +657,24 @@ DASHBOARD_HTML = r"""<!doctype html>
   }
 
   function renderHops() {
-    if (!hops.length) { hopsEl.innerHTML = '<div class="empty">Waiting for traceroute…</div>'; return; }
+    if (!hops.length) { hopsEl.innerHTML = '<div class="empty">Waiting for traceroute…</div>'; hopDomKey = ""; return; }
+    const key = hops.map((h) => h.id + ":" + h.health + ":" + (h.id === selected ? "1" : "0")).join("|");
+    if (key === hopDomKey) {
+      hops.forEach((h) => {
+        const el = hopsEl.querySelector('[data-id="' + CSS.escape(h.id) + '"]');
+        if (!el) return;
+        const b = el.querySelector(".rtt b");
+        const small = el.querySelector(".rtt small");
+        if (b) b.textContent = fmt(h.rtt_ms);
+        if (small) small.textContent = h.added_ms != null ? (h.added_ms >= 1 ? "+" + h.added_ms.toFixed(0) + " ms" : "on path") : "";
+        const meta = el.querySelector(".meta");
+        if (meta) meta.textContent = (h.ip || "*") + (h.provider ? " · " + h.provider : "") + (h.city ? " · " + h.city : "");
+        const name = el.querySelector(".name");
+        if (name) name.textContent = h.hostname || h.ip || "timeout";
+      });
+      return;
+    }
+    hopDomKey = key;
     hopsEl.innerHTML = hops.map((h) => {
       const cls = "hop " + h.health + (h.id === selected ? " sel" : "");
       const added = h.added_ms != null ? (h.added_ms >= 1 ? "+" + h.added_ms.toFixed(0) + " ms" : "on path") : "";
@@ -705,7 +714,7 @@ DASHBOARD_HTML = r"""<!doctype html>
   }
 
   function renderInspect() {
-    const n = nodes.find((x) => x.id === selected) || hops.find((x) => x.id === selected);
+    const n = hops.find((x) => x.id === selected) || nodes.find((x) => x.id === selected);
     if (!n) { inspectEl.innerHTML = '<div class="empty">Click a node or hop.</div>'; return; }
     inspectEl.innerHTML = '<div class="card">' +
       "<h3>" + esc(n.hostname || n.label || n.ip) + "</h3>" +
@@ -777,6 +786,7 @@ DASHBOARD_HTML = r"""<!doctype html>
     if (!selected && data.problem_router) selected = data.problem_router.node_id;
     renderInspect();
     drawHeat(data.heatmap);
+    requestDraw();
   }
 
   async function boot() {
@@ -795,7 +805,6 @@ DASHBOARD_HTML = r"""<!doctype html>
     }
   }
 
-  requestAnimationFrame(loop);
   boot();
 })();
 </script>
