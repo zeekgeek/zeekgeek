@@ -32,8 +32,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--interval", type=float, default=1.0, help="Seconds between probes")
     parser.add_argument(
         "--companions",
-        default="8.8.8.8,1.1.1.1",
-        help="Comma-separated extra live targets to keep on the graph (default: 8.8.8.8,1.1.1.1)",
+        default="",
+        help="Comma-separated extra live targets to probe in the background (off the map)",
     )
     parser.add_argument("--no-companions", action="store_true", help="Trace only --target, not companion hosts")
     parser.add_argument("--max-hops", type=int, default=20, help="Max TTL / hop count for live traceroute")

@@ -137,6 +137,16 @@ class PathState:
             demo_lan=self.mode == "demo",
         )
 
+    def _graph_id(self, ip: str | None, hop: int | None) -> str:
+        """Stable map identity. Live hops keep a slot so changing IPs do not spawn nodes."""
+        if self.mode == "live":
+            if ip and self.local_ips and ip in self.local_ips:
+                return "lan:you"
+            if ip and self.gateway_ip and ip == self.gateway_ip:
+                return "lan:gw"
+            return f"slot:{int(hop or 0)}"
+        return self._nid(ip, hop)
+
     def _lan(self):
         if self.mode == "live":
             return self.lan_devices
@@ -224,11 +234,11 @@ class PathState:
 
     async def ingest_live(self, hops: list[dict[str, Any]], *, target: str, source: str = "live") -> None:
         async with self._lock:
+            if self.mode == "live" and target != self.target:
+                return
             self.source = source
             self.updated_at = utc_now()
-            # Companion traces merge into the graph but must not steal the HUD target.
-            if target == self.target:
-                self.probe_count += 1
+            self.probe_count += 1
             path: list[dict[str, Any]] = []
             for hop in hops:
                 ip = hop.get("ip")
@@ -254,6 +264,10 @@ class PathState:
                     }
                 )
             self.paths[target] = path
+            if self.mode == "live":
+                for name in list(self.paths):
+                    if name != self.target:
+                        del self.paths[name]
             self._recompute_locked()
 
     def _recompute_locked(self) -> None:
@@ -291,7 +305,7 @@ class PathState:
         stats = track.snapshot() if track else summarize([]).as_dict()
         template: HopTemplate | None = track.template if track else None
         extra = track.extra() if track else enrich_dict(item.ip, template.asn if template else None)
-        node_id = self._nid(item.ip, item.hop) if item.ip else f"hop:{self.target}:{item.hop}"
+        node_id = self._graph_id(item.ip, item.hop)
         return {
             "hop": item.hop,
             "id": node_id,
@@ -363,7 +377,8 @@ class PathState:
                     {"source": "lan:gw", "target": device.id, "label": "LAN", "ms": None, "health": "ok", "kind": "lan"}
                 )
 
-        for target, path in self.paths.items():
+        graph_paths = self._graph_paths()
+        for target, path in graph_paths.items():
             readings: list[HopReading] = []
             for item in path:
                 ip = item.get("ip")
@@ -387,7 +402,10 @@ class PathState:
             for item, classified in zip(path, classified_path, strict=False):
                 ip = item.get("ip")
                 template: HopTemplate | None = item.get("template")
-                node_id = self._nid(ip, item["hop"]) if ip else f"hop:{target}:{item['hop']}"
+                node_id = self._graph_id(ip, item["hop"])
+                if node_id in {"lan:you", "lan:gw"}:
+                    previous_id = node_id
+                    continue
                 track = self.tracks.get(ip) if ip else None
                 extra = track.extra() if track else enrich_dict(ip, template.asn if template else None)
                 health = classified.health
@@ -420,8 +438,10 @@ class PathState:
                     "kind": (track.role if track and track.role else None)
                     or (template.role if template else None)
                     or "transit",
-                    "layer": template.layer if template else 5,
+                    "layer": int(item["hop"]),
                     "hop": item["hop"],
+                    "slot": int(item["hop"]),
+                    "row": 0 if is_active else 1,
                     "rtt_ms": _round(rtt),
                     "added_ms": _round(added),
                     "loss_pct": _round(stats.loss_pct, 1) if stats else 0.0,
@@ -437,11 +457,6 @@ class PathState:
                     "active": is_active or (ip in active_ips),
                     "search": search,
                     "notes": (track.notes if track else None) or (template.notes if template else None),
-                    "provider_detail": extra.get("provider_detail"),
-                    "min_ms": stats.min_ms if stats else None,
-                    "avg_ms": stats.avg_ms if stats else None,
-                    "max_ms": stats.max_ms if stats else None,
-                    "jitter_ms": stats.jitter_ms if stats else None,
                     "reason": classified.reason,
                 }
                 existing = nodes.get(node_id)
@@ -462,14 +477,11 @@ class PathState:
                             "country": payload["country"] or existing.get("country"),
                             "facility": payload["facility"] or existing.get("facility"),
                             "notes": payload["notes"] or existing.get("notes"),
-                            "provider_detail": payload["provider_detail"] or existing.get("provider_detail"),
                             "reason": payload["reason"] or existing.get("reason"),
-                            "min_ms": payload["min_ms"],
-                            "avg_ms": payload["avg_ms"],
-                            "max_ms": payload["max_ms"],
-                            "jitter_ms": payload["jitter_ms"],
                             "search": f"{existing.get('search', '')} {search}".strip(),
                             "hop": payload["hop"] or existing.get("hop"),
+                            "slot": payload.get("slot") or existing.get("slot"),
+                            "row": payload.get("row") if payload.get("active") else existing.get("row"),
                         }
                     )
                 else:
@@ -565,6 +577,7 @@ class PathState:
             detail = provider.as_dict() if provider else None
         return {
             **top,
+            "node_id": hop.get("id") or top.get("node_id"),
             "label": hop.get("label"),
             "hostname": hop.get("hostname"),
             "city": hop.get("city"),
@@ -577,8 +590,25 @@ class PathState:
             "provider_detail": detail,
         }
 
-    async def snapshot(self) -> dict[str, Any]:
+    def _graph_paths(self) -> dict[str, list[dict[str, Any]]]:
+        if self.mode == "live":
+            path = self.paths.get(self.target)
+            return {self.target: path} if path else {}
+        return self.paths
+
+    async def snapshot(self, *, lite: bool = False) -> dict[str, Any]:
         async with self._lock:
+            hops = list(self._cached_hops)
+            graph = self._cached_graph
+            events = list(self.events)
+            heatmap = self._heatmap()
+            if lite:
+                hops = [_lite_hop(hop) for hop in hops]
+                graph = {
+                    "nodes": [_lite_node(node) for node in graph.get("nodes") or []],
+                    "links": graph.get("links") or [],
+                }
+                events = events[:8]
             return {
                 "updated_at": iso_time(self.updated_at),
                 "source": self.source,
@@ -588,11 +618,11 @@ class PathState:
                 "background_targets": list(self.paths.keys()) if self.mode == "live" else list(BACKGROUND_TARGETS),
                 "mode": self.mode,
                 "quality": self._quality(),
-                "hops": list(self._cached_hops),
+                "hops": hops,
                 "problems": list(self._cached_problems),
                 "problem_router": self._problem_provider(),
-                "graph": self._cached_graph,
-                "heatmap": self._heatmap(),
+                "graph": graph,
+                "heatmap": heatmap,
                 "lan": [
                     {
                         "id": device.id,
@@ -603,8 +633,20 @@ class PathState:
                     }
                     for device in self._lan()
                 ],
-                "events": list(self.events),
+                "events": events,
             }
+
+
+def _lite_hop(hop: dict[str, Any]) -> dict[str, Any]:
+    slim = dict(hop)
+    slim.pop("provider_detail", None)
+    history = slim.get("history") or []
+    slim["history"] = history[-24:]
+    return slim
+
+
+def _lite_node(node: dict[str, Any]) -> dict[str, Any]:
+    return {key: node[key] for key in node if key not in {"provider_detail", "notes"}}
 
 
 def _current(track: HopTrack | None) -> float | None:
