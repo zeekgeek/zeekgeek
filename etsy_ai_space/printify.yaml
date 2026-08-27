@@ -1,0 +1,43 @@
+# Printify workflow config — create drafts, NEVER auto-publish.
+# Requires PRINTIFY_API_TOKEN in the environment.
+# Discover IDs with: python3 -m etsy_ai_space printify discover
+
+# Your Printify shop id (from discover shops, or the Printify dashboard URL)
+shop_id: null
+
+# Comfort Colors 1717 Unisex Garment-Dyed Heavyweight T-Shirt (common id; verify with discover)
+blueprint_id: 706
+
+# Set after: python3 -m etsy_ai_space printify discover --providers
+print_provider_id: null
+
+# Retail price in cents (2699 = $26.99)
+default_price_cents: 2699
+
+# Colors to enable (matched against Printify variant option titles)
+enabled_colors:
+  - Black
+  - Pepper
+  - Charcoal
+  - Navy
+
+# Sizes to enable
+enabled_sizes:
+  - S
+  - M
+  - L
+  - XL
+  - 2XL
+
+# Print placement on front
+print_position: front
+print_scale: 1.0
+print_x: 0.5
+print_y: 0.45
+
+# Safety — workflow never calls Publish
+auto_publish: false
+
+# How long `printify wait` polls before exiting (seconds); 0 = until all submitted
+wait_timeout_seconds: 0
+wait_poll_seconds: 30
