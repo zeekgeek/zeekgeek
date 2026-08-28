@@ -407,6 +407,76 @@ The app auto-selects the next free port if `--port` is busy.
 
 ---
 
+# Crypto Market Radar
+
+A market-wide dashboard: **cryptos across the board**, a handful of **stock /
+index bellwethers**, and a composite **market-health score** with a risk-off
+alarm.
+
+- 12 major cryptos (BTC, ETH, SOL, XRP, BNB, ADA, DOGE, AVAX, DOT, LINK, LTC, TRX)
+  with price, 24h change, market cap, and a session sparkline per coin
+- stock bellwethers (SPY, QQQ, DIA, NVDA, AAPL, COIN, MSTR) to read overall
+  market health next to crypto
+- global stats: total crypto market cap, **BTC dominance**, crypto **Fear & Greed**
+- a 0–100 **market health score** blending breadth (% of assets up), crypto 24h
+  momentum, stock momentum, and sentiment — with a **risk-off alarm** when it collapses
+- top movers and an event feed (±5% crypto moves, ±2% stock moves, alarm transitions)
+- BTC session chart with the health score overlaid
+
+Live mode uses three free, keyless sources: [CoinGecko](https://www.coingecko.com)
+(crypto + global stats), [Stooq](https://stooq.com) (delayed stock quotes; change is
+measured against the session open), and
+[alternative.me](https://alternative.me/crypto/fear-and-greed-index/) (Fear & Greed).
+
+## Quick start
+
+```bash
+source .venv/bin/activate
+pip install -e .
+python3 -m market_radar --demo
+```
+
+Open the printed dashboard URL (default <http://127.0.0.1:8810>). The demo
+simulates a calm drift, then a **risk-off shock** (alts and stocks sell off
+together, sentiment craters, the alarm fires), then a relief rally that clears
+the alarm.
+
+Live feeds:
+
+```bash
+python3 -m market_radar
+```
+
+If the live feeds are unreachable the app auto-switches to demo mode and posts
+a system event (disable with `--no-auto-demo-fallback`).
+
+## Command options
+
+```text
+python3 -m market_radar --host 127.0.0.1 --port 8810 --poll-interval 60
+```
+
+- `--demo`: simulated market session instead of live feeds
+- `--poll-interval`: seconds between live polls (default `60`; CoinGecko's free
+  tier is rate-limited, so don't go much lower)
+- `--no-auto-demo-fallback` / `--host` / `--port` / `--log-level`
+
+The app auto-selects the next free port if `--port` is busy.
+
+## API
+
+- `GET /api/market`: snapshot (cryptos, stocks, health, global stats, movers, events)
+- `GET /api/events`: Server-Sent Events stream for live UI updates
+
+## Health score
+
+`health = 0.30·breadth + 0.30·crypto momentum + 0.20·stock momentum + 0.20·sentiment`
+(weights renormalize when a component is unavailable). Labels: `severe risk-off`
+(<25), `risk-off` (<40), `mixed` (<60), `healthy` (<80), `euphoric` (≥80).
+The risk-off alarm fires below 30 and clears above 42 (hysteresis).
+
+---
+
 # Etsy AI Space
 
 Phased agent swarm for **safe** print-on-demand store research. It follows a

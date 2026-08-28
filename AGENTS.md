@@ -9,6 +9,7 @@ This repo contains self-contained Python apps under `src/`:
 - `mac_battery` — MacBook battery/charging diagnostic + FastAPI dashboard
 - `jet_radar` — private-jet ADS-B movement radar + strange-event alarm dashboard
 - `path_radar` — force-directed network map + continuous traceroute (Scanny + PingPlotter)
+- `market_radar` — crypto board + stock bellwethers + market-health score dashboard
 - `etsy_ai_space` — phased Etsy POD research swarm (scrape → brief → export; manual upload)
 
 There is no database and no frontend build step (dashboard HTML/JS is embedded
@@ -29,6 +30,9 @@ Running the apps:
 - Path radar: `python3 -m path_radar` (live ICMP TTL traceroute + Team Cymru ASN +
  RIPE geo + ARP LAN). Optional `--demo` for the simulated Comcast/Cogent/Google
  topology. Default dashboard port is `8800`.
+- Market radar: `python3 -m market_radar --demo` (live polls CoinGecko + Stooq + the
+ alternative.me Fear & Greed index; needs network egress, no API keys). Default dashboard
+ port is `8810`. Demo simulates a risk-off shock and relief rally.
 - Etsy AI Space: `python3 -m etsy_ai_space scrape "retro cat shirt" --demo` (Phase 1 demo scraper +
  SQLite logging). Live Etsy scraping needs `pip install -e ".[etsy]"` and `playwright install chromium`.
  Phase 4 exports JSON/CSV for **manual** listing upload — no Etsy API publish in this flow.
