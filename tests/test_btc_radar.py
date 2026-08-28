@@ -206,6 +206,21 @@ class DemoAndStateTests(unittest.IsolatedAsyncioTestCase):
         snap = await state.snapshot()
         self.assertEqual(snap["events"][0]["kind"], "feed-fallback")
 
+    async def test_demo_prices_stay_anchored_after_many_ticks(self) -> None:
+        feed = DemoFeed()
+        snap = None
+        for _ in range(220):
+            snap = await feed.fetch()
+        assert snap is not None
+        btc = snap.btc()
+        spy = snap.equity("SPY")
+        assert btc is not None and btc.price is not None
+        assert spy is not None and spy.price is not None
+        self.assertGreater(btc.price, 85_000)
+        self.assertLess(btc.price, 135_000)
+        self.assertGreater(spy.price, 500)
+        self.assertLess(spy.price, 640)
+
 
 class MainTests(unittest.TestCase):
     def test_pick_available_port_skips_busy(self) -> None:

@@ -105,11 +105,17 @@ async def run(args: argparse.Namespace) -> None:
         with suppress(NotImplementedError):
             loop.add_signal_handler(sig, stop_event.set)
 
-    print(f"Bitcoin market radar: http://{args.host}:{chosen_port}")
+    print(f"Bitcoin market radar: http://{args.host}:{chosen_port}", flush=True)
     if args.demo:
-        print("Running in demo mode: correlated crypto + equity tape with risk-on / risk-off episodes.")
+        print(
+            "Running in demo mode: correlated crypto + equity tape with risk-on / risk-off episodes.",
+            flush=True,
+        )
     else:
-        print("Polling CoinGecko + Yahoo Finance + alternative.me Fear & Greed (demo fallback if needed).")
+        print(
+            "Polling CoinGecko + Yahoo Finance + alternative.me Fear & Greed (demo fallback if needed).",
+            flush=True,
+        )
 
     done, pending = await asyncio.wait(
         {feed_task, server_task, stop_task},

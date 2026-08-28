@@ -322,12 +322,13 @@ class DemoFeed:
                 state["change_7d"] = self.rng.uniform(-0.05, 0.05)
             else:
                 beta = 1.0 if spec.is_btc else 1.35 + (hash(spec.symbol) % 40) / 100.0
-                shock = risk * 0.12 * beta + self.rng.uniform(-0.004, 0.004)
-                state["price"] *= 1.0 + shock
-                state["change_1h"] = shock * 100 + self.rng.uniform(-0.15, 0.15)
+                base = DEMO_CRYPTO[spec.coin_id]["price"]
+                tick_shock = risk * 0.0012 * beta + self.rng.uniform(-0.0005, 0.0005)
+                state["price"] = clamp_price(state["price"] * (1.0 + tick_shock), base * 0.82, base * 1.22)
+                state["change_1h"] = tick_shock * 100 + self.rng.uniform(-0.05, 0.05)
                 state["change_24h"] = risk * 6.5 * beta + self.rng.uniform(-0.4, 0.4)
                 state["change_7d"] = risk * 11 * beta + self.rng.uniform(-1.2, 1.2)
-                spark = state.setdefault("spark", [state["price"]] * 48)
+                spark = state.setdefault("spark", [base] * 48)
                 spark.append(state["price"])
                 del spark[:-96]
 
@@ -340,10 +341,20 @@ class DemoFeed:
                 state["price"] = clamp_price(4.15 - risk * 0.18 + self.rng.uniform(-0.02, 0.02), 3.2, 5.4)
                 state["change_24h"] = -risk * 1.4 + self.rng.uniform(-0.1, 0.1)
             elif spec.symbol == "UUP":
-                state["price"] *= 1.0 - risk * 0.004 + self.rng.uniform(-0.0008, 0.0008)
+                base = DEMO_EQUITY[spec.symbol]["price"]
+                state["price"] = clamp_price(
+                    state["price"] * (1.0 - risk * 0.0004 + self.rng.uniform(-0.0002, 0.0002)),
+                    base * 0.94,
+                    base * 1.08,
+                )
                 state["change_24h"] = -risk * 0.55 + self.rng.uniform(-0.08, 0.08)
             elif spec.symbol in {"GLD", "SLV"}:
-                state["price"] *= 1.0 + (-risk * 0.003) + self.rng.uniform(-0.001, 0.001)
+                base = DEMO_EQUITY[spec.symbol]["price"]
+                state["price"] = clamp_price(
+                    state["price"] * (1.0 - risk * 0.00035 + self.rng.uniform(-0.0002, 0.0002)),
+                    base * 0.92,
+                    base * 1.10,
+                )
                 state["change_24h"] = -risk * 0.7 + self.rng.uniform(-0.15, 0.15)
             else:
                 beta = 1.25 if spec.kind == "mega" else 0.85
@@ -351,7 +362,9 @@ class DemoFeed:
                     beta = 1.1
                 if spec.symbol == "QQQ":
                     beta = 1.05
-                state["price"] *= 1.0 + risk * 0.012 * beta + self.rng.uniform(-0.0015, 0.0015)
+                base = DEMO_EQUITY[spec.symbol]["price"]
+                tick_shock = risk * 0.00035 * beta + self.rng.uniform(-0.00015, 0.00015)
+                state["price"] = clamp_price(state["price"] * (1.0 + tick_shock), base * 0.9, base * 1.12)
                 state["change_24h"] = risk * 1.8 * beta + self.rng.uniform(-0.15, 0.15)
             spark = state.setdefault("spark", [state["price"]] * 8)
             spark.append(state["price"])
