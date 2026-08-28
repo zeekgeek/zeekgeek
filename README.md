@@ -407,6 +407,53 @@ The app auto-selects the next free port if `--port` is busy.
 
 ---
 
+# Market Radar
+
+Bitcoin and top-crypto dashboard with an equities health panel. Live mode polls
+**CoinGecko** (crypto + global stats) and the **Yahoo Finance chart API**
+(indices, mega-caps, VIX, gold, treasuries). A composite **market health**
+score blends crypto breadth, equity breadth, VIX regime, and total market-cap
+momentum.
+
+## Quick start
+
+```bash
+source .venv/bin/activate
+pip install -e .
+python3 -m market_radar --demo
+```
+
+Open the printed dashboard URL (default <http://127.0.0.1:8810>).
+
+## Live feeds
+
+```bash
+python3 -m market_radar
+```
+
+If live APIs fail, the app auto-switches to demo mode unless you pass
+`--no-auto-demo-fallback`.
+
+## Command options
+
+```text
+python3 -m market_radar --host 127.0.0.1 --port 8810 --poll-interval 45
+```
+
+- `--demo`: simulated crypto + equity quotes
+- `--poll-interval`: seconds between live polls (default 45; CoinGecko friendly)
+- `--no-auto-demo-fallback`: exit instead of switching to demo on feed errors
+- `--host` / `--port` / `--log-level`
+
+The app auto-selects the next free port if `--port` is busy.
+
+## API
+
+- `GET /api/market`: cryptos, stocks, global stats, health score, sparkline history
+- `GET /api/events`: Server-Sent Events stream
+
+---
+
 # Etsy AI Space
 
 Phased agent swarm for **safe** print-on-demand store research. It follows a
