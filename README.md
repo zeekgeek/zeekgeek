@@ -580,3 +580,82 @@ Safety:
 - `require_manual_upload: true` in `etsy_ai_space/autopilot.yaml` blocks `--publish` unless you pass `--force-publish`
 - `daily_upload_cap` limits how many assisted uploads can run per day
 - Prefer draft-first for new shops (3–5/day)
+
+---
+
+# Bitcoin Market Radar
+
+A local **crypto + macro health** dashboard. Bitcoin is the hero quote, the rest of
+the large-cap crypto board is a 24h heat map, and a short equity/macro strip
+(S&P, Nasdaq, Dow, Russell, Mag7, gold, oil, dollar, VIX, 10Y) shows whether
+risk is on or off in traditional markets.
+
+The composite **market health** score blends crypto Fear & Greed, crypto
+breadth, BTC 24h, SPY 24h, and inverted VIX. A same-day BTC vs SPY divergence
+chip tells you when crypto is leading or lagging equities. Demo mode runs
+fully offline with scripted risk-on / risk-off episodes.
+
+## Quick start
+
+```bash
+source .venv/bin/activate
+pip install -e .
+python3 -m btc_radar --demo
+```
+
+Open the printed dashboard URL (default <http://127.0.0.1:8810>).
+
+Live quotes (CoinGecko + Yahoo Finance + [alternative.me Fear & Greed](https://alternative.me/crypto/fear-and-greed-index/)):
+
+```bash
+python3 -m btc_radar
+```
+
+One JSON snapshot, no dashboard:
+
+```bash
+python3 -m btc_radar --demo --once
+```
+
+## What is on the board
+
+- **Bitcoin** last, 24h/7d, sparkline, cap, volume, dominance, halving countdown
+- **Crypto board** — BTC, ETH, SOL, XRP, BNB, DOGE, ADA, AVAX, LINK, DOT, TON, TRX, SUI, LTC, NEAR, UNI, SHIB, PEPE, plus USDT/USDC liquidity
+- **Equity health** — SPY, QQQ, DIA, IWM
+- **Mag7** — NVDA, AAPL, MSFT, GOOGL, AMZN, META, TSLA
+- **Macro** — GLD, SLV, USO, UUP (dollar), VIX, TNX (10Y)
+- **Tape** — gainers/losers, regime shifts, VIX spikes, sentiment extremes
+
+This is a local read of **public prices**, not investment advice.
+
+## Command options
+
+```text
+python3 -m btc_radar --host 127.0.0.1 --port 8810 --poll-interval 45
+```
+
+- `--demo`: offline correlated tape (risk-on then risk-off episodes)
+- `--poll-interval`: seconds between live polls (default `45`)
+- `--once`: print one JSON snapshot and exit
+- `--no-auto-demo-fallback`: exit if live feeds fail
+- `--host` / `--port` / `--log-level`
+
+The app auto-selects the next free port if `--port` is busy.
+
+## API
+
+- `GET /api/snapshot`: quotes, health, events, roadmap ideas
+- `GET /api/events`: Server-Sent Events stream
+
+## Good next modules
+
+The dashboard already lists these as chips. Strong follow-ups:
+
+- On-chain pulse (mempool fees, hash rate, exchange netflow)
+- Spot ETF tape (IBIT / FBTC creations)
+- Perp funding, open interest, and a liquidation heatmap
+- Stablecoin dry powder and a depeg alarm
+- Macro calendar (CPI / FOMC) overlays
+- Whale alerts, headline tape, watchlist notifications
+- Local portfolio / cost basis (stay on disk)
+- Sector mosaic (L1 vs L2 vs DeFi vs AI vs meme)
