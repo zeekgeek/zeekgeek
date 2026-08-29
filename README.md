@@ -580,3 +580,38 @@ Safety:
 - `require_manual_upload: true` in `etsy_ai_space/autopilot.yaml` blocks `--publish` unless you pass `--force-publish`
 - `daily_upload_cap` limits how many assisted uploads can run per day
 - Prefer draft-first for new shops (3–5/day)
+
+---
+
+# Slow Tone Sweep
+
+A browser-based sine-wave generator with a graphical dashboard. It continuously
+sweeps from 47 Hz to 65 Hz and back, taking 90 seconds in each direction by
+default. Audio is generated locally with the Web Audio API; the Python server
+does not stream or record audio.
+
+```bash
+source .venv/bin/activate
+pip install -e .
+python3 -m tone_sweep
+```
+
+Open <http://127.0.0.1:8810>, select the JBL Flip 5 as the computer's audio
+output, and click **Start**. The in-app level starts at 0%, so raise it slowly
+while keeping the speaker's hardware volume low. The dashboard lets you change
+the one-way sweep duration from 30 to 180 seconds.
+
+The JBL Flip 5's published frequency response starts around 65 Hz. Frequencies
+below that may be faint or distorted and turning up the volume does not restore
+accurate bass response. Keep the speaker off your skin and stop immediately for
+pain, numbness, dizziness, nausea, or hearing discomfort. This is for listening
+and enjoyment, not treatment or diagnosis.
+
+Options:
+
+```text
+python3 -m tone_sweep --host 127.0.0.1 --port 8810 --sweep-seconds 90
+```
+
+- `GET /`: graphical dashboard
+- `GET /api/config`: frequency, duration, and in-app gain limits

@@ -10,6 +10,7 @@ This repo contains self-contained Python apps under `src/`:
 - `jet_radar` — private-jet ADS-B movement radar + strange-event alarm dashboard
 - `path_radar` — force-directed network map + continuous traceroute (Scanny + PingPlotter)
 - `etsy_ai_space` — phased Etsy POD research swarm (scrape → brief → export; manual upload)
+- `tone_sweep` — browser-based 47–65 Hz slow sine sweep + graphical dashboard
 
 There is no database and no frontend build step (dashboard HTML/JS is embedded
 in each package’s `web.py`).
@@ -29,6 +30,8 @@ Running the apps:
 - Path radar: `python3 -m path_radar` (live ICMP TTL traceroute + Team Cymru ASN +
  RIPE geo + ARP LAN). Optional `--demo` for the simulated Comcast/Cogent/Google
  topology. Default dashboard port is `8800`.
+- Tone sweep: `python3 -m tone_sweep` (Web Audio runs in the browser after an explicit
+ start gesture). Default dashboard port is `8810`; starts at zero in-app volume.
 - Etsy AI Space: `python3 -m etsy_ai_space scrape "retro cat shirt" --demo` (Phase 1 demo scraper +
  SQLite logging). Live Etsy scraping needs `pip install -e ".[etsy]"` and `playwright install chromium`.
  Phase 4 exports JSON/CSV for **manual** listing upload — no Etsy API publish in this flow.
