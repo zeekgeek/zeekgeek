@@ -226,6 +226,8 @@ DASHBOARD_HTML = r"""<!doctype html>
       ui.toggle.classList.remove("running");
       ui.status.classList.remove("live");
       ui.statusText.textContent = "Muted · ready";
+      ui.volume.value = "0";
+      ui.volumeValue.textContent = "0%";
       ui.direction.textContent = "Waiting to begin";
     }
     function frame() {

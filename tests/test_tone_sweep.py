@@ -49,6 +49,7 @@ class AppTests(unittest.TestCase):
             "keep the speaker off your skin",
             "not medical use",
             "JBL Flip 5 note",
+            'ui.volume.value = "0"',
         ):
             self.assertIn(needle, DASHBOARD_HTML)
 
