@@ -329,6 +329,83 @@ python3 -m jet_radar --host 127.0.0.1 --port 8790 --sigma 3 --trigger-threshold 
 
 ---
 
+# SkyVeil — Flight Anomaly Radar
+
+A general-purpose public-ADS-B flight radar with a tilted, altitude-extruded
+**3D MapLibre map** and a ranked **strange-detections feed**, instead of the
+raw event log style of Jet Radar above. Every tracked flight is scored each
+poll cycle across four lenses:
+
+- **Emergency** — the ADS-B `emergency` field itself (general, lifeguard,
+  minfuel, nordo, unlawful, downed) or squawk 7500 / 7600 / 7700.
+- **Experimental / test** — test-style callsigns, a `B7` (space/trans-
+  atmospheric) or `B6` (UAV) emitter category, altitude above FL510, an
+  airborne aircraft broadcasting no callsign or type, or loitering inside a
+  publicly known flight-test range (Edwards, Mojave, China Lake, Point Mugu,
+  Plant 42, Groom Lake, White Sands, Wallops, Eglin, Pax River).
+- **Cloaked / mislabeled** — live cross-reference against adsb.lol's own
+  `/pia` (FAA Privacy ICAO Address) and `/ladd` (opted out of public display)
+  feeds, degraded position-integrity figures (`nic`) on a moving target, a
+  registration whose issuing country doesn't match its ICAO hex allocation
+  block, or registration/type fields that change mid-flight on the same hex.
+- **Erratic movement** — extreme climb/descent rate, a hard turn, ground
+  speed far above the norm for the aircraft's own ADS-B category, a position
+  jump too large for the reported speed (possible spoofed or dropped track),
+  or sustained circling/holding in a tight area.
+
+Triggers combine into one 0-100 severity score per flight (diminishing
+returns past the strongest signal); flights at or above the detection
+threshold populate the ranked feed. None of this proves an emergency, a
+secret program, or spoofing — ADS-B is public, self-reported, and unverified.
+Treat every detection as a lead.
+
+## Quick start
+
+```bash
+source .venv/bin/activate
+pip install -e .
+python3 -m skyveil --demo
+```
+
+Open the printed dashboard URL (default <http://127.0.0.1:8795>) — a browser
+with WebGL is required for the 3D map. The demo spawns one flight per
+anomaly category a few seconds in, alongside routine background traffic.
+
+Live ADS-B (polls [adsb.lol](https://api.adsb.lol); default watch region is
+the continental US, 250nm radius, plus adsb.lol's *global* emergency/PIA/
+LADD/military feeds regardless of region):
+
+```bash
+python3 -m skyveil
+```
+
+Optional regional watch:
+
+```bash
+python3 -m skyveil --center 51.5,-0.1 --radius-nm 200
+```
+
+## Command options
+
+```text
+python3 -m skyveil --host 127.0.0.1 --port 8795 --detection-threshold 30
+```
+
+- `--demo`: one simulated flight per anomaly category plus routine traffic
+- `--poll-interval`: seconds between live ADS-B polls (default `20`)
+- `--stale-after`: seconds before a missing flight is marked left coverage
+- `--detection-threshold`: anomaly score (0-100) that joins the detections feed
+- `--center` / `--radius-nm`: regional watch center and radius
+- `--no-auto-demo-fallback` / `--host` / `--port` / `--log-level`
+
+## API
+
+- `GET /api/flights`: full snapshot (flights, detections, category counts, events)
+- `GET /api/reference`: static flight-test-range reference data for the map overlay
+- `GET /api/events`: Server-Sent Events stream
+
+---
+
 # Path Radar
 
 A full-bleed **force-directed network map** plus **continuous traceroute**, mixing

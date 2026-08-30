@@ -8,6 +8,8 @@ This repo contains self-contained Python apps under `src/`:
 - `wifi_radar` — WiFi motion radar + FastAPI dashboard
 - `mac_battery` — MacBook battery/charging diagnostic + FastAPI dashboard
 - `jet_radar` — private-jet ADS-B movement radar + strange-event alarm dashboard
+- `skyveil` — general flight anomaly radar: 3D MapLibre map + ranked emergency /
+  experimental / cloaked / erratic-movement detections feed (adsb.lol)
 - `path_radar` — force-directed network map + continuous traceroute (Scanny + PingPlotter)
 - `etsy_ai_space` — phased Etsy POD research swarm (scrape → brief → export; manual upload)
 
@@ -26,6 +28,9 @@ Running the apps:
  AppleSmartBattery). Default dashboard port is `8780`.
 - Jet radar: `python3 -m jet_radar --demo` (live polls adsb.lol; needs network egress).
  Default dashboard port is `8790`.
+- SkyVeil: `python3 -m skyveil --demo` (live polls adsb.lol region + global PIA/LADD/mil/
+ emergency-squawk feeds; needs network egress for live mode and for the browser to load
+ the MapLibre basemap tiles). Default dashboard port is `8795`.
 - Path radar: `python3 -m path_radar` (live ICMP TTL traceroute + Team Cymru ASN +
  RIPE geo + ARP LAN). Optional `--demo` for the simulated Comcast/Cogent/Google
  topology. Default dashboard port is `8800`.
