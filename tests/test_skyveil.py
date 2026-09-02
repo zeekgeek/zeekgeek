@@ -186,10 +186,26 @@ class AnomalyTests(unittest.TestCase):
         self.assertEqual(category, "erratic")
 
     def test_hard_turn(self) -> None:
-        flight = _snap(track_deg=200.0, previous_track_deg=90.0, ground_speed_kt=250.0)
+        # 110° in 10s = 11°/s, well beyond standard rate.
+        flight = _snap(track_deg=200.0, previous_track_deg=90.0, ground_speed_kt=250.0, seconds_since_previous=10.0)
         triggers = evaluate_flight(flight)
         codes = {t.code for t in triggers}
         self.assertIn("hard-turn", codes)
+
+    def test_standard_rate_turn_is_not_a_hard_turn(self) -> None:
+        # 60° over a 20s poll cycle is exactly a standard-rate (3°/s) turn —
+        # every ordinary turn caught mid-poll looks like this.
+        flight = _snap(track_deg=150.0, previous_track_deg=90.0, ground_speed_kt=250.0, seconds_since_previous=20.0)
+        codes = {t.code for t in evaluate_flight(flight)}
+        self.assertNotIn("hard-turn", codes)
+
+    def test_rotorcraft_circling_is_not_a_loiter_anomaly(self) -> None:
+        headings = [0.0, 90.0, 180.0, 270.0, 40.0, 200.0]
+        positions = [(40.0, -74.0)] * 6
+        helo_by_category = _snap(emitter_category="A7", type_code="B407", recent_headings=headings, recent_positions=positions)
+        self.assertNotIn("sustained-loiter", {t.code for t in evaluate_flight(helo_by_category)})
+        helo_by_type = _snap(emitter_category=None, type_code="H60", recent_headings=headings, recent_positions=positions)
+        self.assertNotIn("sustained-loiter", {t.code for t in evaluate_flight(helo_by_type)})
 
     def test_position_discontinuity(self) -> None:
         flight = _snap(

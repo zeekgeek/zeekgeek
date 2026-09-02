@@ -31,6 +31,7 @@ from .reference import (
     CATEGORY_LABELS,
     CATEGORY_SPEED_CEILING_KT,
     DEFAULT_SPEED_CEILING_KT,
+    ROTORCRAFT_TYPE_CODES,
     TEST_CALLSIGN_PATTERNS,
     TEST_RANGES,
     haversine_nm,
@@ -62,7 +63,11 @@ EXTREME_ALTITUDE_FT = 51000
 # can turn a plausible altitude into six digits.
 MAX_PLAUSIBLE_ALTITUDE_FT = 90000
 EXTREME_CLIMB_FPM = 6000.0
-HARD_TURN_DEG = 60.0
+# A standard-rate turn is 3°/s (60° in a 20s poll cycle), so "hard" has to be
+# a turn *rate* well above that — twice standard rate — not a fixed heading
+# delta, or every ordinary turn caught mid-poll trips it.
+HARD_TURN_RATE_DEG_S = 6.0
+HARD_TURN_MIN_DEG = 45.0
 LOW_INTEGRITY_NIC = 1
 LOITER_HEADING_STD_DEG = 45.0
 LOITER_MIN_SAMPLES = 6
@@ -71,7 +76,7 @@ LOITER_MAX_DISPLACEMENT_NM = 8.0
 # traffic) visibly lags the aircraft's actual instantaneous speed, so the
 # tolerance is multiplicative-plus-additive rather than a flat kt margin —
 # calibrated against live adsb.lol traffic, not just synthetic data.
-POSITION_JUMP_SLACK_RATIO = 1.8
+POSITION_JUMP_SLACK_RATIO = 2.0
 POSITION_JUMP_SLACK_KT = 150.0
 POSITION_JUMP_MIN_SECONDS = 5.0
 POSITION_JUMP_MIN_DISTANCE_NM = 1.0
@@ -352,16 +357,19 @@ def _erratic_triggers(flight: FlightSnapshot) -> list[Trigger]:
         flight.track_deg is not None
         and flight.previous_track_deg is not None
         and (flight.ground_speed_kt or 0) > 100
+        and flight.seconds_since_previous
+        and flight.seconds_since_previous > 0
     ):
         delta = _heading_delta(flight.previous_track_deg, flight.track_deg)
-        if delta >= HARD_TURN_DEG:
+        rate = delta / flight.seconds_since_previous
+        if delta >= HARD_TURN_MIN_DEG and rate >= HARD_TURN_RATE_DEG_S:
             triggers.append(
                 Trigger(
                     "hard-turn",
                     "erratic",
-                    f"{flight.identity} changed heading {delta:.0f}° in one cycle at "
-                    f"{flight.ground_speed_kt:.0f} kt",
-                    min(40.0 * (delta / HARD_TURN_DEG), 65.0),
+                    f"{flight.identity} turned {delta:.0f}° in {flight.seconds_since_previous:.0f}s "
+                    f"({rate:.1f}°/s, ~{rate / 3.0:.1f}x standard rate) at {flight.ground_speed_kt:.0f} kt",
+                    min(40.0 * (rate / HARD_TURN_RATE_DEG_S), 65.0),
                 )
             )
 
@@ -381,7 +389,9 @@ def _erratic_triggers(flight: FlightSnapshot) -> list[Trigger]:
     if jump is not None:
         triggers.append(jump)
 
-    if _is_loitering(flight):
+    # Circling is routine for rotorcraft (police, news, medevac, training);
+    # it is only a movement anomaly for fixed-wing traffic.
+    if not _is_rotorcraft(flight) and _is_loitering(flight):
         triggers.append(
             Trigger(
                 "sustained-loiter",
@@ -427,6 +437,12 @@ def _position_jump_trigger(flight: FlightSnapshot) -> Trigger | None:
         f"(implies {implied_kt:.0f} kt vs {reported_kt:.0f} kt reported) — possible spoofed or dropped track",
         min(60.0 * (implied_kt / max(threshold_kt, 1.0)), 80.0),
     )
+
+
+def _is_rotorcraft(flight: FlightSnapshot) -> bool:
+    if flight.emitter_category == "A7":
+        return True
+    return (flight.type_code or "").upper() in ROTORCRAFT_TYPE_CODES
 
 
 def _is_loitering(flight: FlightSnapshot) -> bool:

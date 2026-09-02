@@ -138,6 +138,17 @@ CATEGORY_SPEED_CEILING_KT: dict[str, float] = {
 }
 DEFAULT_SPEED_CEILING_KT = 620.0
 
+# Common helicopter ICAO type codes, used to recognise rotorcraft when the
+# ADS-B emitter category (A7) is missing. Circling/holding is routine for
+# rotorcraft (police, news, medevac, training) and not a movement anomaly.
+ROTORCRAFT_TYPE_CODES = {
+    "B06", "B06T", "B105", "B212", "B412", "B427", "B429", "B407", "B505",
+    "H60", "H47", "H53", "H64", "UH1", "UH1Y", "H1", "H500", "H269", "MD50", "MD52", "MD60",
+    "EC20", "EC30", "EC35", "EC45", "EC55", "EC75", "AS32", "AS50", "AS55", "AS65",
+    "A109", "A119", "A139", "A169", "A189", "S61", "S64", "S76", "S92",
+    "R22", "R44", "R66", "V22", "H135", "H145", "H175", "NH90",
+}
+
 # Callsign fragments that publicly correlate with test/experimental flights
 # (manufacturer flight-test desks, FAA/NASA test callsign conventions).
 TEST_CALLSIGN_PATTERNS = ("TEST", "XPRMT", "EXPER", "PROTO", "RSRCH")
