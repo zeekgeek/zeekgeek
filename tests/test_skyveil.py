@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 
 from skyveil.anomaly import FlightSnapshot, evaluate_flight, score_triggers
 from skyveil.reference import hex_nation, registration_nation
+from skyveil.scanner import parse_aircraft
 from skyveil.state import FlightObservation, SkyState
 
 
@@ -84,6 +85,23 @@ class ReferenceTests(unittest.TestCase):
         self.assertEqual(registration_nation("G-ABCD"), "United Kingdom")
         self.assertIsNone(registration_nation(None))
 
+    def test_registration_nation_rejects_non_n_number_shapes(self) -> None:
+        # Military serials and placeholder registrations can start with "N"
+        # without being a real FAA N-number (which never has a dash).
+        self.assertIsNone(registration_nation("N48-018"))
+
+
+class ScannerTests(unittest.TestCase):
+    def test_parse_aircraft_reads_position_age(self) -> None:
+        entry = {"hex": "abc123", "flight": "UAL1", "lat": 40.0, "lon": -74.0, "seen_pos": 0.42}
+        obs = parse_aircraft(entry, datetime.now(UTC))
+        self.assertEqual(obs.position_age_s, 0.42)
+
+    def test_parse_aircraft_missing_position_age(self) -> None:
+        entry = {"hex": "abc123", "flight": "UAL1", "lat": 40.0, "lon": -74.0}
+        obs = parse_aircraft(entry, datetime.now(UTC))
+        self.assertIsNone(obs.position_age_s)
+
 
 class AnomalyTests(unittest.TestCase):
     def test_emergency_squawk_and_field(self) -> None:
@@ -149,7 +167,8 @@ class AnomalyTests(unittest.TestCase):
         self.assertIn("hex-nation-mismatch", codes)
 
     def test_extreme_vertical_rate_and_overspeed(self) -> None:
-        flight = _snap(baro_rate_fpm=-7200.0, ground_speed_kt=400.0, emitter_category="A1")
+        # A7 = rotorcraft, one of the few categories with a real speed cap.
+        flight = _snap(baro_rate_fpm=-7200.0, ground_speed_kt=260.0, emitter_category="A7")
         triggers = evaluate_flight(flight)
         codes = {t.code for t in triggers}
         self.assertIn("extreme-vertical-rate", codes)
@@ -243,6 +262,36 @@ class StateTests(unittest.TestCase):
         events = await state.ingest_cycle([])
         types = {e["type"] for e in events}
         self.assertIn("detection-cleared", types)
+
+
+    def test_stale_position_fix_does_not_false_positive_as_a_jump(self) -> None:
+        # Two polls ~21s apart by wall clock, but the ADS-B position ages
+        # ("seen_pos") show the real gap between fixes was ~31s: the first
+        # fix was already 10s stale when polled, the second was fresh. A
+        # naive poll-cadence elapsed time would read this as a ~429kt
+        # implied jump (false positive); the seen_pos-corrected elapsed
+        # time reads it as ~290kt, well within the reported 249kt + slack.
+        asyncio.run(self._stale_fix_flow())
+
+    async def _stale_fix_flow(self) -> None:
+        state = SkyState(stale_after=60, detection_threshold=30.0)
+        now = datetime.now(UTC)
+        first = FlightObservation(
+            hex_id="mil1", callsign="RCH651", registration=None, type_code="C17",
+            lat=40.0, lon=-74.0, altitude_ft=28000, ground_speed_kt=249.0, track_deg=0.0,
+            squawk="1200", nic=0, position_age_s=10.0, observed_at=now,
+        )
+        await state.ingest_cycle([first])
+        second = FlightObservation(
+            hex_id="mil1", callsign="RCH651", registration=None, type_code="C17",
+            lat=40.04167, lon=-74.0, altitude_ft=28000, ground_speed_kt=249.0, track_deg=0.0,
+            squawk="1200", nic=0, position_age_s=0.0, observed_at=now + timedelta(seconds=21),
+        )
+        await state.ingest_cycle([second])
+        snapshot = await state.snapshot()
+        flight = next(f for f in snapshot["flights"] if f["hex"] == "mil1")
+        codes = {t["code"] for t in flight["triggers"]}
+        self.assertNotIn("position-discontinuity", codes)
 
 
 class WebRouteTests(unittest.TestCase):

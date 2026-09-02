@@ -61,8 +61,14 @@ LOW_INTEGRITY_NIC = 1
 LOITER_HEADING_STD_DEG = 45.0
 LOITER_MIN_SAMPLES = 6
 LOITER_MAX_DISPLACEMENT_NM = 8.0
-POSITION_JUMP_SLACK_KT = 120.0
+# Reported ground speed on some feeds (particularly MLAT-tracked military
+# traffic) visibly lags the aircraft's actual instantaneous speed, so the
+# tolerance is multiplicative-plus-additive rather than a flat kt margin —
+# calibrated against live adsb.lol traffic, not just synthetic data.
+POSITION_JUMP_SLACK_RATIO = 1.8
+POSITION_JUMP_SLACK_KT = 150.0
 POSITION_JUMP_MIN_SECONDS = 5.0
+POSITION_JUMP_MIN_DISTANCE_NM = 1.0
 
 CATEGORIES = ("emergency", "experimental", "cloaked", "erratic")
 
@@ -246,12 +252,15 @@ def _cloaked_triggers(flight: FlightSnapshot) -> list[Trigger]:
             )
         )
     if flight.is_ladd:
+        # LADD is a routine FAA privacy opt-out used by a large share of GA
+        # and corporate traffic — a weak, corroborating signal on its own,
+        # not something that alone should populate a "strange" feed.
         triggers.append(
             Trigger(
                 "ladd-opt-out",
                 "cloaked",
                 f"{flight.identity} is on the LADD list (opted out of public tracking, still broadcasting)",
-                40.0,
+                20.0,
             )
         )
 
@@ -261,13 +270,15 @@ def _cloaked_triggers(flight: FlightSnapshot) -> list[Trigger]:
         and not flight.on_ground
         and (flight.ground_speed_kt or 0) > 50
     ):
+        # Common and unremarkable for some military airframes on their own,
+        # so this stays a corroborating signal rather than a standalone one.
         triggers.append(
             Trigger(
                 "degraded-position-integrity",
                 "cloaked",
                 f"{flight.identity} is moving with very low position-integrity figures (NIC {flight.nic}) "
                 "— malfunctioning transponder or spoofed position are both possible",
-                35.0,
+                20.0,
             )
         )
 
@@ -387,17 +398,23 @@ def _position_jump_trigger(flight: FlightSnapshot) -> Trigger | None:
     ):
         return None
     distance_nm = haversine_nm(flight.previous_lat, flight.previous_lon, flight.lat, flight.lon)
+    if distance_nm < POSITION_JUMP_MIN_DISTANCE_NM:
+        # Below this, ordinary GPS/multilateration jitter on a slow or
+        # parked aircraft can look like a huge *relative* speed jump even
+        # though the absolute movement is negligible.
+        return None
     hours = flight.seconds_since_previous / 3600.0
     implied_kt = distance_nm / hours if hours > 0 else 0.0
     reported_kt = flight.ground_speed_kt or 0.0
-    if implied_kt <= reported_kt + POSITION_JUMP_SLACK_KT:
+    threshold_kt = max(reported_kt * POSITION_JUMP_SLACK_RATIO, reported_kt + POSITION_JUMP_SLACK_KT)
+    if implied_kt <= threshold_kt:
         return None
     return Trigger(
         "position-discontinuity",
         "erratic",
         f"{flight.identity} jumped {distance_nm:.0f} nm in {flight.seconds_since_previous:.0f}s "
         f"(implies {implied_kt:.0f} kt vs {reported_kt:.0f} kt reported) — possible spoofed or dropped track",
-        min(60.0 * (implied_kt / max(reported_kt + POSITION_JUMP_SLACK_KT, 1.0)), 80.0),
+        min(60.0 * (implied_kt / max(threshold_kt, 1.0)), 80.0),
     )
 
 

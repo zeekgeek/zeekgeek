@@ -35,6 +35,14 @@ DEFAULT_CENTER = (39.8283, -98.5795)  # geographic center of the continental US
 DEFAULT_RADIUS_NM = 250.0
 EMERGENCY_SQUAWK_LIST = "7500,7600,7700"
 
+# ADS-B emitter categories C0-C3 are surface vehicles and fixed obstacles, not
+# flights. "TWR" is tar1090/adsb.lol's pseudo aircraft-*type-code* (the "t"
+# field, not "type" — "type" is the data-source label like "adsb_icao") for
+# injected ground reference/test targets (e.g. a synthetic "TEST1234"
+# callsign used to sanity-check feeder coverage) — neither belongs here.
+NON_FLIGHT_CATEGORIES = {"C0", "C1", "C2", "C3"}
+NON_FLIGHT_TYPE_CODES = {"TWR"}
+
 
 class ScannerBackend(Protocol):
     async def run(self) -> None:
@@ -87,8 +95,11 @@ class AdsbLolBackend:
                 continue
             for entry in payload.get("ac") or []:
                 hex_id = str(entry.get("hex", "")).lower()
-                if hex_id:
-                    merged.setdefault(hex_id, entry)
+                if not hex_id:
+                    continue
+                if entry.get("category") in NON_FLIGHT_CATEGORIES or entry.get("t") in NON_FLIGHT_TYPE_CODES:
+                    continue
+                merged.setdefault(hex_id, entry)
 
         now = datetime.now(UTC)
         return [
@@ -138,6 +149,7 @@ def parse_aircraft(
         ground_speed_kt=entry.get("gs"),
         track_deg=entry.get("track"),
         baro_rate_fpm=entry.get("baro_rate") if isinstance(entry.get("baro_rate"), (int, float)) else entry.get("geom_rate"),
+        position_age_s=entry.get("seen_pos") if isinstance(entry.get("seen_pos"), (int, float)) else None,
         squawk=entry.get("squawk"),
         emergency_field=str(emergency) if emergency else None,
         nic=entry.get("nic"),

@@ -8,8 +8,14 @@ every match here as a lead worth a second look, not a verdict.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from math import asin, cos, radians, sin, sqrt
+
+# A real FAA N-number: "N" + 1-5 digits/letters, no dashes or spaces. Military
+# serials and placeholder registrations (e.g. "N48-018") sometimes start with
+# "N" too but don't match this shape, so they're deliberately excluded.
+_N_NUMBER_RE = re.compile(r"^N[0-9][0-9A-Z]{0,4}$")
 
 
 def haversine_nm(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -94,8 +100,10 @@ def registration_nation(registration: str | None) -> str | None:
     if not registration:
         return None
     upper = registration.upper()
+    if upper.startswith("N"):
+        return "United States" if _N_NUMBER_RE.match(upper) else None
     for prefix, nation in REGISTRATION_PREFIX_NATION:
-        if upper.startswith(prefix):
+        if prefix != "N" and upper.startswith(prefix):
             return nation
     return None
 
@@ -117,16 +125,16 @@ CATEGORY_LABELS: dict[str, str] = {
     "B7": "space / trans-atmospheric vehicle",
 }
 
-# Rough ground-speed ceilings (kt) used only to flag outliers, not to certify
-# performance envelopes. Anything without a table entry falls back to the
-# default.
+# Rough ground-speed ceilings (kt), used only to flag outliers. Deliberately
+# limited to categories with a genuine physical/regulatory speed cap —
+# rotorcraft, gliders, ultralights, UAVs. A1/A2 ("light"/"small" by MTOW, not
+# by speed) cover everything from a Cessna 172 to a 500kt light jet, so they
+# are not a reliable proxy for cruise speed and fall back to the default.
 CATEGORY_SPEED_CEILING_KT: dict[str, float] = {
-    "A1": 260.0,
-    "A2": 380.0,
     "A7": 210.0,
     "B1": 150.0,
     "B4": 120.0,
-    "B6": 260.0,
+    "B6": 300.0,
 }
 DEFAULT_SPEED_CEILING_KT = 620.0
 

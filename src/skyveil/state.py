@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections import Counter, deque
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .anomaly import CATEGORIES, FlightSnapshot, Trigger, evaluate_flight, score_triggers
@@ -39,6 +39,10 @@ class FlightObservation:
     ground_speed_kt: float | None = None
     track_deg: float | None = None
     baro_rate_fpm: float | None = None
+    # Seconds between this position fix and when it was polled (ADS-B's own
+    # "seen_pos"). Lets position-jump checks use the real fix interval
+    # instead of assuming two polls are exactly one poll-cycle apart.
+    position_age_s: float | None = None
     squawk: str | None = None
     emergency_field: str | None = None
     nic: int | None = None
@@ -80,6 +84,9 @@ class FlightTrack:
     previous_lon: float | None = None
     previous_registration: str | None = None
     previous_type_code: str | None = None
+    # When the last two position fixes actually happened (from ADS-B's own
+    # "seen_pos" age), not just when we polled — see apply().
+    position_fixed_at: datetime | None = None
     score: float = 0.0
     dominant_category: str | None = None
     triggers: list[Trigger] = field(default_factory=list)
@@ -95,8 +102,8 @@ class FlightTrack:
 
     def apply(self, obs: FlightObservation) -> float | None:
         """Update from a new observation. Returns seconds since the last fix."""
-        elapsed = (obs.observed_at - self.last_seen).total_seconds() if self.seen_count else None
-        self._pending_elapsed = elapsed
+        elapsed_by_poll = (obs.observed_at - self.last_seen).total_seconds() if self.seen_count else None
+        previous_fixed_at = self.position_fixed_at
         self.previous_track_deg = self.track_deg
         self.previous_lat = self.lat
         self.previous_lon = self.lon
@@ -129,11 +136,25 @@ class FlightTrack:
 
         if obs.track_deg is not None:
             self.recent_headings.append(obs.track_deg)
+
+        new_fixed_at: datetime | None = None
         if obs.lat is not None and obs.lon is not None:
+            new_fixed_at = (
+                obs.observed_at - timedelta(seconds=obs.position_age_s)
+                if obs.position_age_s is not None
+                else obs.observed_at
+            )
+            self.position_fixed_at = new_fixed_at
             self.recent_positions.append((obs.lat, obs.lon))
             self.trail.append(
                 {"lat": obs.lat, "lon": obs.lon, "alt": obs.altitude_ft, "at": iso_time(obs.observed_at)}
             )
+
+        if previous_fixed_at is not None and new_fixed_at is not None:
+            elapsed = (new_fixed_at - previous_fixed_at).total_seconds()
+        else:
+            elapsed = elapsed_by_poll
+        self._pending_elapsed = elapsed
         return elapsed
 
     def snapshot_field(self) -> FlightSnapshot:
