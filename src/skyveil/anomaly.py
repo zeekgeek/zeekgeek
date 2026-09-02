@@ -55,6 +55,12 @@ EMERGENCY_FIELD_LABELS = {
 }
 
 EXTREME_ALTITUDE_FT = 51000
+# Above this, an "altitude" is decode garbage rather than a real flight — no
+# known aircraft has ever operated near, let alone above, the SR-71's
+# ~85,000ft ceiling. Weak, thinly-received Mode-S-only contacts (no full
+# ADS-B position) are the main source of these: a Gillham/Mode-C bit error
+# can turn a plausible altitude into six digits.
+MAX_PLAUSIBLE_ALTITUDE_FT = 90000
 EXTREME_CLIMB_FPM = 6000.0
 HARD_TURN_DEG = 60.0
 LOW_INTEGRITY_NIC = 1
@@ -192,7 +198,7 @@ def _experimental_triggers(flight: FlightSnapshot) -> list[Trigger]:
 
     if (
         flight.altitude_ft is not None
-        and flight.altitude_ft >= EXTREME_ALTITUDE_FT
+        and EXTREME_ALTITUDE_FT <= flight.altitude_ft <= MAX_PLAUSIBLE_ALTITUDE_FT
         and not flight.on_ground
     ):
         triggers.append(
@@ -395,6 +401,11 @@ def _position_jump_trigger(flight: FlightSnapshot) -> Trigger | None:
         or flight.previous_lon is None
         or flight.seconds_since_previous is None
         or flight.seconds_since_previous < POSITION_JUMP_MIN_SECONDS
+        # An unreported ground speed is unknown, not confirmed zero — some
+        # feeds (particularly MLAT-tracked traffic) omit "gs" for airborne
+        # aircraft that are plainly moving, and treating that as a 0kt
+        # baseline turns ordinary movement into a false "huge overspeed".
+        or flight.ground_speed_kt is None
     ):
         return None
     distance_nm = haversine_nm(flight.previous_lat, flight.previous_lon, flight.lat, flight.lon)
@@ -405,7 +416,7 @@ def _position_jump_trigger(flight: FlightSnapshot) -> Trigger | None:
         return None
     hours = flight.seconds_since_previous / 3600.0
     implied_kt = distance_nm / hours if hours > 0 else 0.0
-    reported_kt = flight.ground_speed_kt or 0.0
+    reported_kt = flight.ground_speed_kt
     threshold_kt = max(reported_kt * POSITION_JUMP_SLACK_RATIO, reported_kt + POSITION_JUMP_SLACK_KT)
     if implied_kt <= threshold_kt:
         return None

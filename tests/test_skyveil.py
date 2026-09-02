@@ -122,6 +122,15 @@ class AnomalyTests(unittest.TestCase):
         self.assertEqual(score, 0.0)
         self.assertIsNone(category)
 
+    def test_extreme_altitude_flags_but_implausible_altitude_does_not(self) -> None:
+        # A genuinely high (if rare) altitude is a lead; a six-digit
+        # altitude is Mode-S/Gillham decode noise on a weak contact, not a
+        # real flight, and must not be reported as one.
+        believable = _snap(altitude_ft=55000)
+        self.assertIn("extreme-altitude", {t.code for t in evaluate_flight(believable)})
+        garbage = _snap(altitude_ft=103700)
+        self.assertNotIn("extreme-altitude", {t.code for t in evaluate_flight(garbage)})
+
     def test_test_callsign_and_range_flags_experimental(self) -> None:
         flight = _snap(
             callsign="XPRMT12",
@@ -190,6 +199,17 @@ class AnomalyTests(unittest.TestCase):
         triggers = evaluate_flight(flight)
         codes = {t.code for t in triggers}
         self.assertIn("position-discontinuity", codes)
+
+    def test_position_discontinuity_skipped_when_speed_unreported(self) -> None:
+        # A missing "gs" (common on MLAT-tracked traffic) is unknown speed,
+        # not confirmed-stationary — must not be treated as a 0kt baseline.
+        flight = _snap(
+            lat=41.0, lon=-73.0, previous_lat=40.0, previous_lon=-74.0,
+            ground_speed_kt=None, seconds_since_previous=10.0,
+        )
+        triggers = evaluate_flight(flight)
+        codes = {t.code for t in triggers}
+        self.assertNotIn("position-discontinuity", codes)
 
     def test_sustained_loiter(self) -> None:
         headings = [0.0, 90.0, 180.0, 270.0, 40.0, 200.0]
