@@ -587,12 +587,164 @@ boot();
 """
 
 
+POPOVER_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Battery</title>
+<style>
+  :root {
+    --ink: #f1f1fb;
+    --muted: #a8abd6;
+    --line: rgba(255, 255, 255, 0.12);
+    --accent: #3ecf8e;
+    --accent-dim: #1f7a56;
+    --font-display: "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
+    --font-mono: "IBM Plex Mono", "SF Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; overflow: hidden; }
+  body {
+    width: 320px;
+    color: var(--ink);
+    font-family: var(--font-display);
+    background:
+      radial-gradient(480px 280px at 0% -20%, #4b3aa8 0%, transparent 60%),
+      radial-gradient(480px 280px at 100% 0%, #2c3f9e 0%, transparent 55%),
+      linear-gradient(165deg, #1b1750, #100d33);
+    padding: 14px;
+  }
+  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; gap: 0.4rem; }
+  header h1 { font-size: 0.95rem; margin: 0; font-weight: 650; white-space: nowrap; }
+  .pills { display: flex; gap: 0.3rem; flex-wrap: wrap; justify-content: flex-end; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 0.3rem;
+    padding: 0.18rem 0.55rem; border-radius: 999px;
+    background: rgba(255, 255, 255, 0.09); border: 1px solid rgba(255, 255, 255, 0.18);
+    font-size: 0.68rem; font-weight: 600; color: var(--muted); white-space: nowrap;
+  }
+  .pill.on { color: var(--accent); border-color: var(--accent-dim); }
+  .level-bar {
+    height: 32px; border-radius: 999px; background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--line); position: relative; overflow: hidden; margin-bottom: 10px;
+  }
+  .level-fill {
+    position: absolute; inset: 0; width: 0%; display: flex; align-items: center; gap: 0.35rem;
+    padding-left: 0.7rem; background: linear-gradient(90deg, var(--accent-dim), var(--accent));
+    color: #062017; font-weight: 700; font-family: var(--font-mono); font-size: 0.82rem;
+    white-space: nowrap; transition: width 0.5s ease;
+  }
+  .level-target { position: absolute; top: 3px; bottom: 3px; width: 0; border-left: 2px dashed rgba(255, 255, 255, 0.55); }
+  .icon { width: 0.9em; height: 0.9em; stroke: currentColor; fill: none; stroke-width: 1.8; }
+  .going-on { font-size: 0.8rem; color: var(--muted); line-height: 1.35; margin-bottom: 10px; min-height: 2.3em; }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 0 0.8rem; font-size: 0.78rem; margin-bottom: 10px; }
+  .stats div { display: flex; justify-content: space-between; gap: 0.4rem; padding: 0.16rem 0; border-bottom: 1px solid var(--line); }
+  .stats span:first-child { color: var(--muted); }
+  .stats span:last-child { font-family: var(--font-mono); }
+  footer { font-size: 0.68rem; color: var(--muted); text-align: center; border-top: 1px solid var(--line); padding-top: 8px; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Battery</h1>
+    <span class="pills">
+      <span class="pill" id="source">—</span>
+      <span class="pill" id="charge-state">—</span>
+    </span>
+  </header>
+  <div class="level-bar" id="level-bar">
+    <div class="level-target" id="level-target"></div>
+    <div class="level-fill" id="level-fill">
+      <svg class="icon" viewBox="0 0 24 24"><path d="M9 2h6v3h2a1 1 0 0 1 1 1v3H6V6a1 1 0 0 1 1-1h2V2Z"/><path d="M6 9h12v11a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V9Z"/></svg>
+      <span id="level-text">—%</span>
+    </div>
+  </div>
+  <div class="going-on" id="going-on-text">Waiting for the first reading…</div>
+  <div class="stats">
+    <div><span>Power</span><span id="watts">—</span></div>
+    <div><span>To target</span><span id="eta80">—</span></div>
+    <div><span>Voltage</span><span id="voltage">—</span></div>
+    <div><span>To full</span><span id="etaFull">—</span></div>
+    <div><span>Health</span><span id="health">—</span></div>
+    <div><span>Cycles</span><span id="cycles">—</span></div>
+    <div><span>Temp</span><span id="temp">—</span></div>
+    <div><span>Amperage</span><span id="amperage">—</span></div>
+  </div>
+  <footer>Right-click the menu-bar icon for the full dashboard &amp; Quit</footer>
+<script>
+function $(id) { return document.getElementById(id); }
+let currentTarget = 80;
+
+function goingOnText(report) {
+  const c = report.charging || {};
+  const target = c.optimized_target_percent ?? 80;
+  if (c.fully_charged) return "Fully charged.";
+  if (c.is_charging) {
+    const pct = c.charge_percent;
+    if (pct != null && pct < target) return `Charging to ${target}% — ${c.eta_to_80_label} to go.`;
+    return `Charging to 100% — ${c.eta_to_full_label} to go.`;
+  }
+  if (c.adapter_connected) return "On power, paused above your limit.";
+  const pct = c.charge_percent;
+  return `On battery${pct != null ? " · " + pct.toFixed(0) + "% left" : ""}.`;
+}
+
+function apply(report) {
+  if (!report) return;
+  const e = report.electrical || {};
+  const c = report.charging || {};
+  const h = report.health || {};
+  currentTarget = c.optimized_target_percent ?? 80;
+
+  const soc = c.charge_percent;
+  $("level-text").textContent = soc == null ? "—%" : soc.toFixed(0) + "%";
+  $("level-fill").style.width = (soc ?? 0) + "%";
+  $("level-target").style.left = currentTarget + "%";
+
+  $("watts").textContent = (e.watts ?? "—") + " W";
+  $("voltage").textContent = (e.voltage_v ?? "—") + " V";
+  $("amperage").textContent = (e.amperage_a ?? "—") + " A";
+  $("temp").textContent = (e.temperature_c ?? "—") + " °C";
+  $("health").textContent = h.health_percent == null ? "—" : h.health_percent.toFixed(0) + "%";
+  $("cycles").textContent = h.cycle_count ?? "—";
+  $("eta80").textContent = c.eta_to_80_label || "—";
+  $("etaFull").textContent = c.eta_to_full_label || "—";
+
+  $("going-on-text").textContent = goingOnText(report);
+
+  $("source").textContent = report.source || "—";
+  const st = $("charge-state");
+  st.textContent = c.is_charging ? "charging" : (c.fully_charged ? "full" : "not charging");
+  st.className = "pill" + (c.is_charging ? " on" : "");
+}
+
+async function boot() {
+  const snap = await fetch("/api/snapshot").then(r => r.json());
+  if (snap.latest) apply(snap.latest);
+  const es = new EventSource("/api/events");
+  es.onmessage = (msg) => {
+    const payload = JSON.parse(msg.data);
+    if (payload.type === "snapshot") apply(payload.data);
+  };
+}
+boot();
+</script>
+</body>
+</html>
+"""
+
+
 def create_app(state: "BatteryState") -> FastAPI:
     app = FastAPI(title="MacBook Battery Diagnostic")
 
     @app.get("/", response_class=HTMLResponse)
     async def index() -> str:
         return DASHBOARD_HTML
+
+    @app.get("/popover", response_class=HTMLResponse)
+    async def popover() -> str:
+        return POPOVER_HTML
 
     @app.get("/api/snapshot")
     async def snapshot() -> dict:

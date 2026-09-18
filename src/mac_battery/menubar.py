@@ -108,15 +108,19 @@ class AppDelegate(NSObject):
         button.setTarget_(self)
         button.setAction_("statusItemClicked:")
 
+        # Sized to fit the compact /popover page with no scrolling — the full
+        # dashboard is a whole browser page (charts, events, multiple panels)
+        # and doesn't fit any reasonably-sized dropdown, hence the separate page.
         self.popover = NSPopover.alloc().init()
-        self.popover.setContentSize_(NSMakeSize(380, 660))
+        self.popover.setContentSize_(NSMakeSize(320, 300))
         self.popover.setBehavior_(_POPOVER_TRANSIENT)
 
         webview_config = WKWebViewConfiguration.alloc().init()
         self.webview = WKWebView.alloc().initWithFrame_configuration_(
-            NSMakeRect(0, 0, 380, 660), webview_config
+            NSMakeRect(0, 0, 320, 300), webview_config
         )
-        self.webview.loadRequest_(NSURLRequest.requestWithURL_(NSURL.URLWithString_(self.dashboard_url)))
+        popover_url = f"{self.dashboard_url}popover"
+        self.webview.loadRequest_(NSURLRequest.requestWithURL_(NSURL.URLWithString_(popover_url)))
 
         view_controller = NSViewController.alloc().init()
         view_controller.setView_(self.webview)

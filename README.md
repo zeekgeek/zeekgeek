@@ -250,12 +250,13 @@ mac-battery-menubar
 ```
 
 The status item shows live wattage and charge percent, e.g. `↑ 36.4W 42%`
-(`↑` charging, `↓` discharging, `•` idle). **Left click** opens a popover
-with the full graphical dashboard (charge bar, "what's going on" card,
-stats, history charts) rendered in an embedded `WKWebView` — the same HTML
-the browser dashboard serves, sampled from the same `AppleSmartBattery`
-reader, just shown inline instead of in a tab. **Right click** gives a
-small menu to open that dashboard in your default browser instead, or quit.
+(`↑` charging, `↓` discharging, `•` idle). **Left click** opens a compact
+popover (charge bar, "what's going on" line, key stats) rendered in an
+embedded `WKWebView`, sized to fit without scrolling — it's a purpose-built
+small page (`/popover`), not the full browser dashboard shrunk down, since
+that has charts and panels meant for a full window and doesn't fit any
+reasonably-sized dropdown. **Right click** gives a small menu to open the
+full dashboard in your default browser, or quit.
 
 ```text
 mac-battery-menubar --interval 2 --target 80
@@ -273,6 +274,26 @@ from it to a custom graphical view. Requires `pyobjc-framework-Cocoa` and
 `pyobjc-framework-WebKit`, both macOS-only; running `mac-battery-menubar` on
 any other platform (or without the `menubar` extra installed) exits with an
 explanation instead of a bare import error.
+
+### Running it as a real app, not a terminal command
+
+`scripts/make_menubar_app.sh` builds a double-clickable `MacBook Battery.app`
+that wraps `mac-battery-menubar` — a normal Finder/Applications/Login-Items
+entry point instead of a Terminal session you have to keep open:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e ".[menubar]"
+./scripts/make_menubar_app.sh "$(pwd)/.venv/bin/python3"
+```
+
+That writes `~/Applications/MacBook Battery.app`. Double-click it in Finder,
+or drag it into **System Settings > General > Login Items** to have it start
+automatically at login. It's a thin wrapper (a launcher script + Info.plist)
+around the venv you already built, not a frozen/signed bundle, so macOS may
+show an unsigned-app warning the first time — that's expected for something
+built locally; approve it once. Re-run the script if you move the repo or
+the venv.
 
 ## API
 
