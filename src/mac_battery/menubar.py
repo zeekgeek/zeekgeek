@@ -36,7 +36,16 @@ try:
         NSVariableStatusItemLength,
         NSViewController,
     )
-    from Foundation import NSMakeRect, NSMakeSize, NSObject, NSTimer, NSURL, NSURLRequest
+    from Foundation import (
+        NSMakeRect,
+        NSMakeSize,
+        NSObject,
+        NSRunLoop,
+        NSRunLoopCommonModes,
+        NSTimer,
+        NSURL,
+        NSURLRequest,
+    )
     from WebKit import WKWebView, WKWebViewConfiguration
 except ImportError as exc:  # pragma: no cover - exercised only off macOS
     raise SystemExit(
@@ -112,12 +121,12 @@ class AppDelegate(NSObject):
         # dashboard is a whole browser page (charts, events, multiple panels)
         # and doesn't fit any reasonably-sized dropdown, hence the separate page.
         self.popover = NSPopover.alloc().init()
-        self.popover.setContentSize_(NSMakeSize(320, 300))
+        self.popover.setContentSize_(NSMakeSize(320, 350))
         self.popover.setBehavior_(_POPOVER_TRANSIENT)
 
         webview_config = WKWebViewConfiguration.alloc().init()
         self.webview = WKWebView.alloc().initWithFrame_configuration_(
-            NSMakeRect(0, 0, 320, 300), webview_config
+            NSMakeRect(0, 0, 320, 350), webview_config
         )
         popover_url = f"{self.dashboard_url}popover"
         self.webview.loadRequest_(NSURLRequest.requestWithURL_(NSURL.URLWithString_(popover_url)))
@@ -126,9 +135,15 @@ class AppDelegate(NSObject):
         view_controller.setView_(self.webview)
         self.popover.setContentViewController_(view_controller)
 
-        self.timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+        # scheduledTimer... only registers in NSDefaultRunLoopMode, which macOS
+        # suspends while the run loop is tracking UI (e.g. while the status item
+        # is being clicked/hovered) — that's what made refreshes appear to
+        # "hang" until you looked away. Registering for NSRunLoopCommonModes
+        # keeps it firing during UI tracking too.
+        self.timer = NSTimer.timerWithTimeInterval_target_selector_userInfo_repeats_(
             self.refresh_interval, self, "refreshTitle:", None, True
         )
+        NSRunLoop.currentRunLoop().addTimer_forMode_(self.timer, NSRunLoopCommonModes)
 
     def statusItemClicked_(self, sender) -> None:
         event = NSApplication.sharedApplication().currentEvent()
@@ -187,7 +202,7 @@ def build_parser() -> argparse.ArgumentParser:
             "wattage + charge %; click it for the full graphical dashboard in a popover."
         )
     )
-    parser.add_argument("--interval", type=float, default=2.0, help="Seconds between refreshes (default: 2.0)")
+    parser.add_argument("--interval", type=float, default=1.0, help="Seconds between refreshes (default: 1.0)")
     parser.add_argument("--target", type=float, default=80.0, help="Optimized charge target percent (default: 80)")
     parser.add_argument("--demo", action="store_true", help="Simulate a 2018 MBP charge session")
     parser.add_argument("--host", default="127.0.0.1", help="Dashboard bind address (default: 127.0.0.1)")

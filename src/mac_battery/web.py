@@ -637,7 +637,10 @@ POPOVER_HTML = """<!DOCTYPE html>
   }
   .level-target { position: absolute; top: 3px; bottom: 3px; width: 0; border-left: 2px dashed rgba(255, 255, 255, 0.55); }
   .icon { width: 0.9em; height: 0.9em; stroke: currentColor; fill: none; stroke-width: 1.8; }
-  .going-on { font-size: 0.8rem; color: var(--muted); line-height: 1.35; margin-bottom: 10px; min-height: 2.3em; }
+  .going-on { font-size: 0.8rem; color: var(--muted); line-height: 1.35; margin-bottom: 8px; min-height: 2.3em; }
+  .trend { margin-bottom: 10px; }
+  .trend svg { display: block; width: 100%; height: 48px; }
+  .trend-label { font-size: 0.66rem; color: var(--muted); margin-top: 2px; display: flex; justify-content: space-between; }
   .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 0 0.8rem; font-size: 0.78rem; margin-bottom: 10px; }
   .stats div { display: flex; justify-content: space-between; gap: 0.4rem; padding: 0.16rem 0; border-bottom: 1px solid var(--line); }
   .stats span:first-child { color: var(--muted); }
@@ -661,11 +664,25 @@ POPOVER_HTML = """<!DOCTYPE html>
     </div>
   </div>
   <div class="going-on" id="going-on-text">Waiting for the first reading…</div>
+  <div class="trend">
+    <svg id="trend-svg" viewBox="0 0 292 48" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="trend-fill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#6ec8ff" stop-opacity="0.35"/>
+          <stop offset="100%" stop-color="#6ec8ff" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      <line id="trend-zero" x1="0" x2="292" y1="24" y2="24" stroke="rgba(255,255,255,0.18)" stroke-width="1" stroke-dasharray="3,3"/>
+      <path id="trend-area" d="" fill="url(#trend-fill)" stroke="none"/>
+      <path id="trend-line" d="" fill="none" stroke="#6ec8ff" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+    </svg>
+    <div class="trend-label"><span>Power trend</span><span id="trend-range">—</span></div>
+  </div>
   <div class="stats">
     <div><span>Power</span><span id="watts">—</span></div>
-    <div><span>To target</span><span id="eta80">—</span></div>
+    <div><span id="eta80-label">To target</span><span id="eta80">—</span></div>
     <div><span>Voltage</span><span id="voltage">—</span></div>
-    <div><span>To full</span><span id="etaFull">—</span></div>
+    <div><span id="etaFull-label">To full</span><span id="etaFull">—</span></div>
     <div><span>Health</span><span id="health">—</span></div>
     <div><span>Cycles</span><span id="cycles">—</span></div>
     <div><span>Temp</span><span id="temp">—</span></div>
@@ -675,6 +692,8 @@ POPOVER_HTML = """<!DOCTYPE html>
 <script>
 function $(id) { return document.getElementById(id); }
 let currentTarget = 80;
+const wattHistory = [];
+const maxTrendPoints = 40;
 
 function goingOnText(report) {
   const c = report.charging || {};
@@ -687,7 +706,57 @@ function goingOnText(report) {
   }
   if (c.adapter_connected) return "On power, paused above your limit.";
   const pct = c.charge_percent;
-  return `On battery${pct != null ? " · " + pct.toFixed(0) + "% left" : ""}.`;
+  const eta = c.eta_to_empty_label;
+  const parts = [];
+  if (pct != null) parts.push(pct.toFixed(0) + "% left");
+  if (eta && eta !== "—") parts.push(eta + " remaining");
+  return `On battery${parts.length ? " · " + parts.join(" · ") : ""}.`;
+}
+
+function smoothPath(points) {
+  if (points.length < 2) return "";
+  let d = `M ${points[0][0]},${points[0][1]}`;
+  for (let i = 1; i < points.length; i++) {
+    const [x0, y0] = points[i - 1];
+    const [x1, y1] = points[i];
+    const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+    d += ` Q ${x0},${y0} ${mx},${my}`;
+  }
+  const last = points[points.length - 1];
+  d += ` L ${last[0]},${last[1]}`;
+  return d;
+}
+
+function drawTrend() {
+  const w = 292, h = 48, pad = 3;
+  if (wattHistory.length < 2) {
+    $("trend-line").setAttribute("d", "");
+    $("trend-area").setAttribute("d", "");
+    $("trend-range").textContent = "—";
+    return;
+  }
+  const vals = wattHistory;
+  const maxAbs = Math.max(...vals.map(v => Math.abs(v)), 5);
+  const x = (i) => pad + (i / (vals.length - 1)) * (w - pad * 2);
+  const y = (v) => h / 2 - (v / maxAbs) * (h / 2 - pad);
+
+  const points = vals.map((v, i) => [x(i), y(v)]);
+  $("trend-line").setAttribute("d", smoothPath(points));
+  $("trend-zero").setAttribute("y1", h / 2);
+  $("trend-zero").setAttribute("y2", h / 2);
+
+  const areaPath = smoothPath(points) + ` L ${x(vals.length - 1)},${h - pad} L ${x(0)},${h - pad} Z`;
+  $("trend-area").setAttribute("d", areaPath);
+
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  $("trend-range").textContent = `${lo.toFixed(0)}W … ${hi.toFixed(0)}W`;
+}
+
+function pushTrend(watts) {
+  if (typeof watts !== "number") return;
+  wattHistory.push(watts);
+  while (wattHistory.length > maxTrendPoints) wattHistory.shift();
+  drawTrend();
 }
 
 function apply(report) {
@@ -708,8 +777,18 @@ function apply(report) {
   $("temp").textContent = (e.temperature_c ?? "—") + " °C";
   $("health").textContent = h.health_percent == null ? "—" : h.health_percent.toFixed(0) + "%";
   $("cycles").textContent = h.cycle_count ?? "—";
-  $("eta80").textContent = c.eta_to_80_label || "—";
-  $("etaFull").textContent = c.eta_to_full_label || "—";
+
+  if (c.is_charging) {
+    $("eta80-label").textContent = "To " + currentTarget + "%";
+    $("eta80").textContent = c.eta_to_80_label || "—";
+    $("etaFull-label").textContent = "To full";
+    $("etaFull").textContent = c.eta_to_full_label || "—";
+  } else {
+    $("eta80-label").textContent = "Time left";
+    $("eta80").textContent = c.eta_to_empty_label || "—";
+    $("etaFull-label").textContent = "To full";
+    $("etaFull").textContent = "—";
+  }
 
   $("going-on-text").textContent = goingOnText(report);
 
@@ -721,11 +800,18 @@ function apply(report) {
 
 async function boot() {
   const snap = await fetch("/api/snapshot").then(r => r.json());
+  (snap.history || []).forEach(p => { if (typeof p.watts === "number") wattHistory.push(p.watts); });
+  while (wattHistory.length > maxTrendPoints) wattHistory.shift();
   if (snap.latest) apply(snap.latest);
+  drawTrend();
   const es = new EventSource("/api/events");
   es.onmessage = (msg) => {
     const payload = JSON.parse(msg.data);
-    if (payload.type === "snapshot") apply(payload.data);
+    if (payload.type === "snapshot") {
+      apply(payload.data);
+      const w = payload.data.electrical && payload.data.electrical.watts;
+      pushTrend(w);
+    }
   };
 }
 boot();
