@@ -121,6 +121,26 @@ class ChargeRateTracker:
         # hours = mAh / mA → minutes
         return (remaining_mah / rate) * 60.0
 
+    def eta_minutes_to_empty(self, sample: BatterySample) -> float | None:
+        """Minutes until current capacity reaches 0 at the smoothed discharge rate."""
+        if sample.max_capacity_mah <= 100:
+            # Percent mode: current_capacity_mah is already a percentage.
+            scale = sample.design_capacity_mah if sample.design_capacity_mah > 0 else 7000
+            remaining_mah = sample.current_capacity_mah / 100.0 * scale
+        else:
+            remaining_mah = sample.current_capacity_mah
+
+        if remaining_mah <= 0:
+            return 0.0
+
+        rate = self.average_ma
+        if rate is None:
+            rate = float(sample.amperage_ma)
+        if rate is None or rate >= -50:  # need a real discharge current, not idle/charging
+            return None
+        # hours = mAh / mA → minutes
+        return (remaining_mah / abs(rate)) * 60.0
+
 
 def format_duration(minutes: float | None) -> str:
     if minutes is None:
@@ -171,6 +191,7 @@ def build_report(
 
     eta_80 = rate.eta_minutes_to_capacity(sample, target_mah) if target_mah is not None else None
     eta_full = rate.eta_minutes_to_capacity(sample, full_mah) if full_mah is not None else None
+    eta_empty = rate.eta_minutes_to_empty(sample)
 
     already_80 = charge_pct is not None and charge_pct >= target_optimized
     already_full = sample.fully_charged or (charge_pct is not None and charge_pct >= 99.5)
@@ -200,8 +221,12 @@ def build_report(
             "apple_time_remaining_min": apple_eta,
             "eta_to_80_min": None if already_80 else (None if eta_80 is None else round(eta_80, 1)),
             "eta_to_full_min": None if already_full else (None if eta_full is None else round(eta_full, 1)),
-            "eta_to_80_label": "already ≥ 80%" if already_80 else format_duration(eta_80),
+            "eta_to_80_label": (
+                f"already ≥ {target_optimized:g}%" if already_80 else format_duration(eta_80)
+            ),
             "eta_to_full_label": "full" if already_full else format_duration(eta_full),
+            "eta_to_empty_min": None if eta_empty is None else round(eta_empty, 1),
+            "eta_to_empty_label": format_duration(eta_empty),
             "optimized_target_percent": target_optimized,
         },
         "health": {

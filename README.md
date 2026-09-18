@@ -238,6 +238,63 @@ python3 -m mac_battery --host 127.0.0.1 --port 8780 --interval 1 --target 80
 - `--no-auto-demo-fallback`: exit instead of using demo data when live read fails
 - `--host` / `--port` / `--log-level`
 
+## Menu-bar app (native, macOS only)
+
+For a real macOS menu-bar item — with the same graphical dashboard as above
+in a native popover, not a browser tab — install the optional PyObjC
+dependencies and run the menu-bar entry point:
+
+```bash
+pip install -e ".[menubar]"
+mac-battery-menubar
+```
+
+The status item shows live wattage and charge percent, e.g. `↑ 36.4W 42%`
+(`↑` charging, `↓` discharging, `•` idle). **Left click** opens a compact
+popover (charge bar, "what's going on" line, key stats) rendered in an
+embedded `WKWebView`, sized to fit without scrolling — it's a purpose-built
+small page (`/popover`), not the full browser dashboard shrunk down, since
+that has charts and panels meant for a full window and doesn't fit any
+reasonably-sized dropdown. **Right click** gives a small menu to open the
+full dashboard in your default browser, or quit.
+
+```text
+mac-battery-menubar --interval 2 --target 80
+```
+
+- `--interval`: seconds between refreshes (default `2`)
+- `--target`: optimized charge target percent for the ETA line (default `80`)
+- `--demo`: simulate a 2018 MBP charge session instead of reading live hardware
+- `--host` / `--port`: bind address/port for the background dashboard (default `127.0.0.1:8780`)
+- `--log-level`
+
+This talks to AppKit/WebKit directly (not the `rumps` wrapper library),
+because a status item's `NSMenu` can only hold plain text — there's no path
+from it to a custom graphical view. Requires `pyobjc-framework-Cocoa` and
+`pyobjc-framework-WebKit`, both macOS-only; running `mac-battery-menubar` on
+any other platform (or without the `menubar` extra installed) exits with an
+explanation instead of a bare import error.
+
+### Running it as a real app, not a terminal command
+
+`scripts/make_menubar_app.sh` builds a double-clickable `MacBook Battery.app`
+that wraps `mac-battery-menubar` — a normal Finder/Applications/Login-Items
+entry point instead of a Terminal session you have to keep open:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e ".[menubar]"
+./scripts/make_menubar_app.sh "$(pwd)/.venv/bin/python3"
+```
+
+That writes `~/Applications/MacBook Battery.app`. Double-click it in Finder,
+or drag it into **System Settings > General > Login Items** to have it start
+automatically at login. It's a thin wrapper (a launcher script + Info.plist)
+around the venv you already built, not a frozen/signed bundle, so macOS may
+show an unsigned-app warning the first time — that's expected for something
+built locally; approve it once. Re-run the script if you move the repo or
+the venv.
+
 ## API
 
 - `GET /api/snapshot`: latest report plus short history and events
