@@ -240,25 +240,22 @@ python3 -m mac_battery --host 127.0.0.1 --port 8780 --interval 1 --target 80
 
 ## Menu-bar app (native, macOS only)
 
-For a status item in the actual macOS menu bar (not a browser tab), install
-the optional `rumps` dependency and run the menu-bar entry point instead:
+For a real macOS menu-bar item — with the same graphical dashboard as above
+in a native popover, not a browser tab — install the optional PyObjC
+dependencies and run the menu-bar entry point:
 
 ```bash
 pip install -e ".[menubar]"
 mac-battery-menubar
 ```
 
-The menu bar shows live wattage and charge percent, e.g. `↑ 36.4W 42%`
-(`↑` charging, `↓` discharging, `•` idle). Click it for a dropdown with
-voltage, amperage, battery health, cycle count, and ETA to your `--target` /
-full charge — the same numbers as the web dashboard, sampled from the same
-`AppleSmartBattery` reader.
-
-An NSStatusItem title is text-only, so the graphical dashboard (charge bar,
-history charts, stats cards) isn't rendered inline in the dropdown. Instead
-`mac-battery-menubar` runs that same dashboard in the background and the
-top menu item, **Open Dashboard…**, opens it in your browser with one
-click — no separate `mac-battery` command needed.
+The status item shows live wattage and charge percent, e.g. `↑ 36.4W 42%`
+(`↑` charging, `↓` discharging, `•` idle). **Left click** opens a popover
+with the full graphical dashboard (charge bar, "what's going on" card,
+stats, history charts) rendered in an embedded `WKWebView` — the same HTML
+the browser dashboard serves, sampled from the same `AppleSmartBattery`
+reader, just shown inline instead of in a tab. **Right click** gives a
+small menu to open that dashboard in your default browser instead, or quit.
 
 ```text
 mac-battery-menubar --interval 2 --target 80
@@ -270,9 +267,12 @@ mac-battery-menubar --interval 2 --target 80
 - `--host` / `--port`: bind address/port for the background dashboard (default `127.0.0.1:8780`)
 - `--log-level`
 
-`rumps` depends on PyObjC and only installs on macOS; running
-`mac-battery-menubar` on any other platform (or without the `menubar` extra
-installed) exits with an explanation instead of a bare import error.
+This talks to AppKit/WebKit directly (not the `rumps` wrapper library),
+because a status item's `NSMenu` can only hold plain text — there's no path
+from it to a custom graphical view. Requires `pyobjc-framework-Cocoa` and
+`pyobjc-framework-WebKit`, both macOS-only; running `mac-battery-menubar` on
+any other platform (or without the `menubar` extra installed) exits with an
+explanation instead of a bare import error.
 
 ## API
 

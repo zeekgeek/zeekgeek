@@ -1,14 +1,20 @@
-"""Native macOS menu-bar status item for MacBook Battery Diagnostic.
+"""Native macOS menu-bar app for MacBook Battery Diagnostic.
 
-Requires `rumps` (PyObjC-based), which only works on macOS:
+Requires PyObjC (Cocoa + WebKit), which only installs on macOS:
     pip install -e ".[menubar]"
     mac-battery-menubar
 
-The status item itself is text-only (that's all a native NSStatusItem
-title supports), but the app also runs the same graphical web dashboard
-used by `mac-battery` in the background and adds an "Open Dashboard"
-menu entry that opens it — one click for the full AlDente-style charts
-and bars, no separate terminal command needed.
+Unlike a plain rumps app, this shows the actual graphical dashboard —
+the same charge bar, "what's going on" card, stats, and charts as
+`mac-battery`'s web dashboard — in a native popover anchored to the
+menu-bar icon, via an embedded WKWebView. A left click opens/closes the
+popover; a right click gives a small Quit / Open in Browser menu.
+
+This module talks directly to AppKit/WebKit rather than a wrapper
+library because there isn't a clean way to attach a custom NSPopover to
+a status item through rumps: rumps always wires the status item straight
+to a plain-text NSMenu (see its `NSApp.initializeStatusBar`), which is
+why the earlier text-only version couldn't show real graphics.
 """
 
 from __future__ import annotations
@@ -20,12 +26,28 @@ import threading
 import webbrowser
 
 try:
-    import rumps
+    from AppKit import (
+        NSApplication,
+        NSApplicationActivationPolicyAccessory,
+        NSMenu,
+        NSMenuItem,
+        NSPopover,
+        NSStatusBar,
+        NSVariableStatusItemLength,
+        NSViewController,
+    )
+    from Foundation import NSMakeRect, NSMakeSize, NSObject, NSTimer, NSURL, NSURLRequest
+    from WebKit import WKWebView, WKWebViewConfiguration
 except ImportError as exc:  # pragma: no cover - exercised only off macOS
     raise SystemExit(
-        "The menu-bar app requires the 'rumps' package, which only installs on macOS.\n"
-        "Run: pip install -e '.[menubar]'"
+        "The menu-bar app requires PyObjC's Cocoa and WebKit bindings, which only\n"
+        "install on macOS. Run: pip install -e '.[menubar]'"
     ) from exc
+
+try:
+    from AppKit import NSEventTypeRightMouseUp as _RIGHT_MOUSE_UP
+except ImportError:  # older PyObjC naming
+    from AppKit import NSRightMouseUp as _RIGHT_MOUSE_UP
 
 from .__main__ import pick_available_port
 from .metrics import ChargeRateTracker, build_report
@@ -34,6 +56,9 @@ from .state import BatteryState
 from .web import create_app
 
 LOGGER = logging.getLogger(__name__)
+
+_NS_MIN_Y_EDGE = 1  # NSRectEdge.minY: show the popover below the status item
+_POPOVER_TRANSIENT = 1  # NSPopoverBehavior.transient: closes on outside click
 
 
 async def _serve_dashboard(
@@ -66,81 +91,80 @@ async def _serve_dashboard(
     await asyncio.gather(sample_loop(), server.serve())
 
 
-class BatteryMenuBarApp(rumps.App):
-    """Menu-bar title shows live wattage + charge %; menu has the rest plus a dashboard link."""
+class AppDelegate(NSObject):
+    """NSApplication delegate: owns the status item, popover, and refresh timer.
 
-    def __init__(
-        self,
-        *,
-        interval: float = 2.0,
-        target: float = 80.0,
-        demo: bool = False,
-        host: str = "127.0.0.1",
-        port: int = 8780,
-    ) -> None:
-        super().__init__("MacBook Battery", title="Battery —")
-        self.target = target
-        self.host = host
-        self.reader = open_reader(force_demo=demo)
-        self.state = BatteryState()
-        self.rate = ChargeRateTracker()
-        self.dashboard_port = pick_available_port(host, port)
+    Configuration (reader/state/dashboard_url/etc.) is set as plain
+    Python attributes on the instance right after `alloc().init()`,
+    before `applicationDidFinishLaunching_` fires — simpler than wiring
+    a custom Objective-C initializer selector for a handful of values.
+    """
 
-        self.item_dashboard = rumps.MenuItem("Open Dashboard…", callback=self.open_dashboard)
-        self.item_power = rumps.MenuItem("Power: —")
-        self.item_voltage = rumps.MenuItem("Voltage: —")
-        self.item_amperage = rumps.MenuItem("Amperage: —")
-        self.item_health = rumps.MenuItem("Health: —")
-        self.item_cycles = rumps.MenuItem("Cycles: —")
-        self.item_eta = rumps.MenuItem("ETA: —")
-        self.item_source = rumps.MenuItem("Source: —")
-        self.menu = [
-            self.item_dashboard,
-            None,
-            self.item_power,
-            self.item_voltage,
-            self.item_amperage,
-            None,
-            self.item_health,
-            self.item_cycles,
-            self.item_eta,
-            None,
-            self.item_source,
-        ]
+    def applicationDidFinishLaunching_(self, notification) -> None:
+        status_bar = NSStatusBar.systemStatusBar()
+        self.status_item = status_bar.statusItemWithLength_(NSVariableStatusItemLength)
+        button = self.status_item.button()
+        button.setTitle_("Battery —")
+        button.setTarget_(self)
+        button.setAction_("statusItemClicked:")
 
-        dashboard_url = f"http://{self.host}:{self.dashboard_port}/"
-        print(f"Battery dashboard (opens from the menu bar too): {dashboard_url}")
+        self.popover = NSPopover.alloc().init()
+        self.popover.setContentSize_(NSMakeSize(380, 660))
+        self.popover.setBehavior_(_POPOVER_TRANSIENT)
 
-        threading.Thread(
-            target=lambda: asyncio.run(
-                _serve_dashboard(
-                    self.reader,
-                    self.state,
-                    self.rate,
-                    interval=interval,
-                    target=target,
-                    host=host,
-                    port=self.dashboard_port,
-                )
-            ),
-            daemon=True,
-            name="battery-dashboard-server",
-        ).start()
+        webview_config = WKWebViewConfiguration.alloc().init()
+        self.webview = WKWebView.alloc().initWithFrame_configuration_(
+            NSMakeRect(0, 0, 380, 660), webview_config
+        )
+        self.webview.loadRequest_(NSURLRequest.requestWithURL_(NSURL.URLWithString_(self.dashboard_url)))
 
-        self.timer = rumps.Timer(self.refresh, interval)
-        self.timer.start()
+        view_controller = NSViewController.alloc().init()
+        view_controller.setView_(self.webview)
+        self.popover.setContentViewController_(view_controller)
 
-    def open_dashboard(self, _sender: "rumps.MenuItem") -> None:
-        webbrowser.open(f"http://{self.host}:{self.dashboard_port}/")
+        self.timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            self.refresh_interval, self, "refreshTitle:", None, True
+        )
 
-    def refresh(self, _sender: "rumps.Timer | None") -> None:
+    def statusItemClicked_(self, sender) -> None:
+        event = NSApplication.sharedApplication().currentEvent()
+        if event is not None and event.type() == _RIGHT_MOUSE_UP:
+            self._showContextMenu()
+            return
+        if self.popover.isShown():
+            self.popover.performClose_(sender)
+        else:
+            self.popover.showRelativeToRect_ofView_preferredEdge_(
+                sender.bounds(), sender, _NS_MIN_Y_EDGE
+            )
+
+    def _showContextMenu(self) -> None:
+        menu = NSMenu.alloc().init()
+
+        open_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            "Open in Browser", "openInBrowser:", ""
+        )
+        open_item.setTarget_(self)
+        menu.addItem_(open_item)
+
+        menu.addItem_(NSMenuItem.separatorItem())
+
+        quit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Quit", "terminate:", "")
+        quit_item.setTarget_(NSApplication.sharedApplication())
+        menu.addItem_(quit_item)
+
+        self.status_item.setMenu_(menu)
+        self.status_item.button().performClick_(None)
+        self.status_item.setMenu_(None)  # detach so the next left click hits statusItemClicked_ again
+
+    def openInBrowser_(self, sender) -> None:
+        webbrowser.open(self.dashboard_url)
+
+    def refreshTitle_(self, timer) -> None:
         report = self.state.latest
         if report is None:
-            self.title = "Battery —"
             return
-
-        e, c, h = report["electrical"], report["charging"], report["health"]
-
+        e, c = report["electrical"], report["charging"]
         if e["amperage_ma"] > 50:
             arrow = "↑"
         elif e["amperage_ma"] < -50:
@@ -149,28 +173,14 @@ class BatteryMenuBarApp(rumps.App):
             arrow = "•"
         pct = c["charge_percent"]
         pct_label = f"{pct:.0f}%" if pct is not None else "—"
-        self.title = f"{arrow} {abs(e['watts']):.1f}W {pct_label}"
-
-        self.item_power.title = f"Power: {e['watts']:.2f} W"
-        self.item_voltage.title = f"Voltage: {e['voltage_v']:.3f} V"
-        self.item_amperage.title = f"Amperage: {e['amperage_a']:.3f} A"
-        health = h["health_percent"]
-        self.item_health.title = (
-            f"Health: {health:.0f}% ({h['health_band']})" if health is not None else "Health: —"
-        )
-        self.item_cycles.title = f"Cycles: {h['cycle_count']} / {h['design_cycle_count']}"
-        self.item_eta.title = (
-            f"To {c['optimized_target_percent']:g}%: {c['eta_to_80_label']} "
-            f"· Full: {c['eta_to_full_label']}"
-        )
-        self.item_source.title = f"Source: {report['source']}"
+        self.status_item.button().setTitle_(f"{arrow} {abs(e['watts']):.1f}W {pct_label}")
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Native macOS menu-bar battery power monitor (wattage + charge % in the bar), "
-            "with a one-click link to the full graphical dashboard."
+            "Native macOS menu-bar battery power monitor. The status item shows live "
+            "wattage + charge %; click it for the full graphical dashboard in a popover."
         )
     )
     parser.add_argument("--interval", type=float, default=2.0, help="Seconds between refreshes (default: 2.0)")
@@ -185,13 +195,39 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
     logging.basicConfig(level=getattr(logging, args.log_level.upper()))
-    app = BatteryMenuBarApp(
-        interval=args.interval,
-        target=args.target,
-        demo=args.demo,
-        host=args.host,
-        port=args.port,
-    )
+
+    reader = open_reader(force_demo=args.demo)
+    state = BatteryState()
+    rate = ChargeRateTracker()
+    dashboard_port = pick_available_port(args.host, args.port)
+    dashboard_url = f"http://localhost:{dashboard_port}/"
+    print(f"Battery dashboard (also shown in the menu-bar popover): {dashboard_url}")
+
+    threading.Thread(
+        target=lambda: asyncio.run(
+            _serve_dashboard(
+                reader,
+                state,
+                rate,
+                interval=args.interval,
+                target=args.target,
+                host=args.host,
+                port=dashboard_port,
+            )
+        ),
+        daemon=True,
+        name="battery-dashboard-server",
+    ).start()
+
+    app = NSApplication.sharedApplication()
+    app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)  # no Dock icon
+
+    delegate = AppDelegate.alloc().init()
+    delegate.state = state
+    delegate.dashboard_url = dashboard_url
+    delegate.refresh_interval = args.interval
+    app.setDelegate_(delegate)
+
     app.run()
 
 
