@@ -238,6 +238,35 @@ python3 -m mac_battery --host 127.0.0.1 --port 8780 --interval 1 --target 80
 - `--no-auto-demo-fallback`: exit instead of using demo data when live read fails
 - `--host` / `--port` / `--log-level`
 
+## Menu-bar app (native, macOS only)
+
+For a status item in the actual macOS menu bar (not a browser tab), install
+the optional `rumps` dependency and run the menu-bar entry point instead:
+
+```bash
+pip install -e ".[menubar]"
+mac-battery-menubar
+```
+
+The menu bar shows live wattage and charge percent, e.g. `↑ 36.4W 42%`
+(`↑` charging, `↓` discharging, `•` idle). Click it for a dropdown with
+voltage, amperage, battery health, cycle count, and ETA to your `--target` /
+full charge — the same numbers as the web dashboard, sampled from the same
+`AppleSmartBattery` reader.
+
+```text
+mac-battery-menubar --interval 2 --target 80
+```
+
+- `--interval`: seconds between refreshes (default `2`)
+- `--target`: optimized charge target percent for the ETA line (default `80`)
+- `--demo`: simulate a 2018 MBP charge session instead of reading live hardware
+- `--log-level`
+
+`rumps` depends on PyObjC and only installs on macOS; running
+`mac-battery-menubar` on any other platform (or without the `menubar` extra
+installed) exits with an explanation instead of a bare import error.
+
 ## API
 
 - `GET /api/snapshot`: latest report plus short history and events
