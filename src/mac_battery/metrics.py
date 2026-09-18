@@ -200,7 +200,9 @@ def build_report(
             "apple_time_remaining_min": apple_eta,
             "eta_to_80_min": None if already_80 else (None if eta_80 is None else round(eta_80, 1)),
             "eta_to_full_min": None if already_full else (None if eta_full is None else round(eta_full, 1)),
-            "eta_to_80_label": "already ≥ 80%" if already_80 else format_duration(eta_80),
+            "eta_to_80_label": (
+                f"already ≥ {target_optimized:g}%" if already_80 else format_duration(eta_80)
+            ),
             "eta_to_full_label": "full" if already_full else format_duration(eta_full),
             "optimized_target_percent": target_optimized,
         },

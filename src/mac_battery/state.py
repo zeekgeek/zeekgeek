@@ -47,12 +47,13 @@ class BatteryState:
                 )
             prev_pct = prev.get("charging", {}).get("charge_percent")
             now_pct = charging.get("charge_percent")
+            target = charging.get("optimized_target_percent", 80)
             if (
                 isinstance(prev_pct, (int, float))
                 and isinstance(now_pct, (int, float))
-                and prev_pct < 80 <= now_pct
+                and prev_pct < target <= now_pct
             ):
-                self._emit("reached-80", "Reached 80% charge")
+                self._emit("reached-target", f"Reached {target:g}% charge")
             if charging.get("fully_charged") and not prev.get("charging", {}).get("fully_charged"):
                 self._emit("full", "Battery fully charged")
 
