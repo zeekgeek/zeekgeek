@@ -254,6 +254,12 @@ voltage, amperage, battery health, cycle count, and ETA to your `--target` /
 full charge — the same numbers as the web dashboard, sampled from the same
 `AppleSmartBattery` reader.
 
+An NSStatusItem title is text-only, so the graphical dashboard (charge bar,
+history charts, stats cards) isn't rendered inline in the dropdown. Instead
+`mac-battery-menubar` runs that same dashboard in the background and the
+top menu item, **Open Dashboard…**, opens it in your browser with one
+click — no separate `mac-battery` command needed.
+
 ```text
 mac-battery-menubar --interval 2 --target 80
 ```
@@ -261,6 +267,7 @@ mac-battery-menubar --interval 2 --target 80
 - `--interval`: seconds between refreshes (default `2`)
 - `--target`: optimized charge target percent for the ETA line (default `80`)
 - `--demo`: simulate a 2018 MBP charge session instead of reading live hardware
+- `--host` / `--port`: bind address/port for the background dashboard (default `127.0.0.1:8780`)
 - `--log-level`
 
 `rumps` depends on PyObjC and only installs on macOS; running
