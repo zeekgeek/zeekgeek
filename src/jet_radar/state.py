@@ -18,7 +18,7 @@ from .anomaly import (
     evaluate_triggers,
     movement_posture,
 )
-from .watchlist import match_watchlist, nearest_privacy_destination
+from .watchlist import match_watchlist, nearest_privacy_destination, PRIVACY_DESTINATIONS
 
 
 def utc_now() -> datetime:
@@ -72,6 +72,7 @@ class JetTrack:
     airborne_flags: deque[bool] = field(default_factory=lambda: deque(maxlen=48))
     altitude_history: deque[int | None] = field(default_factory=lambda: deque(maxlen=120))
     time_history: deque[str] = field(default_factory=lambda: deque(maxlen=120))
+    position_history: deque[tuple[float, float]] = field(default_factory=lambda: deque(maxlen=36))
     privacy_visits: Counter = field(default_factory=Counter)
 
     def update(self, obs: JetObservation) -> None:
@@ -88,6 +89,10 @@ class JetTrack:
             self.lat = obs.lat
         if obs.lon is not None:
             self.lon = obs.lon
+        if obs.lat is not None and obs.lon is not None:
+            point = (obs.lat, obs.lon)
+            if not self.position_history or self.position_history[-1] != point:
+                self.position_history.append(point)
         self.altitude_ft = obs.altitude_ft
         self.ground_speed_kt = obs.ground_speed_kt
         self.track_deg = obs.track_deg
@@ -115,8 +120,8 @@ class JetTrack:
         self.present = False
         return True
 
-    def snapshot(self, now: datetime) -> dict[str, Any]:
-        return {
+    def snapshot(self, now: datetime, *, include_history: bool = True) -> dict[str, Any]:
+        data: dict[str, Any] = {
             "hex": self.hex_id,
             "callsign": (self.callsign or "").strip() or None,
             "registration": self.registration,
@@ -139,13 +144,19 @@ class JetTrack:
             "watched_notes": self.watched_notes,
             "movement_style": self.movement_style,
             "posture": movement_posture(list(self.airborne_flags)),
-            "privacy_visits": dict(self.privacy_visits),
             "first_seen": iso_time(self.first_seen),
             "last_seen": iso_time(self.last_seen),
             "stale_seconds": round((now - self.last_seen).total_seconds(), 1),
-            "altitude_history": list(self.altitude_history),
-            "time_history": list(self.time_history),
         }
+        if include_history:
+            data["privacy_visits"] = dict(self.privacy_visits)
+            data["altitude_history"] = list(self.altitude_history)
+            data["time_history"] = list(self.time_history)
+        if self.position_history:
+            data["position_trail"] = [
+                {"lat": lat, "lon": lon} for lat, lon in self.position_history
+            ]
+        return data
 
 
 class RadarState:
@@ -175,7 +186,15 @@ class RadarState:
         self._alarmed_squawks: set[str] = set()
         self._privacy_alerted: set[str] = set()
         self._last_cycle: dict[str, Any] = {}
+        self.scan_mode: str = "starting"
+        self.awaiting_first_poll: bool = True
         self._lock = asyncio.Lock()
+
+    async def set_scan_status(self, *, mode: str, awaiting_first_poll: bool | None = None) -> None:
+        async with self._lock:
+            self.scan_mode = mode
+            if awaiting_first_poll is not None:
+                self.awaiting_first_poll = awaiting_first_poll
 
     async def ingest_cycle(self, observations: list[JetObservation]) -> list[dict[str, Any]]:
         async with self._lock:
@@ -340,8 +359,21 @@ class RadarState:
                     {"code": t.code, "detail": t.detail, "score": t.score} for t in triggers
                 ],
             }
+            self.awaiting_first_poll = False
+            self._prune_old_tracks(now)
             self._events.extend(emitted)
             return emitted
+
+    def _prune_old_tracks(self, now: datetime) -> None:
+        """Drop jets that left coverage long ago so live snapshots stay browser-sized."""
+        cutoff = self.stale_after * 3
+        stale_hexes = [
+            hex_id
+            for hex_id, track in self._jets.items()
+            if not track.present and (now - track.last_seen).total_seconds() > cutoff
+        ]
+        for hex_id in stale_hexes:
+            del self._jets[hex_id]
 
     async def set_sensitivity(
         self, *, sigma: float | None = None, trigger_threshold: int | None = None
@@ -364,10 +396,11 @@ class RadarState:
             self._events.append(event)
             return event
 
-    async def snapshot(self) -> dict[str, Any]:
+    async def snapshot(self, *, stream: bool = False) -> dict[str, Any]:
         async with self._lock:
             now = utc_now()
-            jets = [track.snapshot(now) for track in self._jets.values()]
+            include_history = not stream
+            jets = [track.snapshot(now, include_history=include_history) for track in self._jets.values()]
             jets.sort(
                 key=lambda item: (
                     bool(item["watched_label"]),
@@ -377,6 +410,12 @@ class RadarState:
                 ),
                 reverse=True,
             )
+            if stream:
+                present = [jet for jet in jets if jet["present"]]
+                gone = [jet for jet in jets if not jet["present"]]
+                jets = present[:180] + gone[:20]
+            else:
+                jets = jets[:250]
             hideouts = [
                 {
                     "name": name,
@@ -391,6 +430,10 @@ class RadarState:
                     posture_summary[jet["posture"]].append(jet["identity"])
             return {
                 "generated_at": iso_time(now),
+                "scan_mode": self.scan_mode,
+                "awaiting_first_poll": self.awaiting_first_poll,
+                "feed_source": "adsb.lol" if self.scan_mode == "live" else ("simulated" if self.scan_mode == "demo" else "unknown"),
+                "data_is_live": self.scan_mode == "live" and not self.awaiting_first_poll,
                 "alarm_active": self._alarm.active,
                 "recent_triggers": self._alarm.recent_triggers,
                 "trigger_threshold": self._alarm.threshold,
@@ -407,6 +450,17 @@ class RadarState:
                 "hideout_candidates": hideouts,
                 "watchlist_moves": list(self._watchlist_moves),
                 "posture_summary": {key: values for key, values in posture_summary.items()},
+                "privacy_regions": [
+                    {
+                        "code": dest.code,
+                        "name": dest.name,
+                        "lat": dest.lat,
+                        "lon": dest.lon,
+                        "radius_nm": dest.radius_nm,
+                        "notes": dest.notes,
+                    }
+                    for dest in PRIVACY_DESTINATIONS
+                ],
                 "jets": jets,
                 "events": list(self._events),
             }

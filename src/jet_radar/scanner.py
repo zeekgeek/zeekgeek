@@ -60,6 +60,7 @@ class AdsbLolBackend:
     request_timeout: float = 30.0
 
     async def run(self) -> None:
+        await self.state.set_scan_status(mode="live", awaiting_first_poll=True)
         first = await self._poll_once()
         LOGGER.info("Live ADS-B poll returned %d aircraft", len(first))
         await self.state.ingest_cycle(first)
@@ -242,6 +243,7 @@ class DemoScannerBackend:
         self._tanker_spawned = False
 
     async def run(self) -> None:
+        await self.state.set_scan_status(mode="demo", awaiting_first_poll=True)
         LOGGER.info("Starting demo ADS-B simulator (surge begins at tick %d)", self.surge_at)
         tick = 0
         while True:

@@ -27,7 +27,7 @@ def create_app(state: RadarState) -> FastAPI:
 
     @app.get("/api/jets")
     async def jets() -> dict:
-        return await state.snapshot()
+        return await state.snapshot(stream=False)
 
     @app.post("/api/sensitivity")
     async def set_sensitivity(request: SensitivityRequest) -> JSONResponse:
@@ -38,7 +38,15 @@ def create_app(state: RadarState) -> FastAPI:
 
     @app.get("/api/events")
     async def events() -> StreamingResponse:
-        return StreamingResponse(_event_stream(state), media_type="text/event-stream")
+        return StreamingResponse(
+            _event_stream(state),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     return app
 
@@ -46,7 +54,7 @@ def create_app(state: RadarState) -> FastAPI:
 async def _event_stream(state: RadarState) -> AsyncIterator[str]:
     last_payload = ""
     while True:
-        snapshot = await state.snapshot()
+        snapshot = await state.snapshot(stream=True)
         payload = json.dumps(snapshot)
         if payload != last_payload:
             yield f"data: {payload}\n\n"
@@ -61,6 +69,7 @@ DASHBOARD_HTML = """
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Private Jet Movement Radar</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
   <style>
     :root {
       color-scheme: dark;
@@ -109,8 +118,33 @@ DASHBOARD_HTML = """
     .badge.move { background: rgba(34,197,94,.15); color: var(--green); }
     .meta-row { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--muted); margin-top: 6px; flex-wrap: wrap; }
     canvas { width: 100%; background: #050c18; border-radius: 12px; border: 1px solid #1f2c45; display: block; }
-    #jet-map { height: 380px; }
     #volume-graph { height: 220px; }
+    .map-shell { position: relative; border-radius: 14px; overflow: hidden; border: 1px solid #1f2c45; box-shadow: inset 0 0 80px rgba(56,189,248,.04); }
+    #jet-map { height: min(62vh, 560px); min-height: 380px; background: #050c18; z-index: 1; }
+    .map-toolbar { position: absolute; top: 12px; right: 12px; z-index: 500; display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; max-width: calc(100% - 24px); }
+    .map-toolbar button { background: rgba(13,21,34,.92); color: var(--text); border: 1px solid #2a3d5c; border-radius: 10px; padding: 8px 12px; font-size: 12px; font-weight: 700; backdrop-filter: blur(8px); box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+    .map-toolbar button:hover { border-color: var(--blue); color: #bae6fd; }
+    .map-toolbar button.active { border-color: var(--violet); color: #ddd6fe; background: rgba(46,16,101,.55); }
+    .map-badge { position: absolute; left: 12px; top: 12px; z-index: 500; background: rgba(6,9,16,.88); border: 1px solid #24314c; border-radius: 999px; padding: 7px 12px; font-size: 12px; color: var(--muted); backdrop-filter: blur(8px); }
+    .map-badge b { color: var(--text); }
+    .leaflet-container { font-family: inherit; background: #050c18; }
+    .leaflet-control-zoom a { background: rgba(13,21,34,.92) !important; color: var(--text) !important; border-color: #2a3d5c !important; }
+    .leaflet-control-attribution { background: rgba(6,9,16,.75) !important; color: #64748b !important; font-size: 10px !important; }
+    .leaflet-control-attribution a { color: #94a3b8 !important; }
+    .jet-marker-wrap { background: transparent; border: 0; }
+    .jet-marker { display: flex; align-items: center; justify-content: center; transition: transform .15s ease; }
+    .jet-marker.selected { transform: scale(1.35); z-index: 1000 !important; }
+    .jet-marker svg { filter: drop-shadow(0 2px 4px rgba(0,0,0,.55)); }
+    @keyframes pulse-marker { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.2); opacity: 0.75; } }
+    .map-popup { min-width: 200px; }
+    .map-popup .title { font-weight: 800; font-size: 14px; margin-bottom: 4px; color: #e9eefb; }
+    .map-popup .sub { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #93a1ba; margin-bottom: 8px; }
+    .map-popup .row { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: #cbd5e1; margin: 3px 0; }
+    .map-popup .tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+    .map-popup .tag { border-radius: 999px; padding: 2px 7px; font-size: 10px; font-weight: 700; background: rgba(56,189,248,.15); color: #7dd3fc; }
+    .leaflet-popup-content-wrapper { background: #0d1522; color: #e9eefb; border: 1px solid #24314c; border-radius: 12px; box-shadow: 0 16px 40px rgba(0,0,0,.45); }
+    .leaflet-popup-tip { background: #0d1522; border: 1px solid #24314c; }
+    .leaflet-popup-content { margin: 12px 14px; line-height: 1.35; }
     .events { max-height: 220px; overflow: auto; color: var(--muted); font-size: 13px; }
     .events .alarm-line { color: #fecaca; font-weight: 700; }
     .events .trigger-line { color: #fde68a; }
@@ -124,10 +158,19 @@ DASHBOARD_HTML = """
     .legend .t-dot::before { background: var(--amber); }
     .empty { color: var(--muted); text-align: center; padding: 34px 0; }
     .tiny-note { font-size: 12px; color: var(--muted); margin-top: 6px; }
+    #status-banner { display: none; background: rgba(56,189,248,.14); border: 1px solid var(--blue); color: #bae6fd; padding: 10px 14px; border-radius: 10px; margin: 12px 16px 0 16px; font-size: 14px; }
+    #status-banner.error { background: rgba(239,68,68,.14); border-color: var(--red); color: #fecaca; }
     #alarm-banner { display: none; background: rgba(239,68,68,.18); border: 1px solid var(--red); color: #fecaca; padding: 12px 16px; border-radius: 10px; margin: 12px 16px 0 16px; font-weight: 800; font-size: 15px; animation: pulse 1.2s infinite; }
     @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,.4); } 50% { box-shadow: 0 0 0 8px rgba(239,68,68,0); } }
     .baseline-chip { border: 1px solid #24314c; border-radius: 10px; padding: 6px 10px; font-size: 12px; color: var(--muted); background: var(--panel-2); }
     .baseline-chip b { color: var(--text); }
+    #feed-badge { display: inline-flex; align-items: center; gap: 8px; border-radius: 999px; padding: 6px 12px; font-size: 12px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; margin-left: 10px; vertical-align: middle; }
+    #feed-badge.live { background: rgba(34,197,94,.18); border: 1px solid var(--green); color: #86efac; box-shadow: 0 0 12px rgba(34,197,94,.25); }
+    #feed-badge.polling { background: rgba(245,158,11,.16); border: 1px solid var(--amber); color: #fde68a; }
+    #feed-badge.demo { background: rgba(239,68,68,.16); border: 1px solid var(--red); color: #fecaca; }
+    #feed-badge .dot { width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
+    #feed-badge.live .dot { animation: live-pulse 1.4s infinite; }
+    @keyframes live-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.45; transform: scale(0.85); } }
     .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
     .hideout, .move-row { border: 1px solid #24314c; border-radius: 10px; padding: 8px 10px; margin: 6px 0; background: var(--panel-2); font-size: 13px; }
     .hideout b, .move-row b { color: var(--text); }
@@ -138,7 +181,7 @@ DASHBOARD_HTML = """
 <body>
   <header>
     <div>
-      <h1>Private Jet Movement Radar</h1>
+      <h1>Private Jet Movement Radar <span id="feed-badge" class="polling"><span class="dot"></span><span id="feed-badge-text">CONNECTING</span></span></h1>
       <div class="stats">
         <span id="counts">Waiting for ADS-B data...</span>
         <span id="updated"></span>
@@ -155,6 +198,7 @@ DASHBOARD_HTML = """
     </div>
   </header>
 
+  <div id="status-banner"></div>
   <div id="alarm-banner"></div>
 
   <main>
@@ -165,8 +209,16 @@ DASHBOARD_HTML = """
 
     <section class="stack">
       <section class="panel">
-        <h2>Jet positions</h2>
-        <canvas id="jet-map" width="980" height="380"></canvas>
+        <h2>Live jet map</h2>
+        <div class="map-shell">
+          <div id="jet-map"></div>
+          <div class="map-badge" id="map-badge">Loading map…</div>
+          <div class="map-toolbar">
+            <button type="button" id="map-fit">Fit all jets</button>
+            <button type="button" id="map-trails">Trails: off</button>
+            <button type="button" id="map-hideouts" class="active">Hideouts: on</button>
+          </div>
+        </div>
         <div class="legend">
           <span class="n-dot">Cruising</span>
           <span class="w-dot">Watchlist</span>
@@ -204,6 +256,7 @@ DASHBOARD_HTML = """
     </section>
   </main>
 
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <script>
     let snapshot = null;
     let selectedHex = null;
@@ -211,6 +264,18 @@ DASHBOARD_HTML = """
     let audioCtx = null;
     let sirenTimer = null;
     const notifiedEvents = new Set();
+    let liveMap = null;
+    let jetLayer = null;
+    let trailLayer = null;
+    let hideoutLayer = null;
+    let jetMarkers = new Map();
+    let positionTrails = new Map();
+    let mapReady = false;
+    let showTrails = false;
+    let showHideouts = true;
+    let userMovedMap = false;
+    let lastFlyHex = null;
+    const NM_TO_M = 1852;
 
     const sigmaSlider = document.getElementById("sigma-slider");
     const sigmaLabel = document.getElementById("sigma-label");
@@ -242,23 +307,56 @@ DASHBOARD_HTML = """
       });
     }
 
-    const source = new EventSource("/api/events");
-    source.onmessage = (message) => {
-      snapshot = JSON.parse(message.data);
-      if (document.activeElement !== sigmaSlider) {
-        sigmaSlider.value = snapshot.sigma;
-        sigmaLabel.textContent = Number(snapshot.sigma).toFixed(1);
-      }
-      if (document.activeElement !== thresholdSlider) {
-        thresholdSlider.value = snapshot.trigger_threshold;
-        thresholdLabel.textContent = snapshot.trigger_threshold;
-      }
-      if (snapshot.jets.length && !snapshot.jets.find((j) => j.hex === selectedHex)) {
-        selectedHex = snapshot.jets[0].hex;
-      }
-      render();
-      handleEvents(snapshot.events || []);
-      if (snapshot.alarm_active) startSiren(); else stopSiren();
+    let source = null;
+
+    function connectEvents() {
+      if (source) source.close();
+      source = new EventSource("/api/events");
+      source.onmessage = (message) => {
+        document.getElementById("status-banner").style.display = "none";
+        snapshot = JSON.parse(message.data);
+        if (document.activeElement !== sigmaSlider) {
+          sigmaSlider.value = snapshot.sigma;
+          sigmaLabel.textContent = Number(snapshot.sigma).toFixed(1);
+        }
+        if (document.activeElement !== thresholdSlider) {
+          thresholdSlider.value = snapshot.trigger_threshold;
+          thresholdLabel.textContent = snapshot.trigger_threshold;
+        }
+        if (snapshot.jets.length && !snapshot.jets.find((j) => j.hex === selectedHex)) {
+          selectedHex = snapshot.jets[0].hex;
+        }
+        render();
+        handleEvents(snapshot.events || []);
+        if (snapshot.alarm_active) startSiren(); else stopSiren();
+      };
+      source.onerror = () => {
+        const banner = document.getElementById("status-banner");
+        banner.className = "error";
+        banner.style.display = "block";
+        banner.textContent = "Lost connection to the radar feed — reconnecting…";
+        source.close();
+        setTimeout(connectEvents, 2000);
+      };
+    }
+
+    connectEvents();
+
+    document.getElementById("map-fit").onclick = () => {
+      userMovedMap = false;
+      fitMapToJets(true);
+    };
+    document.getElementById("map-trails").onclick = (event) => {
+      showTrails = !showTrails;
+      event.target.textContent = `Trails: ${showTrails ? "on" : "off"}`;
+      event.target.classList.toggle("active", showTrails);
+      updateLiveMap(snapshot ? snapshot.jets : []);
+    };
+    document.getElementById("map-hideouts").onclick = (event) => {
+      showHideouts = !showHideouts;
+      event.target.textContent = `Hideouts: ${showHideouts ? "on" : "off"}`;
+      event.target.classList.toggle("active", showHideouts);
+      drawPrivacyRegions();
     };
 
     function handleEvents(events) {
@@ -307,6 +405,28 @@ DASHBOARD_HTML = """
 
     function render() {
       if (!snapshot) return;
+      const feedBadge = document.getElementById("feed-badge");
+      const feedBadgeText = document.getElementById("feed-badge-text");
+      if (snapshot.scan_mode === "demo") {
+        feedBadge.className = "demo";
+        feedBadgeText.textContent = "DEMO DATA";
+      } else if (snapshot.data_is_live) {
+        feedBadge.className = "live";
+        feedBadgeText.textContent = `LIVE · ${snapshot.feed_source || "adsb.lol"}`;
+      } else {
+        feedBadge.className = "polling";
+        feedBadgeText.textContent = "POLLING LIVE…";
+      }
+      const statusBanner = document.getElementById("status-banner");
+      if (snapshot.awaiting_first_poll) {
+        statusBanner.className = "";
+        statusBanner.style.display = "block";
+        statusBanner.textContent = snapshot.scan_mode === "demo"
+          ? "Starting demo radar…"
+          : "Polling live ADS-B from adsb.lol — first update can take up to 60 seconds.";
+      } else if (statusBanner.className !== "error") {
+        statusBanner.style.display = "none";
+      }
       document.getElementById("counts").innerHTML =
         `<b>${snapshot.airborne_count}</b> jets · <b>${snapshot.watched_count || 0}</b> watched · ` +
         `<b>${snapshot.tanker_count || 0}</b> tankers · <b>${snapshot.dark_count}</b> dark · ` +
@@ -318,7 +438,7 @@ DASHBOARD_HTML = """
         ? `Baseline: <b>${baseline.airborne_mean}</b> jets ± ${baseline.airborne_std} (${baseline.samples} samples)`
         : `Baseline: learning… ${baseline.samples || 0} samples`;
       renderJets();
-      drawMap(snapshot.jets);
+      updateLiveMap(snapshot.jets);
       drawVolumeGraph(snapshot.history || [], baseline);
       renderPosture();
       renderHideouts();
@@ -365,7 +485,12 @@ DASHBOARD_HTML = """
           </div>`;
       }).join("");
       root.querySelectorAll(".jet").forEach((node) => {
-        node.onclick = () => { selectedHex = node.dataset.hex; render(); };
+        node.onclick = () => {
+          selectedHex = node.dataset.hex;
+          lastFlyHex = selectedHex;
+          userMovedMap = false;
+          render();
+        };
       });
     }
 
@@ -403,78 +528,199 @@ DASHBOARD_HTML = """
       ).join("");
     }
 
-    function drawMap(jets) {
-      const canvas = document.getElementById("jet-map");
-      const ctx = canvas.getContext("2d");
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const plotted = jets.filter((j) => j.present && j.lat != null && j.lon != null);
-      const bounds = mapBounds(plotted);
+    function initLiveMap() {
+      if (liveMap) return;
+      liveMap = L.map("jet-map", { zoomControl: false, worldCopyJump: true });
+      L.control.zoom({ position: "bottomright" }).addTo(liveMap);
+      L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        subdomains: "abcd",
+        maxZoom: 19,
+      }).addTo(liveMap);
+      hideoutLayer = L.layerGroup().addTo(liveMap);
+      trailLayer = L.layerGroup().addTo(liveMap);
+      jetLayer = L.layerGroup().addTo(liveMap);
+      liveMap.setView([38.5, -98], 4);
+      liveMap.on("dragstart zoomstart", () => { userMovedMap = true; });
+      mapReady = true;
+      setTimeout(() => liveMap.invalidateSize(), 0);
+      drawPrivacyRegions();
+    }
 
-      ctx.strokeStyle = "#1c2942";
-      ctx.lineWidth = 1;
-      for (let i = 1; i < 6; i++) {
-        const x = (canvas.width / 6) * i;
-        const y = (canvas.height / 6) * i;
-        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
-      }
-      ctx.fillStyle = "#93a1ba";
-      ctx.font = "11px sans-serif";
-      ctx.fillText(`lon ${bounds.minLon.toFixed(0)}° … ${bounds.maxLon.toFixed(0)}°`, 8, canvas.height - 8);
-      ctx.fillText(`lat ${bounds.minLat.toFixed(0)}° … ${bounds.maxLat.toFixed(0)}°`, 8, 16);
+    function jetColor(jet) {
+      if (jet.hex === selectedHex) return "#38bdf8";
+      if (jet.emergency_squawk) return "#ef4444";
+      if (jet.watched_label) return "#a78bfa";
+      if (jet.is_tanker) return "#f59e0b";
+      if (jet.dark) return "#eab308";
+      return "#22c55e";
+    }
 
-      if (!plotted.length) {
-        ctx.fillText("No positioned jets yet", canvas.width / 2 - 60, canvas.height / 2);
+    function makePlaneIcon(jet, selected) {
+      const color = jetColor(jet);
+      const size = selected ? 30 : 24;
+      const heading = jet.track_deg ?? 0;
+      const pulse = jet.emergency_squawk && jet.present ? "animation:pulse-marker 1.2s infinite;" : "";
+      const glow = jet.watched_label ? `filter:drop-shadow(0 0 8px ${color});` : "";
+      return L.divIcon({
+        className: "jet-marker-wrap",
+        html: `<div class="jet-marker ${selected ? "selected" : ""}" style="${pulse}">
+          <svg width="${size}" height="${size}" viewBox="0 0 24 24" style="transform:rotate(${heading}deg);${glow}">
+            <path d="M12 2.5 L19 16 L12 13.5 L5 16 Z" fill="${color}" stroke="#06111f" stroke-width="1.4" stroke-linejoin="round"/>
+            <path d="M12 13.5 L12 21" stroke="${color}" stroke-width="2.2" stroke-linecap="round"/>
+          </svg>
+        </div>`,
+        iconSize: [size, size],
+        iconAnchor: [size / 2, size / 2],
+      });
+    }
+
+    function popupHtml(jet) {
+      const tags = [];
+      if (jet.watched_label) tags.push(`<span class="tag">${escapeHtml(jet.watched_label)}</span>`);
+      if (jet.is_tanker) tags.push('<span class="tag">tanker</span>');
+      if (jet.dark) tags.push('<span class="tag">dark</span>');
+      if (jet.emergency_squawk) tags.push(`<span class="tag">squawk ${escapeHtml(jet.squawk)}</span>`);
+      if (jet.posture) tags.push(`<span class="tag">${escapeHtml(jet.posture)}</span>`);
+      const alt = jet.altitude_ft != null
+        ? `FL${String(Math.round(jet.altitude_ft / 100)).padStart(3, "0")}`
+        : (jet.on_ground ? "on ground" : "alt ?");
+      const speed = jet.ground_speed_kt != null ? `${Math.round(jet.ground_speed_kt)} kt` : "—";
+      const track = jet.track_deg != null ? `${Math.round(jet.track_deg)}°` : "—";
+      return `
+        <div class="map-popup">
+          <div class="title">${escapeHtml(jet.identity)}</div>
+          <div class="sub">${escapeHtml(jet.hex)}${jet.type ? " · " + escapeHtml(jet.type) : ""}</div>
+          <div class="row"><span>Altitude</span><b>${escapeHtml(alt)}</b></div>
+          <div class="row"><span>Ground speed</span><b>${escapeHtml(speed)}</b></div>
+          <div class="row"><span>Heading</span><b>${escapeHtml(track)}</b></div>
+          <div class="row"><span>Squawk</span><b>${escapeHtml(jet.squawk || "?")}</b></div>
+          ${tags.length ? `<div class="tags">${tags.join("")}</div>` : ""}
+        </div>`;
+    }
+
+    function recordTrail(jet) {
+      if (!jet.present || jet.lat == null || jet.lon == null) return;
+      if (Array.isArray(jet.position_trail) && jet.position_trail.length) {
+        positionTrails.set(jet.hex, jet.position_trail.map((p) => ({ lat: p.lat, lon: p.lon })));
         return;
+      }
+      const trail = positionTrails.get(jet.hex) || [];
+      const last = trail[trail.length - 1];
+      if (!last || Math.hypot(last.lat - jet.lat, last.lon - jet.lon) > 0.003) {
+        trail.push({ lat: jet.lat, lon: jet.lon });
+        if (trail.length > 36) trail.shift();
+        positionTrails.set(jet.hex, trail);
+      }
+    }
+
+    function drawPrivacyRegions() {
+      if (!mapReady || !hideoutLayer) return;
+      hideoutLayer.clearLayers();
+      if (!showHideouts || !snapshot) return;
+      for (const region of snapshot.privacy_regions || []) {
+        const circle = L.circle([region.lat, region.lon], {
+          radius: region.radius_nm * NM_TO_M,
+          color: "#a78bfa",
+          weight: 1.2,
+          opacity: 0.55,
+          fillColor: "#7c3aed",
+          fillOpacity: 0.08,
+          dashArray: "6 8",
+        });
+        circle.bindTooltip(`<b>${escapeHtml(region.name)}</b><br>${escapeHtml(region.notes || "")}`, {
+          sticky: true,
+          opacity: 0.95,
+          className: "map-popup",
+        });
+        hideoutLayer.addLayer(circle);
+        L.circleMarker([region.lat, region.lon], {
+          radius: 3,
+          color: "#c4b5fd",
+          fillColor: "#a78bfa",
+          fillOpacity: 0.9,
+          weight: 1,
+        }).addTo(hideoutLayer);
+      }
+    }
+
+    function updateLiveMap(jets) {
+      initLiveMap();
+      const plotted = jets.filter((j) => j.present && j.lat != null && j.lon != null);
+      const airborne = plotted.filter((j) => j.airborne && !j.is_tanker);
+      document.getElementById("map-badge").innerHTML =
+        `<b>${airborne.length}</b> airborne · <b>${plotted.length}</b> positioned`;
+
+      for (const jet of plotted) recordTrail(jet);
+
+      const activeHexes = new Set(plotted.map((j) => j.hex));
+      for (const [hex, marker] of jetMarkers) {
+        if (!activeHexes.has(hex)) {
+          jetLayer.removeLayer(marker);
+          jetMarkers.delete(hex);
+        }
       }
 
       for (const jet of plotted) {
-        const x = 24 + ((jet.lon - bounds.minLon) / (bounds.maxLon - bounds.minLon)) * (canvas.width - 48);
-        const y = 24 + ((bounds.maxLat - jet.lat) / (bounds.maxLat - bounds.minLat)) * (canvas.height - 48);
-        let color = "#22c55e";
-        if (jet.dark) color = "#eab308";
-        if (jet.is_tanker) color = "#f59e0b";
-        if (jet.watched_label) color = "#a78bfa";
-        if (jet.emergency_squawk) color = "#ef4444";
-        if (jet.hex === selectedHex) color = "#38bdf8";
-        drawPlane(ctx, x, y, ((jet.track_deg || 0) - 90) * Math.PI / 180, color);
-        if (jet.emergency_squawk || jet.is_tanker) {
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.arc(x, y, 13, 0, Math.PI * 2);
-          ctx.stroke();
+        const selected = jet.hex === selectedHex;
+        const icon = makePlaneIcon(jet, selected);
+        let marker = jetMarkers.get(jet.hex);
+        if (!marker) {
+          marker = L.marker([jet.lat, jet.lon], { icon, zIndexOffset: selected ? 1200 : jet.watched_label ? 800 : 0 });
+          marker.on("click", () => {
+            selectedHex = jet.hex;
+            lastFlyHex = jet.hex;
+            render();
+          });
+          marker.addTo(jetLayer);
+          jetMarkers.set(jet.hex, marker);
+        } else {
+          marker.setLatLng([jet.lat, jet.lon]);
+          marker.setIcon(icon);
+          marker.setZIndexOffset(selected ? 1200 : jet.watched_label ? 800 : 0);
         }
-        ctx.fillStyle = "#e9eefb";
-        ctx.font = "11px sans-serif";
-        ctx.fillText(jet.identity.length > 28 ? jet.identity.slice(0, 27) + "…" : jet.identity, x + 10, y - 8);
+        marker.bindPopup(popupHtml(jet), { maxWidth: 280, closeButton: false });
+      }
+
+      trailLayer.clearLayers();
+      if (showTrails) {
+        const trailHexes = selectedHex ? [selectedHex] : [...positionTrails.keys()];
+        for (const hex of trailHexes) {
+          const trail = positionTrails.get(hex);
+          if (!trail || trail.length < 2) continue;
+          const jet = plotted.find((j) => j.hex === hex);
+          const color = jet ? jetColor(jet) : "#38bdf8";
+          L.polyline(trail.map((p) => [p.lat, p.lon]), {
+            color,
+            weight: selectedHex === hex ? 3 : 2,
+            opacity: selectedHex === hex ? 0.85 : 0.45,
+            dashArray: selectedHex === hex ? null : "4 8",
+          }).addTo(trailLayer);
+        }
+      }
+
+      if (!userMovedMap) {
+        if (lastFlyHex) {
+          const focus = plotted.find((j) => j.hex === lastFlyHex);
+          if (focus) {
+            liveMap.flyTo([focus.lat, focus.lon], Math.max(liveMap.getZoom(), 7), { duration: 0.7 });
+            lastFlyHex = null;
+          }
+        } else if (plotted.length) {
+          fitMapToJets(false);
+        }
       }
     }
 
-    function drawPlane(ctx, x, y, angle, color) {
-      ctx.save();
-      ctx.translate(x, y);
-      ctx.rotate(angle);
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.moveTo(8, 0);
-      ctx.lineTo(-6, -5);
-      ctx.lineTo(-3, 0);
-      ctx.lineTo(-6, 5);
-      ctx.closePath();
-      ctx.fill();
-      ctx.restore();
-    }
-
-    function mapBounds(jets) {
-      if (!jets.length) return { minLat: 15, maxLat: 55, minLon: -160, maxLon: -60 };
-      let minLat = Math.min(...jets.map((j) => j.lat));
-      let maxLat = Math.max(...jets.map((j) => j.lat));
-      let minLon = Math.min(...jets.map((j) => j.lon));
-      let maxLon = Math.max(...jets.map((j) => j.lon));
-      const padLat = Math.max((maxLat - minLat) * 0.15, 2);
-      const padLon = Math.max((maxLon - minLon) * 0.15, 2);
-      return { minLat: minLat - padLat, maxLat: maxLat + padLat, minLon: minLon - padLon, maxLon: maxLon + padLon };
+    function fitMapToJets(animate) {
+      if (!liveMap || !snapshot) return;
+      const plotted = (snapshot.jets || []).filter((j) => j.present && j.lat != null && j.lon != null);
+      if (!plotted.length) {
+        liveMap.setView([38.5, -98], 4);
+        return;
+      }
+      const bounds = L.latLngBounds(plotted.map((j) => [j.lat, j.lon]));
+      liveMap.fitBounds(bounds.pad(0.12), { animate: !!animate, maxZoom: 8 });
     }
 
     function drawVolumeGraph(history, baseline) {
