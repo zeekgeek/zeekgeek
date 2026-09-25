@@ -15,6 +15,7 @@ from typing import Any
 import yaml
 
 from ..db import StoreDatabase, default_db_path
+from ..llm.env import load_dotenv
 from ..pipeline.orchestrator import run_orchestrator
 from ..pipeline.state_tracker import SwarmStateTracker
 
@@ -95,10 +96,15 @@ class AutopilotRunner:
         if not self._check_daily_cap():
             return {"skipped": True, "reason": "daily_cycle_cap"}
 
+        load_dotenv()
         niche = self._next_niche()
         self.tracker.log(f"Autopilot cycle starting for niche: {niche}")
-        if self.config.use_claude and not os.environ.get("ANTHROPIC_API_KEY"):
-            self.tracker.log("use_claude=true but ANTHROPIC_API_KEY missing; using templates", level="WARNING")
+        if self.config.use_claude:
+            if not os.environ.get("OPENROUTER_API_KEY") and not os.environ.get("ANTHROPIC_API_KEY"):
+                self.tracker.log(
+                    "use_claude=true but OPENROUTER_API_KEY / ANTHROPIC_API_KEY missing; using templates",
+                    level="WARNING",
+                )
 
         result = await run_orchestrator(
             niche,

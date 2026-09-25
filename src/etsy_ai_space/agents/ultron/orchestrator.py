@@ -8,6 +8,7 @@ import os
 from typing import Any
 
 from ...db import StoreDatabase
+from ...llm.env import get_openrouter_key, load_dotenv, openrouter_model
 from ...models import CreativeBrief, ListingDraft
 from ...tools.humanize import humanize_text
 from .phases import run_phase1_research, run_phase2_brief, run_phase3_workers, run_phase4_export
@@ -27,9 +28,16 @@ class UltronOrchestrator:
         demo: bool = True,
         export_dir: str | None = None,
     ) -> None:
+        load_dotenv()
         self.db = db
-        self.anthropic_api_key = anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY")
-        self.model = model
+        self.openrouter_key = get_openrouter_key()
+        passed = anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY")
+        if passed and passed.startswith("sk-or-"):
+            self.openrouter_key = self.openrouter_key or passed
+            self.anthropic_api_key = None
+        else:
+            self.anthropic_api_key = passed
+        self.model = openrouter_model(model) if self.openrouter_key else model
         self.demo = demo
         self.export_dir = export_dir
 
@@ -47,17 +55,18 @@ class UltronOrchestrator:
             demo=self.demo,
             max_results=max_results,
         )
+        llm_key = self.openrouter_key or self.anthropic_api_key
         brief = await run_phase2_brief(
             self.db,
             query=query,
             niche=niche or query,
-            api_key=self.anthropic_api_key,
+            api_key=llm_key,
             model=self.model,
         )
         draft = await run_phase3_workers(
             self.db,
             brief,
-            api_key=self.anthropic_api_key,
+            api_key=llm_key,
             model=self.model,
         )
         report = humanize_text(draft.title, draft.description, draft.tags)
@@ -82,9 +91,22 @@ class UltronOrchestrator:
         }
 
     async def call_claude(self, system: str, user: str) -> str:
-        """Optional Claude call for Phase 2/3 when ANTHROPIC_API_KEY is set."""
+        """LLM call for Phase 2/3. Prefers OpenRouter, then Anthropic."""
+        if self.openrouter_key:
+            from ...llm.openrouter import chat_text
+
+            return chat_text(
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                api_key=self.openrouter_key,
+                model=self.model,
+                max_tokens=1200,
+            )
+
         if not self.anthropic_api_key:
-            raise RuntimeError("ANTHROPIC_API_KEY is not set — using template fallbacks.")
+            raise RuntimeError("OPENROUTER_API_KEY / ANTHROPIC_API_KEY is not set — using template fallbacks.")
         try:
             import anthropic
         except ImportError as exc:

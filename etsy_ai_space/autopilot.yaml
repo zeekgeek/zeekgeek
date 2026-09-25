@@ -23,7 +23,7 @@ max_results_per_scrape: 24
 # Use demo scraper (true = offline, no Etsy HTTP). Set false on your Mac for live trends.
 demo: true
 
-# Optional: set via environment variable ANTHROPIC_API_KEY for smarter copy
+# Optional: set OPENROUTER_API_KEY (preferred) or ANTHROPIC_API_KEY for smarter copy
 use_claude: false
 
 # Human gate — autopilot never auto-uploads; you approve then upload manually

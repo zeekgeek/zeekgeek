@@ -7,3 +7,5 @@ etsy_ai_space/exports/
 etsy_ai_space/obsidian_vault/briefs/
 etsy_ai_space/pipeline/state.json
 etsy_ai_space/pipeline/system.log
+.env
+.env.local

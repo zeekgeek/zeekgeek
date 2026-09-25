@@ -21,6 +21,12 @@ Running the apps:
 - Cloud VMs have no Bluetooth adapter / `bluetoothd`, so live BLE scanning will not work.
  Always run bt_radar in demo mode: `python3 -m bt_radar --demo`. (Without `--demo` the app tries
  live scanning and auto-falls back to demo mode, printing a system event.)
+- OpenRouter: set `OPENROUTER_API_KEY` (optional `OPENROUTER_MODEL`, default `openai/gpt-4o`).
+  A local `.env` is loaded automatically and is gitignored. Verify with
+  `python3 -m etsy_ai_space openrouter-ping`. When the key is set, Etsy concept/copy
+  generation uses OpenRouter instead of Anthropic. This does **not** change which model
+  the Cursor Cloud Agent itself is — Cloud Agents use Cursor's catalog. To use OpenRouter
+  as a Cursor Desktop chat/agent provider, see README → "OpenRouter + Cursor".
 - WiFi radar: `python3 -m wifi_radar --demo` (live needs `iw` / wireless hardware).
 - Mac battery: `python3 -m mac_battery --demo` on non-macOS hosts (live needs macOS `ioreg` /
  AppleSmartBattery). Default dashboard port is `8780`.
