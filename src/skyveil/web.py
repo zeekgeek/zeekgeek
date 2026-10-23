@@ -52,7 +52,12 @@ DASHBOARD_HTML = """
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#05070c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="SkyVeil">
 <title>SkyVeil — Flight Anomaly Radar</title>
 <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -182,11 +187,61 @@ DASHBOARD_HTML = """
     font-size: 12px; cursor: pointer;
   }
 
-  @media (max-width: 900px) {
+  #sheet-handle { display: none; }
+
+  /* Tablet and narrow desktop windows: panel stacks under the map. */
+  @media (max-width: 900px) and (min-width: 601px) {
     aside { position: static; width: auto; height: 46vh; padding: 8px; }
     body { overflow: auto; }
     #map { position: fixed; inset: 0 0 46vh 0; }
     .radar-hud { display: none; }
+  }
+
+  /* Phones (iPhone 13 Pro Max is 428x926 CSS px): full-screen map, scrolling
+     stat chips, and the detections list as a draggable-style bottom sheet. */
+  @media (max-width: 600px) {
+    html, body { overscroll-behavior: none; -webkit-text-size-adjust: 100%; touch-action: manipulation; }
+    header {
+      flex-direction: column; align-items: stretch; gap: 8px;
+      padding: calc(env(safe-area-inset-top) + 8px) 12px 6px;
+    }
+    h1 { font-size: 16px; }
+    .stat-strip {
+      flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch;
+      scrollbar-width: none; margin: 0 -12px; padding: 0 12px;
+    }
+    .stat-strip::-webkit-scrollbar { display: none; }
+    .stat { flex: 0 0 auto; padding: 7px 12px; font-size: 12px; }
+    #alarm-banner { top: calc(env(safe-area-inset-top) + 84px); max-width: calc(100vw - 24px); text-align: center; font-size: 12px; }
+    #reset-view {
+      left: 12px; top: calc(env(safe-area-inset-top) + 92px); min-height: 40px; padding: 8px 14px; font-size: 13px;
+    }
+    .maplibregl-ctrl-top-right { top: calc(env(safe-area-inset-top) + 84px); }
+    .maplibregl-ctrl-top-right .maplibregl-ctrl-group button { width: 38px; height: 38px; }
+    .radar-hud, .legend { display: none; }
+    aside {
+      top: auto; left: 0; right: 0; bottom: 0; width: auto; height: 40vh; padding: 0;
+      transition: height .25s ease;
+    }
+    aside.expanded { height: 82vh; }
+    aside .panel {
+      border-radius: 18px 18px 0 0; border-bottom: 0;
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+    #sheet-handle {
+      display: block; width: 100%; height: 26px; border: 0; background: none; cursor: pointer; flex: none;
+    }
+    #sheet-handle::before {
+      content: ""; display: block; width: 40px; height: 5px; margin: 10px auto 0;
+      border-radius: 3px; background: #3a4766;
+    }
+    .panel-head { padding: 2px 14px 8px; }
+    .panel-head h2 { font-size: 15px; }
+    .card { padding: 11px 12px; }
+    .card:hover { transform: none; }
+    .card-name { font-size: 14px; }
+    .card-msg { font-size: 13px; }
+    #activity-toggle { min-height: 40px; font-size: 12px; }
   }
 </style>
 </head>
@@ -210,6 +265,7 @@ DASHBOARD_HTML = """
 
   <aside>
     <section class="panel" style="flex: 1;">
+      <button id="sheet-handle" aria-label="Expand or collapse detections"></button>
       <div class="panel-head">
         <h2>Strange detections</h2>
         <span class="count" id="detection-count">0</span>
@@ -479,7 +535,11 @@ function fitToFlights(force) {
     .map((x) => x.f);
   const bounds = new maplibregl.LngLatBounds();
   core.forEach((f) => bounds.extend([f.lon, f.lat]));
-  map.fitBounds(bounds, { padding: 90, maxZoom: 7, duration: force ? 900 : 0 });
+  const phone = window.matchMedia("(max-width: 600px)").matches;
+  const padding = phone
+    ? { top: 130, bottom: Math.round(window.innerHeight * 0.4) + 20, left: 24, right: 24 }
+    : 90;
+  map.fitBounds(bounds, { padding, maxZoom: 7, duration: force ? 900 : 0 });
 }
 
 const source = new EventSource("/api/events");
@@ -574,6 +634,7 @@ function renderMapLayers() {
 
 function renderDetections() {
   const root = document.getElementById("detections");
+  const scrollTop = root.scrollTop;
   const rows = snapshot.detections || [];
   if (!rows.length) {
     root.innerHTML = '<div class="empty">No anomalies detected. Tracking normally.</div>';
@@ -601,18 +662,28 @@ function renderDetections() {
         </div>
       </div>`;
   }).join("");
+  root.scrollTop = scrollTop;
   root.querySelectorAll(".card").forEach((node) => {
     node.onclick = () => {
       selectedHex = node.dataset.hex;
       userMovedMap = true;
       const flight = snapshot.flights.find((f) => f.hex === selectedHex);
+      const phone = window.matchMedia("(max-width: 600px)").matches;
+      if (phone) sheet.classList.remove("expanded");
       if (flight && flight.lat != null && flight.lon != null) {
-        map.flyTo({ center: [flight.lon, flight.lat], zoom: Math.max(map.getZoom(), 7), duration: 900 });
+        map.flyTo({
+          center: [flight.lon, flight.lat], zoom: Math.max(map.getZoom(), 7), duration: 900,
+          // On a phone the bottom sheet covers the lower ~40% of the map.
+          padding: phone ? { top: 120, bottom: Math.round(window.innerHeight * 0.4), left: 0, right: 0 } : undefined,
+        });
       }
       render();
     };
   });
 }
+
+const sheet = document.querySelector("aside");
+document.getElementById("sheet-handle").onclick = () => sheet.classList.toggle("expanded");
 
 const activityToggle = document.getElementById("activity-toggle");
 let activityOpen = false;

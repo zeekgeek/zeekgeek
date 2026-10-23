@@ -385,6 +385,22 @@ Optional regional watch:
 python3 -m skyveil --center 51.5,-0.1 --radius-nm 200
 ```
 
+## Install on a Mac and use it from an iPhone
+
+Needs Python 3.11+ (`brew install python@3.12`). Works on Intel and Apple silicon.
+
+```bash
+./scripts/install-skyveil-mac.sh
+~/.skyveil/bin/skyveil --open     # opens http://127.0.0.1:8795 in your browser
+~/.skyveil/bin/skyveil --lan      # also prints a URL for your iPhone on the same Wi-Fi
+```
+
+The dashboard is responsive: on a phone (tested at iPhone 13 Pro Max, 428x926)
+the map is full screen, the stat chips scroll sideways, and the detections list
+is a bottom sheet you tap to expand. In Safari use Share → Add to Home Screen
+for a full-screen app icon. `--lan` has no login, so only use it on a network you
+trust.
+
 ## Command options
 
 ```text

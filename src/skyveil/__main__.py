@@ -7,6 +7,7 @@ import asyncio
 import logging
 import signal
 import socket
+import webbrowser
 from contextlib import suppress
 
 import uvicorn
@@ -22,6 +23,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="SkyVeil: public-ADS-B flight anomaly radar")
     parser.add_argument("--host", default="127.0.0.1", help="Dashboard host")
     parser.add_argument("--port", type=int, default=8795, help="Dashboard port")
+    parser.add_argument(
+        "--lan",
+        action="store_true",
+        help="Listen on all interfaces so a phone on the same Wi-Fi can open the dashboard",
+    )
+    parser.add_argument("--open", action="store_true", help="Open the dashboard in the default browser")
     parser.add_argument("--demo", action="store_true", help="Simulate traffic instead of polling live ADS-B")
     parser.add_argument("--poll-interval", type=float, default=20.0, help="Seconds between live ADS-B polls")
     parser.add_argument(
@@ -70,6 +77,8 @@ def parse_center(raw: str | None) -> tuple[float, float]:
 
 def main() -> None:
     args = build_parser().parse_args()
+    if args.lan and args.host == "127.0.0.1":
+        args.host = "0.0.0.0"
     logging.basicConfig(level=getattr(logging, args.log_level.upper()))
     asyncio.run(run(args))
 
@@ -108,6 +117,13 @@ async def run(args: argparse.Namespace) -> None:
             loop.add_signal_handler(sig, stop_event.set)
 
     print(f"SkyVeil dashboard: http://{args.host}:{chosen_port}")
+    if args.lan:
+        lan_ip = lan_address()
+        if lan_ip:
+            print(f"On your iPhone (same Wi-Fi): http://{lan_ip}:{chosen_port}")
+        print("--lan exposes the dashboard to everyone on your network; it has no login.")
+    if args.open:
+        webbrowser.open(f"http://{'127.0.0.1' if args.host in ('0.0.0.0', '') else args.host}:{chosen_port}")
     if args.demo:
         print("Running in demo mode: one simulated flight per anomaly category.")
     else:
@@ -144,6 +160,16 @@ async def run(args: argparse.Namespace) -> None:
     await asyncio.gather(*remaining, return_exceptions=True)
     if failure is not None:
         raise failure
+
+
+def lan_address() -> str | None:
+    """Best-effort local network address (no packets are actually sent)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        try:
+            sock.connect(("10.255.255.255", 1))
+            return sock.getsockname()[0]
+        except OSError:
+            return None
 
 
 def pick_available_port(host: str, preferred_port: int, max_tries: int = 30) -> int:

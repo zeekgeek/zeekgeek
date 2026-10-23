@@ -401,6 +401,14 @@ class WebRouteTests(unittest.TestCase):
         self.assertIn(("/api/events", ("GET",)), paths)
         self.assertIn(("/api/reference", ("GET",)), paths)
 
+    def test_dashboard_is_phone_ready(self) -> None:
+        from skyveil.web import DASHBOARD_HTML
+
+        self.assertIn("viewport-fit=cover", DASHBOARD_HTML)
+        self.assertIn("apple-mobile-web-app-capable", DASHBOARD_HTML)
+        self.assertIn("max-width: 600px", DASHBOARD_HTML)
+        self.assertIn('id="sheet-handle"', DASHBOARD_HTML)
+
 
 if __name__ == "__main__":
     unittest.main()
