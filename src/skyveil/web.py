@@ -466,8 +466,19 @@ function fitToFlights(force) {
   if (!snapshot || !snapshot.flights.length || (userMovedMap && !force)) return;
   const positioned = snapshot.flights.filter((f) => f.present && f.lat != null && f.lon != null);
   if (!positioned.length) return;
+  // The global PIA/LADD/military/emergency feeds drop far-off aircraft into
+  // the pool; fitting to all of them zooms out to the whole planet. Fit to
+  // the 85% of flights closest to the median instead.
+  const median = (values) => values.slice().sort((a, b) => a - b)[Math.floor(values.length / 2)];
+  const midLat = median(positioned.map((f) => f.lat));
+  const midLon = median(positioned.map((f) => f.lon));
+  const core = positioned
+    .map((f) => ({ f, d: (f.lat - midLat) ** 2 + ((f.lon - midLon) * Math.cos((midLat * Math.PI) / 180)) ** 2 }))
+    .sort((a, b) => a.d - b.d)
+    .slice(0, Math.max(1, Math.ceil(positioned.length * 0.85)))
+    .map((x) => x.f);
   const bounds = new maplibregl.LngLatBounds();
-  positioned.forEach((f) => bounds.extend([f.lon, f.lat]));
+  core.forEach((f) => bounds.extend([f.lon, f.lat]));
   map.fitBounds(bounds, { padding: 90, maxZoom: 7, duration: force ? 900 : 0 });
 }
 
