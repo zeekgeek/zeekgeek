@@ -409,6 +409,29 @@ map.on("load", () => {
     },
   });
 
+  // Altitude profile walls under each trail, and a solid cap marking where
+  // each aircraft actually is at altitude (symbols can only sit at ground level).
+  map.addSource("curtains", { type: "geojson", data: emptyFC() });
+  map.addLayer({
+    id: "trail-curtains", type: "fill-extrusion", source: "curtains",
+    paint: {
+      "fill-extrusion-color": ["get", "color"],
+      "fill-extrusion-height": ["get", "height"],
+      "fill-extrusion-base": 0,
+      "fill-extrusion-opacity": 0.55,
+    },
+  }, "pillars-3d");
+  map.addSource("caps", { type: "geojson", data: emptyFC() });
+  map.addLayer({
+    id: "plane-caps", type: "fill-extrusion", source: "caps",
+    paint: {
+      "fill-extrusion-color": ["get", "color"],
+      "fill-extrusion-height": ["get", "top"],
+      "fill-extrusion-base": ["get", "base"],
+      "fill-extrusion-opacity": 1,
+    },
+  });
+
   map.addSource("flights", { type: "geojson", data: emptyFC() });
   map.addLayer({
     id: "flights-halo", type: "circle", source: "flights",
@@ -457,6 +480,12 @@ map.on("load", () => {
   map.on("mouseenter", "flights-icons", () => { map.getCanvas().style.cursor = "pointer"; });
   map.on("mouseleave", "flights-icons", () => { map.getCanvas().style.cursor = ""; });
 
+  let zoomFrame = 0;
+  map.on("zoom", () => {
+    if (zoomFrame) return;
+    zoomFrame = requestAnimationFrame(() => { zoomFrame = 0; if (snapshot) renderMapLayers(); });
+  });
+
   mapReady = true;
   if (referenceData) drawTestRanges();
   if (snapshot) render();
@@ -483,6 +512,32 @@ function circlePolygon(lat, lon, radiusNm, steps = 48) {
     coords.push([lon + dLon, lat + dLat]);
   }
   return coords;
+}
+
+// True-scale altitude is invisible at regional zoom (a 36,000 ft jet is an
+// 11 km column; at zoom 4 one pixel is ~30 km). Scale heights and footprints
+// to screen pixels so the 3D view reads at every zoom, falling back to true
+// scale once zoomed in far enough for it to be visible on its own.
+const MAX_ALT_M = 16000;        // ~52,000 ft, top of the extrusion range
+const MAX_COLUMN_PX = 160;      // tallest column, in screen pixels
+function metersPerPixel() {
+  const lat = map.getCenter().lat;
+  return (78271.517 * Math.cos((lat * Math.PI) / 180)) / Math.pow(2, map.getZoom());
+}
+function verticalScale(mpp) { return Math.max(1, (MAX_COLUMN_PX * mpp) / MAX_ALT_M); }
+function altitudeMeters(ft) { return ft != null ? Math.max(ft * 0.3048, 60) : 60; }
+
+function ribbonPolygon(a, b, halfWidthM) {
+  const midLat = ((a.lat + b.lat) / 2) * Math.PI / 180;
+  const mx = 111320 * Math.cos(midLat) || 1, my = 110574;
+  const dx = (b.lon - a.lon) * mx, dy = (b.lat - a.lat) * my;
+  const len = Math.hypot(dx, dy);
+  if (!len) return null;
+  const ox = (-dy / len) * halfWidthM / mx, oy = (dx / len) * halfWidthM / my;
+  return [
+    [a.lon + ox, a.lat + oy], [b.lon + ox, b.lat + oy],
+    [b.lon - ox, b.lat - oy], [a.lon - ox, a.lat - oy], [a.lon + ox, a.lat + oy],
+  ];
 }
 
 function squarePolygon(lat, lon, halfWidthM) {
@@ -610,17 +665,48 @@ function renderMapLayers() {
   });
   map.getSource("flights").setData({ type: "FeatureCollection", features: flightFeatures });
 
-  const pillarFeatures = positioned.map((f) => {
+  const mpp = metersPerPixel();
+  const vScale = verticalScale(mpp);
+
+  const pillarFeatures = [];
+  const capFeatures = [];
+  positioned.forEach((f) => {
     const color = colorFor(f);
     const flagged = f.score >= snapshot.detection_threshold;
-    const altM = f.altitude_ft != null ? Math.max(f.altitude_ft * 0.3048, 60) : 60;
-    return {
+    const height = altitudeMeters(f.altitude_ft) * vScale;
+    const pillarHalf = Math.max(flagged ? 2600 : 1500, (flagged ? 2.6 : 1.6) * mpp);
+    const capHalf = Math.max(flagged ? 5200 : 3000, (flagged ? 6 : 4) * mpp);
+    pillarFeatures.push({
       type: "Feature",
-      properties: { color: withAlpha(color, flagged ? 0.85 : 0.4), height: altM },
-      geometry: { type: "Polygon", coordinates: [squarePolygon(f.lat, f.lon, flagged ? 2600 : 1500)] },
-    };
+      properties: { color: withAlpha(color, flagged ? 0.85 : 0.4), height },
+      geometry: { type: "Polygon", coordinates: [squarePolygon(f.lat, f.lon, pillarHalf)] },
+    });
+    capFeatures.push({
+      type: "Feature",
+      properties: { color, base: height, top: height + Math.max(250, 4 * mpp) },
+      geometry: { type: "Polygon", coordinates: [squarePolygon(f.lat, f.lon, capHalf)] },
+    });
   });
   map.getSource("pillars").setData({ type: "FeatureCollection", features: pillarFeatures });
+  map.getSource("caps").setData({ type: "FeatureCollection", features: capFeatures });
+
+  const curtainFeatures = [];
+  const curtainHalf = Math.max(400, 0.8 * mpp);
+  positioned.forEach((f) => {
+    const pts = (f.trail || []).filter((p) => p.lat != null && p.lon != null);
+    const color = withAlpha(colorFor(f), 0.5);
+    for (let i = 1; i < pts.length; i++) {
+      const ring = ribbonPolygon(pts[i - 1], pts[i], curtainHalf);
+      if (!ring) continue;
+      const altFt = pts[i].alt != null ? pts[i].alt : f.altitude_ft;
+      curtainFeatures.push({
+        type: "Feature",
+        properties: { color, height: altitudeMeters(altFt) * vScale },
+        geometry: { type: "Polygon", coordinates: [ring] },
+      });
+    }
+  });
+  map.getSource("curtains").setData({ type: "FeatureCollection", features: curtainFeatures });
 
   const trailFeatures = positioned
     .filter((f) => f.trail && f.trail.length > 1)
