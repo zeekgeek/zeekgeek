@@ -291,6 +291,28 @@ function planeIcon(size) {
 map.on("load", () => {
   map.addImage("plane", planeIcon(64), { sdf: true });
 
+  // Real elevation under the flat basemap so altitude pillars read against
+  // actual ground. Free AWS Terrarium tiles; if they fail to load the map
+  // simply stays flat.
+  map.addSource("terrain-dem", {
+    type: "raster-dem",
+    encoding: "terrarium",
+    tileSize: 256,
+    maxzoom: 12,
+    tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
+    attribution: "Terrain: Mapzen / AWS Open Data",
+  });
+  map.setTerrain({ source: "terrain-dem", exaggeration: 1.6 });
+  map.addLayer({
+    id: "terrain-hillshade", type: "hillshade", source: "terrain-dem",
+    paint: {
+      "hillshade-shadow-color": "#000000",
+      "hillshade-highlight-color": "#2a3a5a",
+      "hillshade-accent-color": "#0b1020",
+      "hillshade-exaggeration": 0.45,
+    },
+  });
+
   map.addSource("test-ranges", { type: "geojson", data: emptyFC() });
   map.addLayer({
     id: "test-ranges-fill", type: "fill", source: "test-ranges",
