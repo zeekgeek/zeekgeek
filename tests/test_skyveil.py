@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 
 from skyveil.anomaly import FlightSnapshot, evaluate_flight, score_triggers
 from skyveil.reference import hex_nation, registration_nation
-from skyveil.scanner import parse_aircraft
+from skyveil.scanner import DemoScannerBackend, looks_military, parse_aircraft
 from skyveil.state import FlightObservation, SkyState
 
 
@@ -101,6 +101,38 @@ class ScannerTests(unittest.TestCase):
         entry = {"hex": "abc123", "flight": "UAL1", "lat": 40.0, "lon": -74.0}
         obs = parse_aircraft(entry, datetime.now(UTC))
         self.assertIsNone(obs.position_age_s)
+
+
+class MilitaryDetectionTests(unittest.TestCase):
+    def test_db_flag_marks_military(self) -> None:
+        self.assertTrue(looks_military({"hex": "ae1234", "dbFlags": 1}))
+        self.assertFalse(looks_military({"hex": "a12345", "dbFlags": 8}))
+
+    def test_military_callsign_prefixes(self) -> None:
+        self.assertTrue(looks_military({"flight": "RCH871  "}))
+        self.assertTrue(looks_military({"flight": "SHELL72"}))
+        self.assertTrue(looks_military({"flight": "PAT024"}))
+
+    def test_civil_callsigns_sharing_a_prefix_are_not_military(self) -> None:
+        self.assertFalse(looks_military({"flight": "SPARKY1"}))
+        self.assertFalse(looks_military({"flight": "SAMSA12"}))
+        self.assertFalse(looks_military({"flight": "UAL118"}))
+        self.assertFalse(looks_military({"flight": ""}))
+
+    def test_demo_includes_military_and_a_military_emergency(self) -> None:
+        async def run() -> dict:
+            state = SkyState()
+            demo = DemoScannerBackend(state, interval=0.0, incident_at=1)
+            demo._advance(1)
+            await state.ingest_cycle([demo._observe(f) for f in demo._fleet])
+            return await state.snapshot()
+
+        snap = asyncio.run(run())
+        military = [f for f in snap["flights"] if f["is_mil"]]
+        self.assertGreaterEqual(len(military), 5)
+        self.assertEqual(snap["military_count"], len(military))
+        mil_emergency = [f for f in military if f["dominant_category"] == "emergency"]
+        self.assertEqual([f["callsign"] for f in mil_emergency], ["DOOM41"])
 
 
 class AnomalyTests(unittest.TestCase):

@@ -43,6 +43,32 @@ EMERGENCY_SQUAWK_LIST = "7500,7600,7700"
 NON_FLIGHT_CATEGORIES = {"C0", "C1", "C2", "C3"}
 NON_FLIGHT_TYPE_CODES = {"TWR"}
 
+# adsb.lol / tar1090 ``dbFlags`` bit 0 marks an airframe its database lists as
+# military. The /v2/mil feed only covers hex ranges it already knows, so this
+# bit plus well-known military callsign prefixes catch military aircraft that
+# show up in the regional pool without being in that feed.
+DB_FLAG_MILITARY = 1
+MILITARY_CALLSIGN_PREFIXES = (
+    "RCH", "REACH", "CNV", "PAT", "SAM", "VENUS", "EXEC", "SPAR", "VV", "NAVY",
+    "TOPCT", "JAKE", "SHELL", "QUID", "ASCOT", "RRR", "CFC", "CTM", "GAF", "IAM",
+    "BAF", "HOMER", "DOOM", "KNIFE", "TABOR", "BOLT", "HAWK", "EVAC", "MMF",
+)
+
+
+def looks_military(entry: dict[str, Any]) -> bool:
+    """True when the database flag or a military callsign prefix says so."""
+    flags = entry.get("dbFlags")
+    if isinstance(flags, int) and flags & DB_FLAG_MILITARY:
+        return True
+    callsign = (entry.get("flight") or "").strip().upper()
+    if not callsign:
+        return False
+    for prefix in MILITARY_CALLSIGN_PREFIXES:
+        # Require a digit after the prefix so "SAMSA12" or "SPARKY" don't match.
+        if callsign.startswith(prefix) and callsign[len(prefix):len(prefix) + 1].isdigit():
+            return True
+    return False
+
 
 class ScannerBackend(Protocol):
     async def run(self) -> None:
@@ -108,7 +134,7 @@ class AdsbLolBackend:
                 now,
                 is_pia=hex_id in pia_hexes,
                 is_ladd=hex_id in ladd_hexes,
-                is_mil=hex_id in mil_hexes,
+                is_mil=hex_id in mil_hexes or looks_military(entry),
             )
             for hex_id, entry in merged.items()
         ]
@@ -206,6 +232,21 @@ def _routine_fleet() -> list[_SimFlight]:
     ]
 
 
+def _military_fleet() -> list[_SimFlight]:
+    seed = [
+        ("ae07c1", "RCH871", "05-5143", "C17", "A5", 37.1, -95.4, 29000, 75, 450),
+        ("ae04d2", "SHELL72", "62-3531", "K35R", "A5", 36.4, -100.2, 26000, 160, 380),
+        ("ae01a9", "PAT024", "84-0484", "C12", "A2", 38.6, -77.4, 17000, 30, 260),
+        ("ae6812", "NAVY61", "169010", "P8", "A3", 30.6, -80.6, 22000, 200, 330),
+        ("ae1f3b", "TABOR11", "86-0381", "H60", "A7", 33.4, -112.0, 1500, 280, 120),
+    ]
+    return [
+        _SimFlight(hex_id=h, callsign=c, registration=r, type_code=t, category=cat, lat=lat, lon=lon,
+                   altitude_ft=alt, heading=hdg, ground_speed_kt=gs, is_mil=True, squawk="4521")
+        for h, c, r, t, cat, lat, lon, alt, hdg, gs in seed
+    ]
+
+
 @dataclass
 class DemoScannerBackend:
     """Simulated traffic covering every anomaly category on a short loop."""
@@ -216,7 +257,7 @@ class DemoScannerBackend:
 
     def __post_init__(self) -> None:
         random.seed(20260830)
-        self._fleet: list[_SimFlight] = _routine_fleet()
+        self._fleet: list[_SimFlight] = _routine_fleet() + _military_fleet()
         self._incidents_spawned = False
 
     async def run(self) -> None:
@@ -265,6 +306,25 @@ class DemoScannerBackend:
                 ground_speed_kt=430,
                 squawk="7700",
                 emergency_field="general",
+            )
+        )
+        # A military airframe that loses its radio mid-flight (squawk 7600), so
+        # the demo shows a military emergency alongside the civil one.
+        self._fleet.append(
+            _SimFlight(
+                hex_id="ae5a20",
+                callsign="DOOM41",
+                registration="91-0335",
+                type_code="C130",
+                category="A3",
+                lat=35.2,
+                lon=-89.9,
+                altitude_ft=19000,
+                heading=315,
+                ground_speed_kt=290,
+                squawk="7600",
+                emergency_field="nordo",
+                is_mil=True,
             )
         )
         self._fleet.append(

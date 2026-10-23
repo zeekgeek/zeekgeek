@@ -76,8 +76,10 @@ DASHBOARD_HTML = """
     --pink: #f472b6;
     --amber: #f59e0b;
     --green: #34d399;
+    --mil: #a3e635;
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
   #map { position: absolute; inset: 0; }
   #map .maplibregl-ctrl-logo { display: none; }
@@ -104,13 +106,52 @@ DASHBOARD_HTML = """
   .stat.experimental b { color: var(--violet); }
   .stat.cloaked b { color: var(--pink); }
   .stat.erratic b { color: var(--amber); }
+  .stat.military b { color: var(--mil); }
+  .stat.emergency.live { border-color: var(--red); background: rgba(239,68,68,.16); animation: pulse 1.4s infinite; }
 
   #alarm-banner {
     display: none; position: absolute; top: 58px; left: 50%; transform: translateX(-50%); z-index: 6;
     background: rgba(239,68,68,.16); border: 1px solid var(--red); color: #fecaca;
     padding: 8px 18px; border-radius: 999px; font-weight: 700; font-size: 13px;
     box-shadow: 0 8px 30px rgba(239,68,68,.25); animation: pulse 1.4s infinite;
+    cursor: pointer; max-width: calc(100% - 820px); min-width: 220px; text-align: center;
   }
+  #alarm-banner:hover { background: rgba(239,68,68,.28); }
+
+  .filter-bar {
+    position: absolute; left: 110px; top: 68px; z-index: 5; display: flex; gap: 4px;
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 9px; padding: 3px;
+  }
+  .filter-bar button {
+    background: none; border: 0; color: var(--muted); font: inherit; font-size: 12px;
+    padding: 4px 10px; border-radius: 6px; cursor: pointer;
+  }
+  .filter-bar button[aria-pressed="true"] { background: rgba(255,255,255,.1); color: var(--text); }
+  .filter-bar button:focus-visible, #reset-view:focus-visible, #alarm-banner:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+  .filter-bar .f-mil[aria-pressed="true"] { color: var(--mil); }
+  .filter-bar .f-emg[aria-pressed="true"] { color: #fca5a5; }
+
+  .emergency-panel { border-color: rgba(239,68,68,.6); box-shadow: 0 0 0 1px rgba(239,68,68,.25), 0 20px 50px rgba(0,0,0,.45); }
+  .emergency-panel .panel-head h2 { color: #fca5a5; }
+  .emergency-panel .list { padding: 0 10px 10px; display: flex; flex-direction: column; gap: 8px; }
+  .emg-card {
+    border: 1px solid rgba(239,68,68,.55); border-radius: 10px; padding: 9px 11px; cursor: pointer;
+    background: linear-gradient(90deg, rgba(239,68,68,.22), rgba(239,68,68,.06));
+  }
+  .emg-card:hover { background: rgba(239,68,68,.28); }
+  .emg-card .code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 800; color: #fecaca; }
+  .emg-card .what { font-size: 12px; color: #fecaca; margin-top: 4px; }
+
+  #military-panel { max-height: 30%; min-height: 0; }
+  #military-list { overflow: auto; padding: 0 10px 10px; }
+  .mil-row {
+    display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: baseline;
+    padding: 6px 4px; border-top: 1px dashed var(--line); font-size: 12px; cursor: pointer;
+  }
+  .mil-row:hover { background: rgba(163,230,53,.06); }
+  .mil-row .id { color: var(--mil); font-weight: 700; }
+  .mil-row .t, .mil-row .alt { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+  .chip.mil { color: var(--mil); background: rgba(163,230,53,.12); }
   @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,.35); } 50% { box-shadow: 0 0 0 9px rgba(239,68,68,0); } }
 
   aside {
@@ -166,6 +207,7 @@ DASHBOARD_HTML = """
   .legend .l-experimental::before { background: var(--violet); }
   .legend .l-cloaked::before { background: var(--pink); }
   .legend .l-erratic::before { background: var(--amber); }
+  .legend .l-military::before { background: transparent; border: 2px solid var(--mil); border-radius: 50%; width: 7px; height: 7px; }
   .legend .note { flex-basis: 100%; color: #5b6788; }
 
   .radar-hud {
@@ -189,8 +231,13 @@ DASHBOARD_HTML = """
 
   #sheet-handle { display: none; }
 
+  @media (max-width: 1300px) {
+    #alarm-banner { top: 104px; max-width: calc(100% - 420px); }
+  }
+
   /* Tablet and narrow desktop windows: panel stacks under the map. */
   @media (max-width: 900px) and (min-width: 601px) {
+    #alarm-banner { max-width: calc(100% - 32px); }
     aside { position: static; width: auto; height: 46vh; padding: 8px; }
     body { overflow: auto; }
     #map { position: fixed; inset: 0 0 46vh 0; }
@@ -216,6 +263,12 @@ DASHBOARD_HTML = """
     #reset-view {
       left: 12px; top: calc(env(safe-area-inset-top) + 92px); min-height: 40px; padding: 8px 14px; font-size: 13px;
     }
+    .filter-bar { left: 112px; top: calc(env(safe-area-inset-top) + 92px); }
+    .filter-bar button { min-height: 32px; padding: 4px 9px; }
+    #alarm-banner { top: calc(env(safe-area-inset-top) + 140px); }
+    .emergency-panel { border-radius: 14px; margin: 0 8px; max-height: 40%; overflow: auto; }
+    #military-panel { display: none; }
+    aside.expanded #military-panel { display: flex; }
     .maplibregl-ctrl-top-right { top: calc(env(safe-area-inset-top) + 84px); }
     .maplibregl-ctrl-top-right .maplibregl-ctrl-group button { width: 38px; height: 38px; }
     .radar-hud, .legend { display: none; }
@@ -248,6 +301,11 @@ DASHBOARD_HTML = """
 <body>
   <div id="map"></div>
   <button id="reset-view">Recenter</button>
+  <div class="filter-bar" role="group" aria-label="Show on map">
+    <button id="filter-all" data-filter="all" aria-pressed="true">All traffic</button>
+    <button id="filter-mil" class="f-mil" data-filter="military" aria-pressed="false">Military</button>
+    <button id="filter-emg" class="f-emg" data-filter="emergency" aria-pressed="false">Emergencies</button>
+  </div>
   <div class="radar-hud"></div>
 
   <header>
@@ -261,10 +319,17 @@ DASHBOARD_HTML = """
     <div class="stat-strip" id="stats"></div>
   </header>
 
-  <div id="alarm-banner"></div>
+  <div id="alarm-banner" role="button" tabindex="0" title="Show emergencies on the map"></div>
 
   <aside>
-    <section class="panel" style="flex: 1;">
+    <section class="panel emergency-panel" id="emergency-panel" hidden>
+      <div class="panel-head">
+        <h2>Active emergencies</h2>
+        <span class="count" id="emergency-count">0</span>
+      </div>
+      <div class="list" id="emergency-list"></div>
+    </section>
+    <section class="panel" style="flex: 1; min-height: 0;">
       <button id="sheet-handle" aria-label="Expand or collapse detections"></button>
       <div class="panel-head">
         <h2>Strange detections</h2>
@@ -274,6 +339,13 @@ DASHBOARD_HTML = """
       <button id="activity-toggle">show activity log</button>
       <div id="activity"></div>
     </section>
+    <section class="panel" id="military-panel">
+      <div class="panel-head">
+        <h2>Military aircraft</h2>
+        <span class="count" id="military-count">0</span>
+      </div>
+      <div id="military-list"></div>
+    </section>
   </aside>
 
   <div class="legend">
@@ -282,6 +354,7 @@ DASHBOARD_HTML = """
     <span class="l-experimental">Experimental / test</span>
     <span class="l-cloaked">Cloaked / mislabeled</span>
     <span class="l-erratic">Erratic movement</span>
+    <span class="l-military">Military (ringed)</span>
     <span class="note">Pillar height ≈ altitude. Public ADS-B only — a lead, never proof.</span>
   </div>
 
@@ -293,6 +366,40 @@ const CATEGORY_COLOR = {
   erratic: "#f59e0b",
   routine: "#22d3ee",
 };
+const MILITARY_COLOR = "#a3e635";
+const EMERGENCY_CODES = { "7500": "7500 · hijack", "7600": "7600 · radio failure", "7700": "7700 · emergency" };
+let viewFilter = "all";
+
+function isEmergency(f) { return (f.triggers || []).some((t) => t.category === "emergency"); }
+function emergencyFlights() {
+  return (snapshot ? snapshot.flights : []).filter((f) => f.present && isEmergency(f));
+}
+function militaryFlights() {
+  return (snapshot ? snapshot.flights : []).filter((f) => f.present && f.is_mil);
+}
+function passesFilter(f) {
+  if (viewFilter === "military") return f.is_mil;
+  if (viewFilter === "emergency") return isEmergency(f);
+  return true;
+}
+function focusFlight(hex) {
+  selectedHex = hex;
+  userMovedMap = true;
+  const flight = snapshot && snapshot.flights.find((f) => f.hex === hex);
+  if (flight && flight.lat != null && flight.lon != null) {
+    map.flyTo({ center: [flight.lon, flight.lat], zoom: Math.max(map.getZoom(), 7), duration: 900 });
+  }
+  render();
+}
+function fitTo(flights) {
+  const pts = flights.filter((f) => f.lat != null && f.lon != null);
+  if (!pts.length) return;
+  userMovedMap = true;
+  if (pts.length === 1) { focusFlight(pts[0].hex); return; }
+  const bounds = new maplibregl.LngLatBounds();
+  pts.forEach((f) => bounds.extend([f.lon, f.lat]));
+  map.fitBounds(bounds, { padding: 110, maxZoom: 7, duration: 900 });
+}
 const CATEGORY_LABEL = {
   emergency: "Emergency",
   experimental: "Experimental / test",
@@ -444,10 +551,38 @@ map.on("load", () => {
     },
   });
   map.addLayer({
+    id: "military-ring", type: "circle", source: "flights",
+    filter: ["==", ["get", "mil"], true],
+    paint: {
+      "circle-radius": ["interpolate", ["linear"], ["zoom"], 3, 9, 8, 15],
+      "circle-color": "rgba(0,0,0,0)",
+      "circle-stroke-color": MILITARY_COLOR,
+      "circle-stroke-width": 1.6,
+      "circle-stroke-opacity": 0.9,
+      "circle-pitch-alignment": "map",
+    },
+  });
+  map.addLayer({
+    id: "emergency-pulse", type: "circle", source: "flights",
+    filter: ["==", ["get", "emergency"], true],
+    paint: {
+      "circle-radius": 18,
+      "circle-color": "#ef4444",
+      "circle-opacity": 0.25,
+      "circle-stroke-color": "#ef4444",
+      "circle-stroke-width": 2,
+      "circle-stroke-opacity": 0.9,
+    },
+  });
+  map.addLayer({
     id: "flights-icons", type: "symbol", source: "flights",
     layout: {
       "icon-image": "plane",
-      "icon-size": ["interpolate", ["linear"], ["zoom"], 3, 0.35, 8, 0.75],
+      // "zoom" must be the top-level input, so the emergency enlargement
+      // lives inside each stop's output rather than wrapping the interpolate.
+      "icon-size": ["interpolate", ["linear"], ["zoom"],
+        3, ["case", ["==", ["get", "emergency"], true], 0.6, 0.35],
+        8, ["case", ["==", ["get", "emergency"], true], 1.2, 0.75]],
       "icon-rotate": ["get", "track"],
       "icon-rotation-alignment": "map",
       "icon-pitch-alignment": "viewport",
@@ -479,6 +614,22 @@ map.on("load", () => {
   });
   map.on("mouseenter", "flights-icons", () => { map.getCanvas().style.cursor = "pointer"; });
   map.on("mouseleave", "flights-icons", () => { map.getCanvas().style.cursor = ""; });
+
+  // Pulse the emergency rings so they read as live alarms, not static dots.
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (!reduceMotion) {
+    const pulseStart = performance.now();
+    const pulse = () => {
+      // Repainting every frame costs GPU and battery, so idle when nothing is in distress.
+      if (!emergencyFlights().length || document.hidden) { setTimeout(pulse, 1000); return; }
+      const t = ((performance.now() - pulseStart) % 1600) / 1600;
+      map.setPaintProperty("emergency-pulse", "circle-radius", 14 + t * 26);
+      map.setPaintProperty("emergency-pulse", "circle-opacity", 0.35 * (1 - t));
+      map.setPaintProperty("emergency-pulse", "circle-stroke-opacity", 0.95 * (1 - t));
+      requestAnimationFrame(pulse);
+    };
+    requestAnimationFrame(pulse);
+  }
 
   let zoomFrame = 0;
   map.on("zoom", () => {
@@ -564,6 +715,8 @@ function colorFor(flight) {
   if (flight.score >= (snapshot ? snapshot.detection_threshold : 30) && flight.dominant_category) {
     return CATEGORY_COLOR[flight.dominant_category] || CATEGORY_COLOR.routine;
   }
+  if (isEmergency(flight)) return CATEGORY_COLOR.emergency;
+  if (flight.is_mil) return MILITARY_COLOR;
   return CATEGORY_COLOR.routine;
 }
 
@@ -613,7 +766,9 @@ function render() {
   if (!snapshot) return;
   renderStats();
   renderMapLayers();
+  renderEmergencies();
   renderDetections();
+  renderMilitary();
   renderActivity();
 }
 
@@ -621,10 +776,13 @@ function renderStats() {
   document.getElementById("mode-note").textContent =
     `Live · updated ${snapshot.generated_at.replace("T", " ")}`;
   const c = snapshot.category_counts || {};
+  const emergencies = emergencyFlights();
+  const militaryCount = snapshot.military_count != null ? snapshot.military_count : militaryFlights().length;
   const stats = [
     `<span class="stat"><b>${snapshot.tracked_count}</b> tracked</span>`,
     `<span class="stat"><b>${snapshot.airborne_count}</b> airborne</span>`,
-    `<span class="stat emergency"><b>${c.emergency || 0}</b> emergency</span>`,
+    `<span class="stat military"><b>${militaryCount}</b> military</span>`,
+    `<span class="stat emergency ${emergencies.length ? "live" : ""}"><b>${emergencies.length}</b> emergency</span>`,
     `<span class="stat experimental"><b>${c.experimental || 0}</b> experimental</span>`,
     `<span class="stat cloaked"><b>${c.cloaked || 0}</b> cloaked</span>`,
     `<span class="stat erratic"><b>${c.erratic || 0}</b> erratic</span>`,
@@ -633,23 +791,95 @@ function renderStats() {
   document.getElementById("detection-count").textContent = snapshot.detection_count;
 
   const banner = document.getElementById("alarm-banner");
-  const emergencyDetections = (snapshot.detections || []).filter((d) => d.dominant_category === "emergency");
-  if (emergencyDetections.length) {
+  if (emergencies.length) {
     banner.style.display = "block";
-    banner.textContent = `EMERGENCY: ${emergencyDetections.map((d) => d.identity).join(", ")}`;
+    banner.textContent = `⚠ ${emergencies.length} EMERGENCY · ` + emergencies
+      .map((f) => `${f.identity}${f.squawk && EMERGENCY_CODES[f.squawk] ? " (" + f.squawk + ")" : ""}`)
+      .join(", ") + "  ›  show";
   } else {
     banner.style.display = "none";
   }
 }
+
+function renderEmergencies() {
+  const panel = document.getElementById("emergency-panel");
+  const rows = emergencyFlights();
+  panel.hidden = !rows.length;
+  document.getElementById("emergency-count").textContent = rows.length;
+  const list = document.getElementById("emergency-list");
+  list.innerHTML = rows.map((f) => {
+    const what = (f.triggers || []).filter((t) => t.category === "emergency")
+      .sort((a, b) => b.weight - a.weight)[0];
+    const code = EMERGENCY_CODES[f.squawk] || (f.emergency_field ? f.emergency_field.toUpperCase() : "EMERGENCY");
+    return `
+      <div class="emg-card" role="button" tabindex="0" data-hex="${escapeHtml(f.hex)}">
+        <div class="card-top">
+          <div>
+            <div class="card-name">${escapeHtml(f.identity)} ${f.is_mil ? '<span class="chip mil">MIL</span>' : ""}</div>
+            <div class="card-sub">${escapeHtml(f.hex)}${f.type ? " · " + escapeHtml(f.type) : ""}</div>
+          </div>
+          <span class="code">${escapeHtml(code)}</span>
+        </div>
+        <div class="what">${escapeHtml(what ? what.message : "")}</div>
+        <div class="card-meta">
+          <span>${f.altitude_ft != null ? "FL" + String(Math.round(f.altitude_ft / 100)).padStart(3, "0") : (f.on_ground ? "on ground" : "alt ?")}</span>
+          <span>${f.ground_speed_kt != null ? Math.round(f.ground_speed_kt) + " kt" : ""}</span>
+          <span>${f.baro_rate_fpm != null ? Math.round(f.baro_rate_fpm) + " fpm" : ""}</span>
+        </div>
+      </div>`;
+  }).join("");
+  bindFocus(list, ".emg-card");
+}
+
+function renderMilitary() {
+  const rows = militaryFlights().slice().sort((a, b) =>
+    (isEmergency(b) - isEmergency(a)) || String(a.identity).localeCompare(String(b.identity)));
+  document.getElementById("military-count").textContent = rows.length;
+  const list = document.getElementById("military-list");
+  if (!rows.length) {
+    list.innerHTML = '<div class="empty">No military transponders in view right now.</div>';
+    return;
+  }
+  list.innerHTML = rows.map((f) => `
+    <div class="mil-row" role="button" tabindex="0" data-hex="${escapeHtml(f.hex)}">
+      <span class="id">${isEmergency(f) ? "⚠ " : ""}${escapeHtml(f.identity)}</span>
+      <span class="t">${escapeHtml(f.type || "?")}</span>
+      <span class="alt">${f.altitude_ft != null ? "FL" + String(Math.round(f.altitude_ft / 100)).padStart(3, "0") : (f.on_ground ? "GND" : "—")}</span>
+    </div>`).join("");
+  bindFocus(list, ".mil-row");
+}
+
+function bindFocus(root, selector) {
+  root.querySelectorAll(selector).forEach((node) => {
+    node.onclick = () => focusFlight(node.dataset.hex);
+    node.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); focusFlight(node.dataset.hex); } };
+  });
+}
+
+document.querySelectorAll(".filter-bar button").forEach((btn) => {
+  btn.onclick = () => {
+    viewFilter = btn.dataset.filter;
+    document.querySelectorAll(".filter-bar button").forEach((b) =>
+      b.setAttribute("aria-pressed", String(b === btn)));
+    render();
+    if (viewFilter === "military") fitTo(militaryFlights());
+    if (viewFilter === "emergency") fitTo(emergencyFlights());
+  };
+});
+
+const alarmBanner = document.getElementById("alarm-banner");
+const showEmergencies = () => document.getElementById("filter-emg").click();
+alarmBanner.onclick = showEmergencies;
+alarmBanner.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); showEmergencies(); } };
 
 function renderMapLayers() {
   if (!mapReady) return;
   // Ascending score so flagged/high-severity aircraft paint last (on top) —
   // the flights array itself is sorted score-descending for the list panel.
   const positioned = snapshot.flights
-    .filter((f) => f.present && f.lat != null && f.lon != null)
+    .filter((f) => f.present && f.lat != null && f.lon != null && passesFilter(f))
     .slice()
-    .sort((a, b) => a.score - b.score);
+    .sort((a, b) => (isEmergency(a) - isEmergency(b)) || (a.score - b.score));
 
   const flightFeatures = positioned.map((f) => {
     const color = colorFor(f);
@@ -657,8 +887,11 @@ function renderMapLayers() {
     return {
       type: "Feature",
       properties: {
-        hex: f.hex, color, flagged, track: f.track_deg || 0, score: f.score,
-        label: f.identity + (flagged ? `  ·  ${Math.round(f.score)}` : ""),
+        hex: f.hex, color, flagged, track: f.track_deg || 0,
+        score: f.score + (isEmergency(f) ? 1000 : 0),
+        mil: !!f.is_mil, emergency: isEmergency(f),
+        label: (isEmergency(f) ? `⚠ ${f.identity}  ·  ${f.squawk || "EMERG"}`
+          : f.identity + (flagged ? `  ·  ${Math.round(f.score)}` : "")),
       },
       geometry: { type: "Point", coordinates: [f.lon, f.lat] },
     };
@@ -744,6 +977,7 @@ function renderDetections() {
           <span>${f.altitude_ft != null ? "FL" + String(Math.round(f.altitude_ft / 100)).padStart(3, "0") : (f.on_ground ? "on ground" : "alt ?")}</span>
           <span>${f.ground_speed_kt != null ? Math.round(f.ground_speed_kt) + " kt" : ""}</span>
           <span>squawk ${escapeHtml(f.squawk || "?")}</span>
+          ${f.is_mil ? '<span class="chip mil">Military</span>' : ""}
           ${otherCats.map((c) => `<span class="chip">${CATEGORY_LABEL[c] || c}</span>`).join("")}
         </div>
       </div>`;
