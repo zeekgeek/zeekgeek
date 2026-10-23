@@ -63,6 +63,13 @@ EXTREME_ALTITUDE_FT = 51000
 # can turn a plausible altitude into six digits.
 MAX_PLAUSIBLE_ALTITUDE_FT = 90000
 EXTREME_CLIMB_FPM = 6000.0
+# Military trainers and fast jets routinely climb and dive far harder than
+# anything civil, so their vertical-rate bar is higher and their kinematic
+# weights are discounted.
+MIL_EXTREME_CLIMB_FPM = 10000.0
+MIL_KINEMATIC_WEIGHT_FACTOR = 0.5
+# Tiltrotors cruise well above any helicopter ceiling.
+TILTROTOR_TYPE_CODES = {"V22", "V280"}
 # A standard-rate turn is 3°/s (60° in a 20s poll cycle), so "hard" has to be
 # a turn *rate* well above that — twice standard rate — not a fixed heading
 # delta, or every ordinary turn caught mid-poll trips it.
@@ -70,7 +77,14 @@ HARD_TURN_RATE_DEG_S = 6.0
 HARD_TURN_MIN_DEG = 45.0
 LOW_INTEGRITY_NIC = 1
 LOITER_HEADING_STD_DEG = 45.0
-LOITER_MIN_SAMPLES = 6
+# ~6 minutes of 20s polls. Traffic-pattern circuits, practice areas and
+# survey/patrol work all look like "circling" over a couple of minutes, so
+# the window has to be long enough to separate a genuine orbit from them.
+LOITER_MIN_SAMPLES = 18
+# Low and slow light-aircraft circling is training, pattern work, banner
+# towing or patrol — routine, not a lead.
+LOITER_ROUTINE_MAX_ALT_FT = 5000
+LOITER_ROUTINE_MAX_SPEED_KT = 150.0
 LOITER_MAX_DISPLACEMENT_NM = 8.0
 # Reported ground speed on some feeds (particularly MLAT-tracked military
 # traffic) visibly lags the aircraft's actual instantaneous speed, so the
@@ -124,6 +138,9 @@ class FlightSnapshot:
     seconds_since_previous: float | None
     recent_headings: list[float] = field(default_factory=list)
     recent_positions: list[tuple[float, float]] = field(default_factory=list)
+    # Seconds between the last two distinct position fixes; when unknown the
+    # position-jump check falls back to seconds_since_previous.
+    position_elapsed_s: float | None = None
 
 
 def evaluate_flight(flight: FlightSnapshot) -> list[Trigger]:
@@ -203,8 +220,13 @@ def _experimental_triggers(flight: FlightSnapshot) -> list[Trigger]:
 
     if (
         flight.altitude_ft is not None
-        and EXTREME_ALTITUDE_FT <= flight.altitude_ft <= MAX_PLAUSIBLE_ALTITUDE_FT
+        and EXTREME_ALTITUDE_FT <= flight.altitude_ft < MAX_PLAUSIBLE_ALTITUDE_FT
         and not flight.on_ground
+        # A real flight at this height has a full ADS-B position and speed;
+        # a bare altitude with neither is a weak Mode-S contact's decode noise.
+        and flight.lat is not None
+        and flight.lon is not None
+        and flight.ground_speed_kt is not None
     ):
         triggers.append(
             Trigger(
@@ -227,7 +249,7 @@ def _experimental_triggers(flight: FlightSnapshot) -> list[Trigger]:
                 "unclassified-airframe",
                 "experimental",
                 f"{flight.identity} is airborne with no callsign or aircraft-type broadcast",
-                40.0,
+                25.0,
             )
         )
 
@@ -254,12 +276,17 @@ def _experimental_triggers(flight: FlightSnapshot) -> list[Trigger]:
 def _cloaked_triggers(flight: FlightSnapshot) -> list[Trigger]:
     triggers: list[Trigger] = []
     if flight.is_pia:
+        # PIA is a routine FAA program for charter/fractional/private
+        # operators, who still broadcast a callsign. It only stands out as a
+        # lead when nothing else identifies the aircraft.
+        anonymous = not flight.callsign and not flight.registration
         triggers.append(
             Trigger(
                 "privacy-icao-address",
                 "cloaked",
-                f"{flight.identity} is broadcasting from an FAA Privacy ICAO Address (temporary anonymized hex)",
-                65.0,
+                f"{flight.identity} is broadcasting from an FAA Privacy ICAO Address (temporary anonymized hex)"
+                + (" with no callsign or registration" if anonymous else ""),
+                50.0 if anonymous else 25.0,
             )
         )
     if flight.is_ladd:
@@ -342,14 +369,16 @@ def _erratic_triggers(flight: FlightSnapshot) -> list[Trigger]:
     if flight.on_ground:
         return triggers
 
-    if flight.baro_rate_fpm is not None and abs(flight.baro_rate_fpm) >= EXTREME_CLIMB_FPM:
+    kinematic_factor = MIL_KINEMATIC_WEIGHT_FACTOR if flight.is_mil else 1.0
+    climb_threshold = MIL_EXTREME_CLIMB_FPM if flight.is_mil else EXTREME_CLIMB_FPM
+    if flight.baro_rate_fpm is not None and abs(flight.baro_rate_fpm) >= climb_threshold:
         direction = "climbing" if flight.baro_rate_fpm > 0 else "descending"
         triggers.append(
             Trigger(
                 "extreme-vertical-rate",
                 "erratic",
                 f"{flight.identity} is {direction} at {abs(flight.baro_rate_fpm):.0f} ft/min",
-                min(45.0 * (abs(flight.baro_rate_fpm) / EXTREME_CLIMB_FPM), 70.0),
+                min(45.0 * (abs(flight.baro_rate_fpm) / climb_threshold), 70.0) * kinematic_factor,
             )
         )
 
@@ -369,12 +398,21 @@ def _erratic_triggers(flight: FlightSnapshot) -> list[Trigger]:
                     "erratic",
                     f"{flight.identity} turned {delta:.0f}° in {flight.seconds_since_previous:.0f}s "
                     f"({rate:.1f}°/s, ~{rate / 3.0:.1f}x standard rate) at {flight.ground_speed_kt:.0f} kt",
-                    min(40.0 * (rate / HARD_TURN_RATE_DEG_S), 65.0),
+                    min(40.0 * (rate / HARD_TURN_RATE_DEG_S), 65.0) * kinematic_factor,
                 )
             )
 
-    ceiling = CATEGORY_SPEED_CEILING_KT.get(flight.emitter_category or "", DEFAULT_SPEED_CEILING_KT)
-    if flight.ground_speed_kt is not None and flight.ground_speed_kt >= ceiling:
+    if (flight.type_code or "").upper() in TILTROTOR_TYPE_CODES:
+        ceiling = DEFAULT_SPEED_CEILING_KT
+    else:
+        ceiling = CATEGORY_SPEED_CEILING_KT.get(flight.emitter_category or "", DEFAULT_SPEED_CEILING_KT)
+    if (
+        flight.ground_speed_kt is not None
+        and flight.ground_speed_kt >= ceiling
+        # A triple-digit-plus speed with no altitude and no category is
+        # almost always a garbled contact, not a real fast mover.
+        and not (flight.altitude_ft is None and flight.emitter_category is None)
+    ):
         category_label = CATEGORY_LABELS.get(flight.emitter_category or "", "this aircraft category")
         triggers.append(
             Trigger(
@@ -391,31 +429,36 @@ def _erratic_triggers(flight: FlightSnapshot) -> list[Trigger]:
 
     # Circling is routine for rotorcraft (police, news, medevac, training);
     # it is only a movement anomaly for fixed-wing traffic.
-    if not _is_rotorcraft(flight) and _is_loitering(flight):
+    if not _is_rotorcraft(flight) and not _is_routine_low_slow(flight) and _is_loitering(flight):
         triggers.append(
             Trigger(
                 "sustained-loiter",
                 "erratic",
-                f"{flight.identity} has been circling/holding within a tight area for several poll cycles",
-                35.0,
+                f"{flight.identity} has been circling/holding within a tight area for several minutes",
+                25.0,
             )
         )
     return triggers
 
 
 def _position_jump_trigger(flight: FlightSnapshot) -> Trigger | None:
+    elapsed_s = flight.position_elapsed_s if flight.position_elapsed_s is not None else flight.seconds_since_previous
     if (
         flight.lat is None
         or flight.lon is None
         or flight.previous_lat is None
         or flight.previous_lon is None
-        or flight.seconds_since_previous is None
-        or flight.seconds_since_previous < POSITION_JUMP_MIN_SECONDS
+        or elapsed_s is None
+        or elapsed_s < POSITION_JUMP_MIN_SECONDS
         # An unreported ground speed is unknown, not confirmed zero — some
         # feeds (particularly MLAT-tracked traffic) omit "gs" for airborne
         # aircraft that are plainly moving, and treating that as a 0kt
         # baseline turns ordinary movement into a false "huge overspeed".
         or flight.ground_speed_kt is None
+        # NIC 0-1 means the containment radius is unknown/huge, so position
+        # wander is expected rather than evidence of a spoofed track; that
+        # state is already reported by degraded-position-integrity.
+        or (flight.nic is not None and flight.nic <= LOW_INTEGRITY_NIC)
     ):
         return None
     distance_nm = haversine_nm(flight.previous_lat, flight.previous_lon, flight.lat, flight.lon)
@@ -424,7 +467,7 @@ def _position_jump_trigger(flight: FlightSnapshot) -> Trigger | None:
         # parked aircraft can look like a huge *relative* speed jump even
         # though the absolute movement is negligible.
         return None
-    hours = flight.seconds_since_previous / 3600.0
+    hours = elapsed_s / 3600.0
     implied_kt = distance_nm / hours if hours > 0 else 0.0
     reported_kt = flight.ground_speed_kt
     threshold_kt = max(reported_kt * POSITION_JUMP_SLACK_RATIO, reported_kt + POSITION_JUMP_SLACK_KT)
@@ -433,7 +476,7 @@ def _position_jump_trigger(flight: FlightSnapshot) -> Trigger | None:
     return Trigger(
         "position-discontinuity",
         "erratic",
-        f"{flight.identity} jumped {distance_nm:.0f} nm in {flight.seconds_since_previous:.0f}s "
+        f"{flight.identity} jumped {distance_nm:.0f} nm in {elapsed_s:.0f}s "
         f"(implies {implied_kt:.0f} kt vs {reported_kt:.0f} kt reported) — possible spoofed or dropped track",
         min(60.0 * (implied_kt / max(threshold_kt, 1.0)), 80.0),
     )
@@ -443,6 +486,15 @@ def _is_rotorcraft(flight: FlightSnapshot) -> bool:
     if flight.emitter_category == "A7":
         return True
     return (flight.type_code or "").upper() in ROTORCRAFT_TYPE_CODES
+
+
+def _is_routine_low_slow(flight: FlightSnapshot) -> bool:
+    return (
+        flight.altitude_ft is not None
+        and flight.altitude_ft <= LOITER_ROUTINE_MAX_ALT_FT
+        and flight.ground_speed_kt is not None
+        and flight.ground_speed_kt <= LOITER_ROUTINE_MAX_SPEED_KT
+    )
 
 
 def _is_loitering(flight: FlightSnapshot) -> bool:

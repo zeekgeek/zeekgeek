@@ -95,8 +95,8 @@ class AdsbLolBackend:
                 continue
             for entry in payload.get("ac") or []:
                 hex_id = str(entry.get("hex", "")).lower()
-                if not hex_id:
-                    continue
+                if not hex_id or not hex_id.strip("0"):
+                    continue  # empty / all-zero ICAO address is not a real airframe
                 if entry.get("category") in NON_FLIGHT_CATEGORIES or entry.get("t") in NON_FLIGHT_TYPE_CODES:
                     continue
                 merged.setdefault(hex_id, entry)

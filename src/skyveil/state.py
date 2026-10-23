@@ -12,8 +12,8 @@ from .anomaly import CATEGORIES, FlightSnapshot, Trigger, evaluate_flight, score
 
 DETECTION_SCORE_THRESHOLD = 30.0
 TRAIL_LENGTH = 40
-HEADING_HISTORY_LENGTH = 8
-POSITION_HISTORY_LENGTH = 8
+HEADING_HISTORY_LENGTH = 24
+POSITION_HISTORY_LENGTH = 24
 HISTORY_LENGTH = 240
 EVENT_LOG_LENGTH = 300
 
@@ -87,6 +87,14 @@ class FlightTrack:
     # When the last two position fixes actually happened (from ADS-B's own
     # "seen_pos" age), not just when we polled — see apply().
     position_fixed_at: datetime | None = None
+    # Position and fix time at the last time the reported position actually
+    # changed. Feeds that refresh a track less often than we poll (common for
+    # low-integrity military tracks) repeat the old position for a cycle, so
+    # measuring a jump against the previous *poll* doubles the elapsed
+    # distance without doubling the elapsed time.
+    anchor_lat: float | None = None
+    anchor_lon: float | None = None
+    anchor_fixed_at: datetime | None = None
     score: float = 0.0
     dominant_category: str | None = None
     triggers: list[Trigger] = field(default_factory=list)
@@ -96,6 +104,7 @@ class FlightTrack:
     )
     trail: deque[dict[str, Any]] = field(default_factory=lambda: deque(maxlen=TRAIL_LENGTH))
     _pending_elapsed: float | None = field(default=None, repr=False)
+    _pending_position_elapsed: float | None = field(default=None, repr=False)
 
     def identity(self) -> str:
         return (self.callsign or "").strip() or self.registration or self.hex_id
@@ -138,6 +147,7 @@ class FlightTrack:
             self.recent_headings.append(obs.track_deg)
 
         new_fixed_at: datetime | None = None
+        position_elapsed: float | None = None
         if obs.lat is not None and obs.lon is not None:
             new_fixed_at = (
                 obs.observed_at - timedelta(seconds=obs.position_age_s)
@@ -149,12 +159,24 @@ class FlightTrack:
             self.trail.append(
                 {"lat": obs.lat, "lon": obs.lon, "alt": obs.altitude_ft, "at": iso_time(obs.observed_at)}
             )
+            if self.anchor_lat is None or self.anchor_fixed_at is None:
+                self.anchor_lat, self.anchor_lon, self.anchor_fixed_at = obs.lat, obs.lon, new_fixed_at
+            elif (obs.lat, obs.lon) != (self.anchor_lat, self.anchor_lon):
+                # Measure the move from the last position that actually
+                # changed, over the time between those two fixes.
+                self.previous_lat, self.previous_lon = self.anchor_lat, self.anchor_lon
+                position_elapsed = (new_fixed_at - self.anchor_fixed_at).total_seconds()
+                self.anchor_lat, self.anchor_lon, self.anchor_fixed_at = obs.lat, obs.lon, new_fixed_at
+            else:
+                # Repeated position: nothing moved, so there is no jump to judge.
+                self.previous_lat, self.previous_lon = obs.lat, obs.lon
 
         if previous_fixed_at is not None and new_fixed_at is not None:
             elapsed = (new_fixed_at - previous_fixed_at).total_seconds()
         else:
             elapsed = elapsed_by_poll
         self._pending_elapsed = elapsed
+        self._pending_position_elapsed = position_elapsed
         return elapsed
 
     def snapshot_field(self) -> FlightSnapshot:
@@ -185,6 +207,7 @@ class FlightTrack:
             previous_registration=self.previous_registration,
             previous_type_code=self.previous_type_code,
             seconds_since_previous=self._pending_elapsed,
+            position_elapsed_s=self._pending_position_elapsed,
             recent_headings=list(self.recent_headings),
             recent_positions=list(self.recent_positions),
         )

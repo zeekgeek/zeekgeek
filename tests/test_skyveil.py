@@ -131,6 +131,26 @@ class AnomalyTests(unittest.TestCase):
         garbage = _snap(altitude_ft=103700)
         self.assertNotIn("extreme-altitude", {t.code for t in evaluate_flight(garbage)})
 
+    def test_bare_extreme_altitude_without_position_or_speed_is_noise(self) -> None:
+        bare = _snap(altitude_ft=70000, lat=None, lon=None, ground_speed_kt=None)
+        self.assertNotIn("extreme-altitude", {t.code for t in evaluate_flight(bare)})
+
+    def test_pia_with_callsign_is_a_weak_signal_but_anonymous_pia_is_strong(self) -> None:
+        routine, _ = score_triggers(evaluate_flight(_snap(callsign="FFL1630", is_pia=True)))
+        anonymous, _ = score_triggers(evaluate_flight(_snap(callsign=None, registration=None, is_pia=True)))
+        self.assertLess(routine, 30.0)
+        self.assertGreaterEqual(anonymous, 30.0)
+
+    def test_tiltrotor_cruise_is_not_overspeed(self) -> None:
+        osprey = _snap(type_code="V22", emitter_category="A7", ground_speed_kt=265.0)
+        self.assertNotIn("overspeed-for-category", {t.code for t in evaluate_flight(osprey)})
+
+    def test_military_trainer_climb_is_discounted(self) -> None:
+        civil = _snap(baro_rate_fpm=9000.0)
+        trainer = _snap(baro_rate_fpm=9000.0, is_mil=True)
+        self.assertIn("extreme-vertical-rate", {t.code for t in evaluate_flight(civil)})
+        self.assertNotIn("extreme-vertical-rate", {t.code for t in evaluate_flight(trainer)})
+
     def test_test_callsign_and_range_flags_experimental(self) -> None:
         flight = _snap(
             callsign="XPRMT12",
@@ -142,8 +162,8 @@ class AnomalyTests(unittest.TestCase):
             altitude_ft=52000,
             previous_lat=34.9054,
             previous_lon=-117.8837,
-            recent_headings=[0.0, 90.0, 180.0, 270.0, 15.0, 195.0],
-            recent_positions=[(34.9054, -117.8837)] * 6,
+            recent_headings=[0.0, 90.0, 180.0, 270.0, 15.0, 195.0] * 3,
+            recent_positions=[(34.9054, -117.8837)] * 18,
         )
         triggers = evaluate_flight(flight)
         codes = {t.code for t in triggers}
@@ -200,8 +220,8 @@ class AnomalyTests(unittest.TestCase):
         self.assertNotIn("hard-turn", codes)
 
     def test_rotorcraft_circling_is_not_a_loiter_anomaly(self) -> None:
-        headings = [0.0, 90.0, 180.0, 270.0, 40.0, 200.0]
-        positions = [(40.0, -74.0)] * 6
+        headings = [0.0, 90.0, 180.0, 270.0, 40.0, 200.0] * 3
+        positions = [(40.0, -74.0)] * 18
         helo_by_category = _snap(emitter_category="A7", type_code="B407", recent_headings=headings, recent_positions=positions)
         self.assertNotIn("sustained-loiter", {t.code for t in evaluate_flight(helo_by_category)})
         helo_by_type = _snap(emitter_category=None, type_code="H60", recent_headings=headings, recent_positions=positions)
@@ -216,6 +236,13 @@ class AnomalyTests(unittest.TestCase):
         codes = {t.code for t in triggers}
         self.assertIn("position-discontinuity", codes)
 
+    def test_position_discontinuity_skipped_for_low_integrity_positions(self) -> None:
+        flight = _snap(
+            lat=41.0, lon=-73.0, previous_lat=40.0, previous_lon=-74.0,
+            ground_speed_kt=100.0, seconds_since_previous=10.0, nic=0,
+        )
+        self.assertNotIn("position-discontinuity", {t.code for t in evaluate_flight(flight)})
+
     def test_position_discontinuity_skipped_when_speed_unreported(self) -> None:
         # A missing "gs" (common on MLAT-tracked traffic) is unknown speed,
         # not confirmed-stationary — must not be treated as a 0kt baseline.
@@ -227,10 +254,16 @@ class AnomalyTests(unittest.TestCase):
         codes = {t.code for t in triggers}
         self.assertNotIn("position-discontinuity", codes)
 
+    def test_low_slow_circling_is_routine_training_not_a_loiter(self) -> None:
+        headings = [0.0, 90.0, 180.0, 270.0, 40.0, 200.0] * 3
+        positions = [(40.0, -74.0)] * 18
+        pattern = _snap(altitude_ft=2500, ground_speed_kt=90.0, recent_headings=headings, recent_positions=positions)
+        self.assertNotIn("sustained-loiter", {t.code for t in evaluate_flight(pattern)})
+
     def test_sustained_loiter(self) -> None:
-        headings = [0.0, 90.0, 180.0, 270.0, 40.0, 200.0]
-        positions = [(40.0, -74.0)] * 6
-        flight = _snap(recent_headings=headings, recent_positions=positions)
+        headings = [0.0, 90.0, 180.0, 270.0, 40.0, 200.0] * 3
+        positions = [(40.0, -74.0)] * 18
+        flight = _snap(altitude_ft=25000, ground_speed_kt=330.0, recent_headings=headings, recent_positions=positions)
         triggers = evaluate_flight(flight)
         codes = {t.code for t in triggers}
         self.assertIn("sustained-loiter", codes)
@@ -328,6 +361,32 @@ class StateTests(unittest.TestCase):
         flight = next(f for f in snapshot["flights"] if f["hex"] == "mil1")
         codes = {t["code"] for t in flight["triggers"]}
         self.assertNotIn("position-discontinuity", codes)
+
+
+class RepeatedPositionTests(unittest.TestCase):
+    def test_track_that_updates_every_other_poll_is_not_a_jump(self) -> None:
+        asyncio.run(self._flow())
+
+    async def _flow(self) -> None:
+        # Position refreshes every 40s but we poll every 20s: the repeated
+        # fix must not make the next real move look like a 2x-speed jump.
+        state = SkyState(stale_after=120, detection_threshold=30.0)
+        now = datetime.now(UTC)
+
+        def obs(lat: float, offset: int) -> FlightObservation:
+            return FlightObservation(
+                hex_id="mil2", callsign="RCH195", type_code="C17", lat=lat, lon=-100.0,
+                altitude_ft=30000, ground_speed_kt=200.0, track_deg=0.0, squawk="1200",
+                nic=0, observed_at=now + timedelta(seconds=offset),
+            )
+
+        # ~221kt over 40s (2.46nm) vs 200kt reported; against a 20s poll gap that reads as 443kt.
+        await state.ingest_cycle([obs(40.0, 0)])
+        await state.ingest_cycle([obs(40.0, 20)])
+        await state.ingest_cycle([obs(40.041, 40)])
+        snapshot = await state.snapshot()
+        flight = next(f for f in snapshot["flights"] if f["hex"] == "mil2")
+        self.assertNotIn("position-discontinuity", {t["code"] for t in flight["triggers"]})
 
 
 class WebRouteTests(unittest.TestCase):
