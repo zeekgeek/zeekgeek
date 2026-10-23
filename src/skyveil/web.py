@@ -367,6 +367,7 @@ const CATEGORY_COLOR = {
   routine: "#22d3ee",
 };
 const MILITARY_COLOR = "#a3e635";
+const TERRAIN_MIN_ZOOM = 6;
 const EMERGENCY_CODES = { "7500": "7500 · hijack", "7600": "7600 · radio failure", "7700": "7700 · emergency" };
 let viewFilter = "all";
 
@@ -451,8 +452,40 @@ function planeIcon(size) {
   return ctx.getImageData(0, 0, size, size);
 }
 
+// Distinct silhouettes so each aircraft reads as what it is: airliner/jet,
+// helicopter, drone, or (no usable heading / on the ground) a plain dot.
+function shapeIcon(kind, size) {
+  const canvas = document.createElement("canvas");
+  canvas.width = size; canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  ctx.translate(size / 2, size / 2);
+  ctx.fillStyle = "#fff";
+  ctx.strokeStyle = "#fff";
+  ctx.beginPath();
+  if (kind === "heli") {
+    ctx.ellipse(0, size * 0.04, size * 0.13, size * 0.22, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.lineWidth = size * 0.07;
+    ctx.beginPath(); ctx.moveTo(-size * 0.4, -size * 0.12); ctx.lineTo(size * 0.4, size * 0.2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(size * 0.4, -size * 0.12); ctx.lineTo(-size * 0.4, size * 0.2); ctx.stroke();
+    ctx.fillRect(-size * 0.03, size * 0.2, size * 0.06, size * 0.24);
+  } else if (kind === "uav") {
+    ctx.moveTo(0, -size * 0.42); ctx.lineTo(size * 0.18, size * 0.1); ctx.lineTo(size * 0.46, size * 0.16);
+    ctx.lineTo(size * 0.46, size * 0.24); ctx.lineTo(size * 0.12, size * 0.2); ctx.lineTo(size * 0.1, size * 0.4);
+    ctx.lineTo(-size * 0.1, size * 0.4); ctx.lineTo(-size * 0.12, size * 0.2); ctx.lineTo(-size * 0.46, size * 0.24);
+    ctx.lineTo(-size * 0.46, size * 0.16); ctx.lineTo(-size * 0.18, size * 0.1);
+    ctx.closePath(); ctx.fill();
+  } else if (kind === "dot") {
+    ctx.arc(0, 0, size * 0.22, 0, Math.PI * 2); ctx.fill();
+  }
+  return ctx.getImageData(0, 0, size, size);
+}
+
 map.on("load", () => {
   map.addImage("plane", planeIcon(64), { sdf: true });
+  map.addImage("heli", shapeIcon("heli", 64), { sdf: true });
+  map.addImage("uav", shapeIcon("uav", 64), { sdf: true });
+  map.addImage("dot", shapeIcon("dot", 64), { sdf: true });
 
   // Real elevation under the flat basemap so altitude pillars read against
   // actual ground. Free AWS Terrarium tiles; if they fail to load the map
@@ -465,7 +498,9 @@ map.on("load", () => {
     tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
     attribution: "Terrain: Mapzen / AWS Open Data",
   });
-  map.setTerrain({ source: "terrain-dem", exaggeration: 1.6 });
+  // 3D terrain is only switched on when zoomed in (see syncTerrain): at
+  // continental zoom it meant nothing and its depth buffer hid the small
+  // aircraft dots.
   map.addLayer({
     id: "terrain-hillshade", type: "hillshade", source: "terrain-dem",
     paint: {
@@ -552,6 +587,7 @@ map.on("load", () => {
   });
   map.addLayer({
     id: "military-ring", type: "circle", source: "flights",
+    minzoom: 6,
     filter: ["==", ["get", "mil"], true],
     paint: {
       "circle-radius": ["interpolate", ["linear"], ["zoom"], 3, 9, 8, 15],
@@ -574,46 +610,70 @@ map.on("load", () => {
       "circle-stroke-opacity": 0.9,
     },
   });
+  // Decluttering: every aircraft is always on the map as a small dot at wide
+  // zooms; heading-aware icons for routine traffic fade in as you zoom and
+  // are collision-thinned so they never pile on top of each other. Anything
+  // that matters (emergency, flagged, selected) is a priority icon that is
+  // always drawn, never hidden, and sits on top.
+  const iconLayout = (priority) => ({
+    "icon-image": ["get", "kind"],
+    // "zoom" must be the top-level input, so per-aircraft scale lives inside each stop.
+    "icon-size": ["interpolate", ["linear"], ["zoom"],
+      3, ["*", ["get", "scale"], ["case", ["==", ["get", "emergency"], true], 0.6, 0.32]],
+      8, ["*", ["get", "scale"], ["case", ["==", ["get", "emergency"], true], 1.2, 0.72]]],
+    "icon-rotate": ["get", "track"],
+    "icon-rotation-alignment": "map",
+    "icon-pitch-alignment": "viewport",
+    "icon-allow-overlap": priority,
+    "icon-ignore-placement": priority,
+    "symbol-sort-key": ["get", "score"],
+    "text-field": ["get", "label"],
+    "text-font": ["Open Sans Regular"],
+    "text-size": priority ? 11 : ["step", ["zoom"], 0, 7, 10],
+    "text-offset": [0, 1.1],
+    "text-anchor": "top",
+    "text-optional": true,
+    "text-allow-overlap": false,
+  });
+  const iconPaint = {
+    "icon-color": ["get", "color"],
+    "text-color": "#dbe3f7",
+    "text-halo-color": "#05070c",
+    "text-halo-width": 1.2,
+  };
+  map.addLayer({
+    id: "flights-dots", type: "circle", source: "flights",
+    maxzoom: 5.5,
+    filter: ["==", ["get", "priority"], false],
+    paint: {
+      "circle-radius": ["interpolate", ["linear"], ["zoom"], 2, 1.4, 5, 2.4],
+      "circle-color": ["get", "color"],
+      "circle-opacity": 0.75,
+    },
+  });
+  map.addLayer({
+    id: "flights-icons-routine", type: "symbol", source: "flights",
+    minzoom: 5,
+    filter: ["==", ["get", "priority"], false],
+    layout: iconLayout(false),
+    paint: iconPaint,
+  });
   map.addLayer({
     id: "flights-icons", type: "symbol", source: "flights",
-    layout: {
-      "icon-image": "plane",
-      // "zoom" must be the top-level input, so the emergency enlargement
-      // lives inside each stop's output rather than wrapping the interpolate.
-      "icon-size": ["interpolate", ["linear"], ["zoom"],
-        3, ["case", ["==", ["get", "emergency"], true], 0.6, 0.35],
-        8, ["case", ["==", ["get", "emergency"], true], 1.2, 0.75]],
-      "icon-rotate": ["get", "track"],
-      "icon-rotation-alignment": "map",
-      "icon-pitch-alignment": "viewport",
-      "icon-allow-overlap": true,
-      // Higher-severity flights draw and place last, so they win overlap
-      // and label collisions against nearby routine traffic.
-      "symbol-sort-key": ["get", "score"],
-      "text-field": ["get", "label"],
-      "text-font": ["Open Sans Regular"],
-      "text-size": 11,
-      "text-offset": [0, 1.1],
-      "text-anchor": "top",
-      "text-optional": true,
-      "text-allow-overlap": false,
-    },
-    paint: {
-      "icon-color": ["get", "color"],
-      "text-color": "#dbe3f7",
-      "text-halo-color": "#05070c",
-      "text-halo-width": 1.2,
-    },
+    filter: ["==", ["get", "priority"], true],
+    layout: iconLayout(true),
+    paint: iconPaint,
   });
 
-  map.on("click", "flights-icons", (e) => {
-    const hex = e.features[0].properties.hex;
-    selectedHex = hex;
-    userMovedMap = true;
-    render();
-  });
-  map.on("mouseenter", "flights-icons", () => { map.getCanvas().style.cursor = "pointer"; });
-  map.on("mouseleave", "flights-icons", () => { map.getCanvas().style.cursor = ""; });
+  for (const layerId of ["flights-icons", "flights-icons-routine", "flights-dots"]) {
+    map.on("click", layerId, (e) => {
+      selectedHex = e.features[0].properties.hex;
+      userMovedMap = true;
+      render();
+    });
+    map.on("mouseenter", layerId, () => { map.getCanvas().style.cursor = "pointer"; });
+    map.on("mouseleave", layerId, () => { map.getCanvas().style.cursor = ""; });
+  }
 
   // Pulse the emergency rings so they read as live alarms, not static dots.
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -631,11 +691,22 @@ map.on("load", () => {
     requestAnimationFrame(pulse);
   }
 
-  let zoomFrame = 0;
+  let terrainOn = false;
+  const syncTerrain = () => {
+    const want = map.getZoom() >= TERRAIN_MIN_ZOOM;
+    if (want === terrainOn) return;
+    terrainOn = want;
+    map.setTerrain(want ? { source: "terrain-dem", exaggeration: 1.6 } : null);
+  };
+  // Rebuilding every layer's data is the expensive part of a zoom, so do it at
+  // most ~6 times a second instead of every animation frame.
+  let zoomTimer = 0;
   map.on("zoom", () => {
-    if (zoomFrame) return;
-    zoomFrame = requestAnimationFrame(() => { zoomFrame = 0; if (snapshot) renderMapLayers(); });
+    syncTerrain();
+    if (zoomTimer) return;
+    zoomTimer = setTimeout(() => { zoomTimer = 0; if (snapshot) renderMapLayers(); }, 160);
   });
+  map.on("moveend", () => { if (snapshot) renderMapLayers(); });
 
   mapReady = true;
   if (referenceData) drawTestRanges();
@@ -872,6 +943,23 @@ const showEmergencies = () => document.getElementById("filter-emg").click();
 alarmBanner.onclick = showEmergencies;
 alarmBanner.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); showEmergencies(); } };
 
+// What shape an aircraft is drawn as. Without a usable heading (or on the
+// ground) an arrow would point north and lie, so those get a plain dot.
+function iconKind(f) {
+  if (f.on_ground || f.track_deg == null) return "dot";
+  if (f.rotorcraft) return "heli";
+  if (f.category === "B6") return "uav";
+  return "plane";
+}
+function iconScale(f, kind) {
+  if (kind === "dot") return 0.9;
+  if (kind === "heli") return 0.9;
+  if (f.category === "A5" || f.category === "A4") return 1.25;
+  if (f.category === "A3") return 1.1;
+  if (f.category === "A1" || f.category === "B1" || f.category === "B4") return 0.8;
+  return 1;
+}
+
 function renderMapLayers() {
   if (!mapReady) return;
   // Ascending score so flagged/high-severity aircraft paint last (on top) —
@@ -881,13 +969,23 @@ function renderMapLayers() {
     .slice()
     .sort((a, b) => (isEmergency(a) - isEmergency(b)) || (a.score - b.score));
 
+  // Priority aircraft are always drawn in full; everything else is thinned by
+  // zoom. Military is priority only while the Military filter is on.
+  const isPriority = (f) =>
+    isEmergency(f) || f.score >= snapshot.detection_threshold || f.hex === selectedHex ||
+    (viewFilter === "military" && f.is_mil);
+  const bounds = map.getBounds();
+  const zoomedIn = map.getZoom() >= 7;
+
   const flightFeatures = positioned.map((f) => {
     const color = colorFor(f);
     const flagged = f.score >= snapshot.detection_threshold;
+    const kind = iconKind(f);
     return {
       type: "Feature",
       properties: {
-        hex: f.hex, color, flagged, track: f.track_deg || 0,
+        hex: f.hex, color, flagged, track: f.track_deg || 0, kind, scale: iconScale(f, kind),
+        priority: isPriority(f),
         score: f.score + (isEmergency(f) ? 1000 : 0),
         mil: !!f.is_mil, emergency: isEmergency(f),
         label: (isEmergency(f) ? `⚠ ${f.identity}  ·  ${f.squawk || "EMERG"}`
@@ -901,9 +999,15 @@ function renderMapLayers() {
   const mpp = metersPerPixel();
   const vScale = verticalScale(mpp);
 
+  // 3D columns/curtains for ~1,600 aircraft would bury the map, so draw them
+  // for priority aircraft always and for everyone else only when zoomed in
+  // far enough to read them, and only inside the visible viewport.
+  const extruded = positioned.filter((f) =>
+    isPriority(f) || (zoomedIn && bounds.contains([f.lon, f.lat])));
+
   const pillarFeatures = [];
   const capFeatures = [];
-  positioned.forEach((f) => {
+  extruded.forEach((f) => {
     const color = colorFor(f);
     const flagged = f.score >= snapshot.detection_threshold;
     const height = altitudeMeters(f.altitude_ft) * vScale;
@@ -925,7 +1029,7 @@ function renderMapLayers() {
 
   const curtainFeatures = [];
   const curtainHalf = Math.max(400, 0.8 * mpp);
-  positioned.forEach((f) => {
+  extruded.forEach((f) => {
     const pts = (f.trail || []).filter((p) => p.lat != null && p.lon != null);
     const color = withAlpha(colorFor(f), 0.5);
     for (let i = 1; i < pts.length; i++) {
@@ -941,7 +1045,7 @@ function renderMapLayers() {
   });
   map.getSource("curtains").setData({ type: "FeatureCollection", features: curtainFeatures });
 
-  const trailFeatures = positioned
+  const trailFeatures = extruded
     .filter((f) => f.trail && f.trail.length > 1)
     .map((f) => ({
       type: "Feature",

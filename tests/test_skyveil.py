@@ -433,6 +433,28 @@ class WebRouteTests(unittest.TestCase):
         self.assertIn(("/api/events", ("GET",)), paths)
         self.assertIn(("/api/reference", ("GET",)), paths)
 
+    def test_dashboard_declutters_aircraft(self) -> None:
+        from skyveil.web import DASHBOARD_HTML
+
+        for needle in ("flights-dots", "flights-icons-routine", "iconKind", "TERRAIN_MIN_ZOOM"):
+            self.assertIn(needle, DASHBOARD_HTML)
+
+    def test_flight_payload_flags_rotorcraft(self) -> None:
+        asyncio.run(self._rotorcraft_flow())
+
+    async def _rotorcraft_flow(self) -> None:
+        state = SkyState()
+        now = datetime.now(UTC)
+        await state.ingest_cycle([
+            FlightObservation(hex_id="h1", callsign="LIFE1", type_code="EC35", lat=40.0, lon=-74.0,
+                              altitude_ft=1500, ground_speed_kt=120.0, track_deg=10.0, observed_at=now),
+            FlightObservation(hex_id="p1", callsign="UAL1", type_code="B738", emitter_category="A3",
+                              lat=41.0, lon=-75.0, altitude_ft=35000, ground_speed_kt=450.0, track_deg=90.0, observed_at=now),
+        ])
+        flights = {f["hex"]: f for f in (await state.snapshot())["flights"]}
+        self.assertTrue(flights["h1"]["rotorcraft"])
+        self.assertFalse(flights["p1"]["rotorcraft"])
+
     def test_dashboard_is_phone_ready(self) -> None:
         from skyveil.web import DASHBOARD_HTML
 

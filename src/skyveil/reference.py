@@ -152,3 +152,8 @@ ROTORCRAFT_TYPE_CODES = {
 # Callsign fragments that publicly correlate with test/experimental flights
 # (manufacturer flight-test desks, FAA/NASA test callsign conventions).
 TEST_CALLSIGN_PATTERNS = ("TEST", "XPRMT", "EXPER", "PROTO", "RSRCH")
+
+
+def is_rotorcraft(emitter_category: str | None, type_code: str | None) -> bool:
+    """True for helicopters/tiltrotors, by ADS-B emitter category or type code."""
+    return emitter_category == "A7" or (type_code or "").upper() in ROTORCRAFT_TYPE_CODES

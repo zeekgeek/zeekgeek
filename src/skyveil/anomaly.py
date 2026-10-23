@@ -31,11 +31,11 @@ from .reference import (
     CATEGORY_LABELS,
     CATEGORY_SPEED_CEILING_KT,
     DEFAULT_SPEED_CEILING_KT,
-    ROTORCRAFT_TYPE_CODES,
     TEST_CALLSIGN_PATTERNS,
     TEST_RANGES,
     haversine_nm,
     hex_nation,
+    is_rotorcraft,
     registration_nation,
 )
 
@@ -483,9 +483,7 @@ def _position_jump_trigger(flight: FlightSnapshot) -> Trigger | None:
 
 
 def _is_rotorcraft(flight: FlightSnapshot) -> bool:
-    if flight.emitter_category == "A7":
-        return True
-    return (flight.type_code or "").upper() in ROTORCRAFT_TYPE_CODES
+    return is_rotorcraft(flight.emitter_category, flight.type_code)
 
 
 def _is_routine_low_slow(flight: FlightSnapshot) -> bool:
