@@ -29,6 +29,7 @@ mac-battery = "mac_battery.__main__:main"
 mac-battery-menubar = "mac_battery.menubar:main"
 jet-radar = "jet_radar.__main__:main"
 path-radar = "path_radar.__main__:main"
+skyveil = "skyveil.__main__:main"
 etsy-ai-space = "etsy_ai_space.__main__:main"
 
 [tool.setuptools.packages.find]
