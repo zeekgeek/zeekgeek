@@ -48,6 +48,12 @@ NON_FLIGHT_TYPE_CODES = {"TWR"}
 # bit plus well-known military callsign prefixes catch military aircraft that
 # show up in the regional pool without being in that feed.
 DB_FLAG_MILITARY = 1
+
+# Balloons and drones are rare and often outside the regional pool, so they get
+# their own global per-type feeds. A feed that errors (or a type the API
+# doesn't serve) is skipped like any other failed payload, so this can only add
+# aircraft, never break a poll.
+GLOBAL_TYPE_FEEDS = ("BALL", "MQ9", "MQ1", "Q4")
 MILITARY_CALLSIGN_PREFIXES = (
     "RCH", "REACH", "CNV", "PAT", "SAM", "VENUS", "EXEC", "SPAR", "VV", "NAVY",
     "TOPCT", "JAKE", "SHELL", "QUID", "ASCOT", "RRR", "CFC", "CTM", "GAF", "IAM",
@@ -108,15 +114,16 @@ class AdsbLolBackend:
             asyncio.to_thread(self._fetch_json, f"{API_BASE}/ladd"),
             asyncio.to_thread(self._fetch_json, f"{API_BASE}/mil"),
             asyncio.to_thread(self._fetch_json, f"{API_BASE}/squawk/{EMERGENCY_SQUAWK_LIST}"),
+            *(asyncio.to_thread(self._fetch_json, f"{API_BASE}/type/{code}") for code in GLOBAL_TYPE_FEEDS),
             return_exceptions=True,
         )
-        regional, pia, ladd, mil, emergency = payloads
+        regional, pia, ladd, mil, emergency, *typed = payloads
         pia_hexes = _hex_set(pia)
         ladd_hexes = _hex_set(ladd)
         mil_hexes = _hex_set(mil)
 
         merged: dict[str, dict[str, Any]] = {}
-        for payload in (regional, emergency, pia, ladd, mil):
+        for payload in (regional, emergency, pia, ladd, mil, *typed):
             if isinstance(payload, BaseException):
                 continue
             for entry in payload.get("ac") or []:
@@ -247,6 +254,23 @@ def _military_fleet() -> list[_SimFlight]:
     ]
 
 
+def _aerial_fleet() -> list[_SimFlight]:
+    """Two high-altitude balloons and three drones, so the dashboard has each class to show."""
+    flights = [
+        # hex, callsign, reg, type, category, lat, lon, alt_ft, heading, speed_kt, military
+        ("ba1100", "HIBAL01", None, "BALL", "B2", 38.2, -104.0, 78000, 95, 38, False),
+        ("ba1101", "HIBAL02", None, "BALL", "B2", 44.6, -120.5, 96000, 70, 62, False),
+        ("ae9a01", "FORTE11", "09-2043", "Q4", "B6", 35.9, -106.5, 55000, 65, 335, True),
+        ("ae9a02", "TREND41", "10-4120", "MQ9", "B6", 32.4, -110.8, 24000, 120, 190, True),
+        ("a1d0c7", "N31DRN", "N31DRN", None, "B6", 40.1, -83.0, 380, 200, 28, False),
+    ]
+    return [
+        _SimFlight(hex_id=h, callsign=c, registration=r, type_code=t, category=cat, lat=lat, lon=lon,
+                   altitude_ft=alt, heading=hdg, ground_speed_kt=gs, is_mil=mil)
+        for h, c, r, t, cat, lat, lon, alt, hdg, gs, mil in flights
+    ]
+
+
 @dataclass
 class DemoScannerBackend:
     """Simulated traffic covering every anomaly category on a short loop."""
@@ -257,7 +281,7 @@ class DemoScannerBackend:
 
     def __post_init__(self) -> None:
         random.seed(20260830)
-        self._fleet: list[_SimFlight] = _routine_fleet() + _military_fleet()
+        self._fleet: list[_SimFlight] = _routine_fleet() + _military_fleet() + _aerial_fleet()
         self._incidents_spawned = False
 
     async def run(self) -> None:

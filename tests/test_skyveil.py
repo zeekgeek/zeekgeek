@@ -7,7 +7,7 @@ import unittest
 from datetime import UTC, datetime, timedelta
 
 from skyveil.anomaly import FlightSnapshot, evaluate_flight, score_triggers
-from skyveil.reference import hex_nation, registration_nation
+from skyveil.reference import aircraft_kind, hex_nation, registration_nation
 from skyveil.scanner import DemoScannerBackend, looks_military, parse_aircraft
 from skyveil.state import FlightObservation, SkyState
 
@@ -101,6 +101,58 @@ class ScannerTests(unittest.TestCase):
         entry = {"hex": "abc123", "flight": "UAL1", "lat": 40.0, "lon": -74.0}
         obs = parse_aircraft(entry, datetime.now(UTC))
         self.assertIsNone(obs.position_age_s)
+
+
+class BalloonAndDroneTests(unittest.TestCase):
+    def test_kind_from_category_or_type(self) -> None:
+        self.assertEqual(aircraft_kind("B2", None), "balloon")
+        self.assertEqual(aircraft_kind(None, "ball"), "balloon")
+        self.assertEqual(aircraft_kind("B6", None), "drone")
+        self.assertEqual(aircraft_kind("A5", "MQ9"), "drone")
+        self.assertIsNone(aircraft_kind("A3", "B738"))
+        self.assertIsNone(aircraft_kind(None, None))
+
+    def test_high_altitude_balloon_is_not_an_anomaly(self) -> None:
+        balloon = _snap(callsign=None, registration=None, type_code=None, emitter_category="B2",
+                        altitude_ft=96000, ground_speed_kt=60.0)
+        score, _ = score_triggers(evaluate_flight(balloon))
+        self.assertEqual(score, 0.0)
+
+    def test_same_altitude_without_balloon_class_still_flags(self) -> None:
+        jet = _snap(emitter_category="A3", type_code="B738", altitude_ft=70000, ground_speed_kt=400.0)
+        codes = {t.code for t in evaluate_flight(jet)}
+        self.assertIn("extreme-altitude", codes)
+
+    def test_drone_is_not_flagged_for_being_a_drone_or_for_orbiting(self) -> None:
+        orbit = [(40.0 + 0.01 * (i % 4), -74.0 + 0.01 * (i % 3)) for i in range(20)]
+        headings = [float((i * 70) % 360) for i in range(20)]
+        drone = _snap(callsign="FORTE11", type_code="Q4", emitter_category="B6", altitude_ft=55000,
+                      ground_speed_kt=335.0, is_mil=True, recent_positions=orbit, recent_headings=headings)
+        self.assertEqual(evaluate_flight(drone), [])
+
+    def test_fixed_wing_orbit_still_flags_as_loiter(self) -> None:
+        orbit = [(40.0 + 0.01 * (i % 4), -74.0 + 0.01 * (i % 3)) for i in range(20)]
+        headings = [float((i * 70) % 360) for i in range(20)]
+        plane = _snap(emitter_category="A3", type_code="B738", altitude_ft=30000, ground_speed_kt=400.0,
+                      recent_positions=orbit, recent_headings=headings)
+        self.assertIn("sustained-loiter", {t.code for t in evaluate_flight(plane)})
+
+    def test_demo_snapshot_counts_balloons_and_drones(self) -> None:
+        async def run() -> dict:
+            state = SkyState()
+            demo = DemoScannerBackend(state, interval=0.0, incident_at=1)
+            demo._advance(1)
+            await state.ingest_cycle([demo._observe(f) for f in demo._fleet])
+            return await state.snapshot()
+
+        snap = asyncio.run(run())
+        self.assertEqual(snap["balloon_count"], 2)
+        self.assertEqual(snap["drone_count"], 3)
+        kinds = {f["callsign"]: f["kind"] for f in snap["flights"] if f["kind"]}
+        self.assertEqual(kinds["HIBAL02"], "balloon")
+        self.assertEqual(kinds["FORTE11"], "drone")
+        flagged = {f["callsign"] for f in snap["detections"]}
+        self.assertTrue({"HIBAL01", "HIBAL02", "FORTE11", "TREND41", "N31DRN"}.isdisjoint(flagged))
 
 
 class MilitaryDetectionTests(unittest.TestCase):

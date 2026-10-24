@@ -33,6 +33,7 @@ from .reference import (
     DEFAULT_SPEED_CEILING_KT,
     TEST_CALLSIGN_PATTERNS,
     TEST_RANGES,
+    aircraft_kind,
     haversine_nm,
     hex_nation,
     is_rotorcraft,
@@ -206,9 +207,12 @@ def _experimental_triggers(flight: FlightSnapshot) -> list[Trigger]:
             )
         )
 
-    if flight.emitter_category in ("B6", "B7"):
+    # Drones (B6) and balloons (B2) are tracked as their own classes on the map
+    # and in their own list, so merely being one is not an anomaly. A space /
+    # trans-atmospheric vehicle (B7) still is.
+    if flight.emitter_category == "B7":
         label = CATEGORY_LABELS.get(flight.emitter_category, flight.emitter_category)
-        weight = 75.0 if flight.emitter_category == "B7" else 40.0
+        weight = 75.0
         triggers.append(
             Trigger(
                 "unusual-emitter-category",
@@ -222,6 +226,9 @@ def _experimental_triggers(flight: FlightSnapshot) -> list[Trigger]:
         flight.altitude_ft is not None
         and EXTREME_ALTITUDE_FT <= flight.altitude_ft < MAX_PLAUSIBLE_ALTITUDE_FT
         and not flight.on_ground
+        # Balloons float up here on purpose and high-altitude drones (RQ-4 and
+        # similar cruise near 60,000 ft) work here; neither is above its own ceiling.
+        and aircraft_kind(flight.emitter_category, flight.type_code) is None
         # A real flight at this height has a full ADS-B position and speed;
         # a bare altitude with neither is a weak Mode-S contact's decode noise.
         and flight.lat is not None
@@ -241,6 +248,7 @@ def _experimental_triggers(flight: FlightSnapshot) -> list[Trigger]:
         not flight.on_ground
         and not callsign
         and not flight.type_code
+        and aircraft_kind(flight.emitter_category, None) is None
         and flight.lat is not None
         and flight.lon is not None
     ):
@@ -429,7 +437,14 @@ def _erratic_triggers(flight: FlightSnapshot) -> list[Trigger]:
 
     # Circling is routine for rotorcraft (police, news, medevac, training);
     # it is only a movement anomaly for fixed-wing traffic.
-    if not _is_rotorcraft(flight) and not _is_routine_low_slow(flight) and _is_loitering(flight):
+    # Drones fly orbits as their job, and balloons drift in loops on the wind.
+    routine_orbiter = aircraft_kind(flight.emitter_category, flight.type_code) is not None
+    if (
+        not _is_rotorcraft(flight)
+        and not routine_orbiter
+        and not _is_routine_low_slow(flight)
+        and _is_loitering(flight)
+    ):
         triggers.append(
             Trigger(
                 "sustained-loiter",

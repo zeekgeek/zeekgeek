@@ -133,8 +133,9 @@ CATEGORY_LABELS: dict[str, str] = {
 CATEGORY_SPEED_CEILING_KT: dict[str, float] = {
     "A7": 210.0,
     "B1": 150.0,
+    "B2": 250.0,  # jet-stream winds at balloon altitudes
     "B4": 120.0,
-    "B6": 300.0,
+    "B6": 400.0,  # RQ-4 / MQ-4 cruise ~330 kt; the old 300 flagged them
 }
 DEFAULT_SPEED_CEILING_KT = 620.0
 
@@ -157,3 +158,23 @@ TEST_CALLSIGN_PATTERNS = ("TEST", "XPRMT", "EXPER", "PROTO", "RSRCH")
 def is_rotorcraft(emitter_category: str | None, type_code: str | None) -> bool:
     """True for helicopters/tiltrotors, by ADS-B emitter category or type code."""
     return emitter_category == "A7" or (type_code or "").upper() in ROTORCRAFT_TYPE_CODES
+
+
+# Balloons announce themselves with emitter category B2 (lighter-than-air) and
+# unmanned aircraft with B6. Many airframes broadcast neither, so a few common
+# type designators back the category up: BALL is the database's generic
+# balloon, and MQ-1 / MQ-9 / RQ-4 / MQ-4 are the military drones most often
+# seen on public feeds. Anything not listed here and not self-reporting B2/B6
+# simply isn't classed as a balloon or drone — this is a floor, not a census.
+BALLOON_TYPE_CODES = {"BALL"}
+DRONE_TYPE_CODES = {"MQ9", "MQ1", "Q4", "RQ4", "MQ4"}
+
+
+def aircraft_kind(emitter_category: str | None, type_code: str | None) -> str | None:
+    """"balloon", "drone", or None, by emitter category or type designator."""
+    code = (type_code or "").upper()
+    if emitter_category == "B2" or code in BALLOON_TYPE_CODES:
+        return "balloon"
+    if emitter_category == "B6" or code in DRONE_TYPE_CODES:
+        return "drone"
+    return None

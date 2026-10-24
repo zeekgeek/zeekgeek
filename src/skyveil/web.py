@@ -77,6 +77,8 @@ DASHBOARD_HTML = """
     --amber: #f59e0b;
     --green: #34d399;
     --mil: #a3e635;
+    --balloon: #e2e8f0;
+    --drone: #fb923c;
   }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
@@ -107,6 +109,8 @@ DASHBOARD_HTML = """
   .stat.cloaked b { color: var(--pink); }
   .stat.erratic b { color: var(--amber); }
   .stat.military b { color: var(--mil); }
+  .stat.balloon b { color: var(--balloon); }
+  .stat.drone b { color: var(--drone); }
   .stat.emergency.live { border-color: var(--red); background: rgba(239,68,68,.16); animation: pulse 1.4s infinite; }
 
   #alarm-banner {
@@ -121,8 +125,11 @@ DASHBOARD_HTML = """
   .filter-bar {
     position: absolute; left: 110px; top: 68px; z-index: 5; display: flex; gap: 4px;
     background: var(--panel-2); border: 1px solid var(--line); border-radius: 9px; padding: 3px;
+    max-width: calc(100vw - 110px - 400px); overflow-x: auto; scrollbar-width: none;
   }
+  .filter-bar::-webkit-scrollbar { display: none; }
   .filter-bar button {
+    flex: 0 0 auto; white-space: nowrap;
     background: none; border: 0; color: var(--muted); font: inherit; font-size: 12px;
     padding: 4px 10px; border-radius: 6px; cursor: pointer;
   }
@@ -130,6 +137,9 @@ DASHBOARD_HTML = """
   .filter-bar button:focus-visible, #reset-view:focus-visible, #alarm-banner:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
   .filter-bar .f-mil[aria-pressed="true"] { color: var(--mil); }
   .filter-bar .f-emg[aria-pressed="true"] { color: #fca5a5; }
+  .filter-bar .f-bal[aria-pressed="true"] { color: var(--balloon); }
+  .filter-bar .f-drn[aria-pressed="true"] { color: var(--drone); }
+  .filter-bar .f-msk[aria-pressed="true"] { color: var(--pink); }
 
   .emergency-panel { border-color: rgba(239,68,68,.6); box-shadow: 0 0 0 1px rgba(239,68,68,.25), 0 20px 50px rgba(0,0,0,.45); }
   .emergency-panel .panel-head h2 { color: #fca5a5; }
@@ -142,14 +152,18 @@ DASHBOARD_HTML = """
   .emg-card .code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 800; color: #fecaca; }
   .emg-card .what { font-size: 12px; color: #fecaca; margin-top: 4px; }
 
-  #military-panel { max-height: 30%; min-height: 0; }
-  #military-list { overflow: auto; padding: 0 10px 10px; }
+  #military-panel, #aerial-panel { max-height: 24%; min-height: 0; }
+  #military-list, #aerial-list { overflow: auto; padding: 0 10px 10px; }
   .mil-row {
     display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: baseline;
     padding: 6px 4px; border-top: 1px dashed var(--line); font-size: 12px; cursor: pointer;
   }
   .mil-row:hover { background: rgba(163,230,53,.06); }
   .mil-row .id { color: var(--mil); font-weight: 700; }
+  .mil-row .id.balloon { color: var(--balloon); }
+  .mil-row .id.drone { color: var(--drone); }
+  .chip.balloon { color: var(--balloon); background: rgba(226,232,240,.12); }
+  .chip.drone { color: var(--drone); background: rgba(251,146,60,.14); }
   .mil-row .t, .mil-row .alt { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
   .chip.mil { color: var(--mil); background: rgba(163,230,53,.12); }
   @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,.35); } 50% { box-shadow: 0 0 0 9px rgba(239,68,68,0); } }
@@ -207,6 +221,23 @@ DASHBOARD_HTML = """
   .legend .l-experimental::before { background: var(--violet); }
   .legend .l-cloaked::before { background: var(--pink); }
   .legend .l-erratic::before { background: var(--amber); }
+  .legend .l-balloon::before { background: var(--balloon); border-radius: 50%; }
+  .legend .l-drone::before { background: var(--drone); transform: rotate(45deg); border-radius: 1px; }
+  .legend .height-ctl { flex-basis: 100%; display: flex; align-items: center; gap: 10px; color: var(--muted); }
+  .legend .height-ctl input { flex: 1; accent-color: var(--cyan); min-width: 0; }
+  .legend .height-ctl span::before { display: none; }
+  #hud {
+    position: absolute; right: 396px; top: 68px; z-index: 5; width: 264px; padding: 10px 12px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px; backdrop-filter: blur(10px);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--text);
+    pointer-events: none;
+  }
+  #hud .h-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+  #hud .h-id { font-size: 14px; font-weight: 800; letter-spacing: .03em; }
+  #hud .h-grid { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; }
+  #hud .h-grid dt { color: var(--muted); }
+  #hud .h-grid dd { margin: 0; text-align: right; }
+  #hud .h-chips { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 7px; }
   .legend .l-military::before { background: transparent; border: 2px solid var(--mil); border-radius: 50%; width: 7px; height: 7px; }
   .legend .note { flex-basis: 100%; color: #5b6788; }
 
@@ -263,12 +294,13 @@ DASHBOARD_HTML = """
     #reset-view {
       left: 12px; top: calc(env(safe-area-inset-top) + 92px); min-height: 40px; padding: 8px 14px; font-size: 13px;
     }
-    .filter-bar { left: 112px; top: calc(env(safe-area-inset-top) + 92px); }
+    .filter-bar { left: 112px; top: calc(env(safe-area-inset-top) + 92px); max-width: calc(100vw - 124px); }
+    #hud { display: none; }
     .filter-bar button { min-height: 32px; padding: 4px 9px; }
     #alarm-banner { top: calc(env(safe-area-inset-top) + 140px); }
     .emergency-panel { border-radius: 14px; margin: 0 8px; max-height: 40%; overflow: auto; }
-    #military-panel { display: none; }
-    aside.expanded #military-panel { display: flex; }
+    #military-panel, #aerial-panel { display: none; }
+    aside.expanded #military-panel, aside.expanded #aerial-panel:not([hidden]) { display: flex; }
     .maplibregl-ctrl-top-right { top: calc(env(safe-area-inset-top) + 84px); }
     .maplibregl-ctrl-top-right .maplibregl-ctrl-group button { width: 38px; height: 38px; }
     .radar-hud, .legend { display: none; }
@@ -305,6 +337,9 @@ DASHBOARD_HTML = """
     <button id="filter-all" data-filter="all" aria-pressed="true">All traffic</button>
     <button id="filter-mil" class="f-mil" data-filter="military" aria-pressed="false">Military</button>
     <button id="filter-emg" class="f-emg" data-filter="emergency" aria-pressed="false">Emergencies</button>
+    <button id="filter-bal" class="f-bal" data-filter="balloon" aria-pressed="false">Balloons</button>
+    <button id="filter-drn" class="f-drn" data-filter="drone" aria-pressed="false">Drones</button>
+    <button id="filter-msk" class="f-msk" data-filter="masked" aria-pressed="false">Masked</button>
   </div>
   <div class="radar-hud"></div>
 
@@ -346,7 +381,16 @@ DASHBOARD_HTML = """
       </div>
       <div id="military-list"></div>
     </section>
+    <section class="panel" id="aerial-panel" hidden>
+      <div class="panel-head">
+        <h2>Balloons &amp; drones</h2>
+        <span class="count" id="aerial-count">0</span>
+      </div>
+      <div id="aerial-list"></div>
+    </section>
   </aside>
+
+  <div id="hud" hidden aria-live="polite"></div>
 
   <div class="legend">
     <span class="l-routine">Routine</span>
@@ -355,6 +399,11 @@ DASHBOARD_HTML = """
     <span class="l-cloaked">Cloaked / mislabeled</span>
     <span class="l-erratic">Erratic movement</span>
     <span class="l-military">Military (ringed)</span>
+    <span class="l-balloon">High-altitude balloon</span>
+    <span class="l-drone">Drone / UAV</span>
+    <label class="height-ctl" for="height-boost"><span>Height</span>
+      <input type="range" id="height-boost" min="0.4" max="3" step="0.1" value="1" aria-label="Altitude exaggeration">
+      <span id="height-val">1.0×</span></label>
     <span class="note">Pillar height ≈ altitude. Public ADS-B only — a lead, never proof.</span>
   </div>
 
@@ -367,6 +416,10 @@ const CATEGORY_COLOR = {
   routine: "#22d3ee",
 };
 const MILITARY_COLOR = "#a3e635";
+const BALLOON_COLOR = "#e2e8f0";
+const DRONE_COLOR = "#fb923c";
+let heightBoost = 1;
+let hoverHex = null;
 const TERRAIN_MIN_ZOOM = 6;
 const EMERGENCY_CODES = { "7500": "7500 · hijack", "7600": "7600 · radio failure", "7700": "7700 · emergency" };
 let viewFilter = "all";
@@ -375,12 +428,18 @@ function isEmergency(f) { return (f.triggers || []).some((t) => t.category === "
 function emergencyFlights() {
   return (snapshot ? snapshot.flights : []).filter((f) => f.present && isEmergency(f));
 }
+function aerialFlights() {
+  return (snapshot ? snapshot.flights : []).filter((f) => f.present && f.kind);
+}
 function militaryFlights() {
   return (snapshot ? snapshot.flights : []).filter((f) => f.present && f.is_mil);
 }
 function passesFilter(f) {
   if (viewFilter === "military") return f.is_mil;
   if (viewFilter === "emergency") return isEmergency(f);
+  if (viewFilter === "balloon") return f.kind === "balloon";
+  if (viewFilter === "drone") return f.kind === "drone";
+  if (viewFilter === "masked") return !!(f.is_pia || f.is_ladd);
   return true;
 }
 function focusFlight(hex) {
@@ -475,6 +534,15 @@ function shapeIcon(kind, size) {
     ctx.lineTo(-size * 0.1, size * 0.4); ctx.lineTo(-size * 0.12, size * 0.2); ctx.lineTo(-size * 0.46, size * 0.24);
     ctx.lineTo(-size * 0.46, size * 0.16); ctx.lineTo(-size * 0.18, size * 0.1);
     ctx.closePath(); ctx.fill();
+  } else if (kind === "balloon") {
+    // Envelope, load lines and a small payload box. No heading: balloons drift.
+    ctx.arc(0, -size * 0.14, size * 0.27, 0, Math.PI * 2); ctx.fill();
+    ctx.lineWidth = size * 0.035;
+    ctx.beginPath();
+    ctx.moveTo(-size * 0.17, size * 0.02); ctx.lineTo(-size * 0.05, size * 0.3);
+    ctx.moveTo(size * 0.17, size * 0.02); ctx.lineTo(size * 0.05, size * 0.3);
+    ctx.stroke();
+    ctx.fillRect(-size * 0.08, size * 0.3, size * 0.16, size * 0.14);
   } else if (kind === "dot") {
     ctx.arc(0, 0, size * 0.22, 0, Math.PI * 2); ctx.fill();
   }
@@ -486,6 +554,7 @@ map.on("load", () => {
   map.addImage("heli", shapeIcon("heli", 64), { sdf: true });
   map.addImage("uav", shapeIcon("uav", 64), { sdf: true });
   map.addImage("dot", shapeIcon("dot", 64), { sdf: true });
+  map.addImage("balloon", shapeIcon("balloon", 64), { sdf: true });
 
   // Real elevation under the flat basemap so altitude pillars read against
   // actual ground. Free AWS Terrarium tiles; if they fail to load the map
@@ -672,7 +741,15 @@ map.on("load", () => {
       render();
     });
     map.on("mouseenter", layerId, () => { map.getCanvas().style.cursor = "pointer"; });
-    map.on("mouseleave", layerId, () => { map.getCanvas().style.cursor = ""; });
+    map.on("mousemove", layerId, (e) => {
+      const hex = e.features[0] && e.features[0].properties.hex;
+      if (hex !== hoverHex) { hoverHex = hex; updateHud(); }
+    });
+    map.on("mouseleave", layerId, () => {
+      map.getCanvas().style.cursor = "";
+      hoverHex = null;
+      updateHud();
+    });
   }
 
   // Pulse the emergency rings so they read as live alarms, not static dots.
@@ -787,6 +864,8 @@ function colorFor(flight) {
     return CATEGORY_COLOR[flight.dominant_category] || CATEGORY_COLOR.routine;
   }
   if (isEmergency(flight)) return CATEGORY_COLOR.emergency;
+  if (flight.kind === "balloon") return BALLOON_COLOR;
+  if (flight.kind === "drone") return DRONE_COLOR;
   if (flight.is_mil) return MILITARY_COLOR;
   return CATEGORY_COLOR.routine;
 }
@@ -840,7 +919,9 @@ function render() {
   renderEmergencies();
   renderDetections();
   renderMilitary();
+  renderAerial();
   renderActivity();
+  updateHud();
 }
 
 function renderStats() {
@@ -853,6 +934,8 @@ function renderStats() {
     `<span class="stat"><b>${snapshot.tracked_count}</b> tracked</span>`,
     `<span class="stat"><b>${snapshot.airborne_count}</b> airborne</span>`,
     `<span class="stat military"><b>${militaryCount}</b> military</span>`,
+    `<span class="stat balloon"><b>${snapshot.balloon_count || 0}</b> balloons</span>`,
+    `<span class="stat drone"><b>${snapshot.drone_count || 0}</b> drones</span>`,
     `<span class="stat emergency ${emergencies.length ? "live" : ""}"><b>${emergencies.length}</b> emergency</span>`,
     `<span class="stat experimental"><b>${c.experimental || 0}</b> experimental</span>`,
     `<span class="stat cloaked"><b>${c.cloaked || 0}</b> cloaked</span>`,
@@ -920,6 +1003,65 @@ function renderMilitary() {
   bindFocus(list, ".mil-row");
 }
 
+function fmtAlt(f) {
+  if (f.on_ground) return "GND";
+  if (f.altitude_ft == null) return "alt ?";
+  return f.altitude_ft >= 18000 ? "FL" + String(Math.round(f.altitude_ft / 100)).padStart(3, "0")
+    : Math.round(f.altitude_ft).toLocaleString("en-US") + " ft";
+}
+
+function renderAerial() {
+  const rows = aerialFlights().slice().sort((a, b) =>
+    (a.kind === b.kind ? 0 : a.kind === "balloon" ? -1 : 1) || (b.altitude_ft || 0) - (a.altitude_ft || 0));
+  const panel = document.getElementById("aerial-panel");
+  panel.hidden = !rows.length;
+  document.getElementById("aerial-count").textContent = rows.length;
+  const list = document.getElementById("aerial-list");
+  list.innerHTML = rows.map((f) => `
+    <div class="mil-row" role="button" tabindex="0" data-hex="${escapeHtml(f.hex)}">
+      <span class="id ${f.kind}">${isEmergency(f) ? "⚠ " : ""}${escapeHtml(f.identity)}${f.is_mil ? ' <span class="chip mil">MIL</span>' : ""}</span>
+      <span class="t">${f.kind === "balloon" ? "balloon" : escapeHtml(f.type || "drone")}</span>
+      <span class="alt">${escapeHtml(fmtAlt(f))}</span>
+    </div>`).join("");
+  bindFocus(list, ".mil-row");
+}
+
+// Hover card, as in SkyGlass: point at an aircraft to read its telemetry. It
+// follows the selected aircraft when nothing is hovered.
+function updateHud() {
+  const hud = document.getElementById("hud");
+  const hex = hoverHex || selectedHex;
+  const f = hex && snapshot ? snapshot.flights.find((x) => x.hex === hex) : null;
+  if (!f || !f.present) { hud.hidden = true; return; }
+  const row = (k, v) => `<dt>${k}</dt><dd>${escapeHtml(v)}</dd>`;
+  const rate = f.baro_rate_fpm != null ? `${f.baro_rate_fpm > 0 ? "+" : ""}${Math.round(f.baro_rate_fpm)} fpm` : "—";
+  hud.innerHTML = `
+    <div class="h-top"><span class="h-id">${escapeHtml(f.identity)}</span><span>${escapeHtml(f.hex.toUpperCase())}</span></div>
+    <dl class="h-grid">
+      ${row("Type", f.type || (f.kind || "—"))}
+      ${row("Reg", f.registration || "—")}
+      ${row("Altitude", f.altitude_ft != null ? `${Math.round(f.altitude_ft).toLocaleString("en-US")} ft` : (f.on_ground ? "ground" : "—"))}
+      ${row("Speed", f.ground_speed_kt != null ? `${Math.round(f.ground_speed_kt)} kt` : "—")}
+      ${row("Heading", f.track_deg != null ? `${Math.round(f.track_deg)}°` : "—")}
+      ${row("Vertical", rate)}
+      ${row("Squawk", f.squawk || "—")}
+    </dl>
+    <div class="h-chips">
+      ${f.is_mil ? '<span class="chip mil">MIL</span>' : ""}
+      ${f.kind ? `<span class="chip ${f.kind}">${f.kind.toUpperCase()}</span>` : ""}
+      ${(f.is_pia || f.is_ladd) ? '<span class="chip">MASKED</span>' : ""}
+      ${isEmergency(f) ? '<span class="chip" style="color:#fca5a5">EMERGENCY</span>' : ""}
+    </div>`;
+  hud.hidden = false;
+}
+
+const heightSlider = document.getElementById("height-boost");
+heightSlider.oninput = () => {
+  heightBoost = parseFloat(heightSlider.value);
+  document.getElementById("height-val").textContent = heightBoost.toFixed(1) + "×";
+  if (snapshot) renderMapLayers();
+};
+
 function bindFocus(root, selector) {
   root.querySelectorAll(selector).forEach((node) => {
     node.onclick = () => focusFlight(node.dataset.hex);
@@ -935,6 +1077,8 @@ document.querySelectorAll(".filter-bar button").forEach((btn) => {
     render();
     if (viewFilter === "military") fitTo(militaryFlights());
     if (viewFilter === "emergency") fitTo(emergencyFlights());
+    if (viewFilter === "balloon") fitTo(aerialFlights().filter((f) => f.kind === "balloon"));
+    if (viewFilter === "drone") fitTo(aerialFlights().filter((f) => f.kind === "drone"));
   };
 });
 
@@ -946,12 +1090,14 @@ alarmBanner.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.pre
 // What shape an aircraft is drawn as. Without a usable heading (or on the
 // ground) an arrow would point north and lie, so those get a plain dot.
 function iconKind(f) {
+  if (f.kind === "balloon" && !f.on_ground) return "balloon";
   if (f.on_ground || f.track_deg == null) return "dot";
   if (f.rotorcraft) return "heli";
-  if (f.category === "B6") return "uav";
+  if (f.kind === "drone") return "uav";
   return "plane";
 }
 function iconScale(f, kind) {
+  if (kind === "balloon") return 1.2;
   if (kind === "dot") return 0.9;
   if (kind === "heli") return 0.9;
   if (f.category === "A5" || f.category === "A4") return 1.25;
@@ -973,7 +1119,10 @@ function renderMapLayers() {
   // zoom. Military is priority only while the Military filter is on.
   const isPriority = (f) =>
     isEmergency(f) || f.score >= snapshot.detection_threshold || f.hex === selectedHex ||
-    (viewFilter === "military" && f.is_mil);
+    (viewFilter === "military" && f.is_mil) ||
+    // Balloons and drones are rare and easy to lose among thousands of airliners,
+    // so they are always drawn in full.
+    !!f.kind;
   const bounds = map.getBounds();
   const zoomedIn = map.getZoom() >= 7;
 
@@ -984,11 +1133,12 @@ function renderMapLayers() {
     return {
       type: "Feature",
       properties: {
-        hex: f.hex, color, flagged, track: f.track_deg || 0, kind, scale: iconScale(f, kind),
+        hex: f.hex, color, flagged, track: kind === "balloon" ? 0 : (f.track_deg || 0), kind, scale: iconScale(f, kind),
         priority: isPriority(f),
         score: f.score + (isEmergency(f) ? 1000 : 0),
         mil: !!f.is_mil, emergency: isEmergency(f),
         label: (isEmergency(f) ? `⚠ ${f.identity}  ·  ${f.squawk || "EMERG"}`
+          : f.kind ? `${f.identity}  ·  ${fmtAlt(f)}`
           : f.identity + (flagged ? `  ·  ${Math.round(f.score)}` : "")),
       },
       geometry: { type: "Point", coordinates: [f.lon, f.lat] },
@@ -997,7 +1147,7 @@ function renderMapLayers() {
   map.getSource("flights").setData({ type: "FeatureCollection", features: flightFeatures });
 
   const mpp = metersPerPixel();
-  const vScale = verticalScale(mpp);
+  const vScale = verticalScale(mpp) * heightBoost;
 
   // 3D columns/curtains for ~1,600 aircraft would bury the map, so draw them
   // for priority aircraft always and for everyone else only when zoomed in

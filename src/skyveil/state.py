@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from .reference import is_rotorcraft
+from .reference import aircraft_kind, is_rotorcraft
 from .anomaly import CATEGORIES, FlightSnapshot, Trigger, evaluate_flight, score_triggers
 
 DETECTION_SCORE_THRESHOLD = 30.0
@@ -243,6 +243,7 @@ class FlightTrack:
             "is_ladd": self.is_ladd,
             "is_mil": self.is_mil,
             "rotorcraft": is_rotorcraft(self.emitter_category, self.type_code),
+            "kind": aircraft_kind(self.emitter_category, self.type_code),
             "seen_count": self.seen_count,
             "first_seen": iso_time(self.first_seen),
             "last_seen": iso_time(self.last_seen),
@@ -372,6 +373,8 @@ class SkyState:
                 "category_counts": category_counts,
                 "cloaked_count": sum(1 for f in flights if f["present"] and (f["is_pia"] or f["is_ladd"])),
                 "military_count": sum(1 for f in flights if f["present"] and f["is_mil"]),
+                "balloon_count": sum(1 for f in flights if f["present"] and f["kind"] == "balloon"),
+                "drone_count": sum(1 for f in flights if f["present"] and f["kind"] == "drone"),
                 "history": list(self._history),
                 "flights": flights,
                 "detections": detections[:250],
